@@ -21,6 +21,30 @@ extension UIApplication {
     }
 }
 
+// MARK: - Persistent full-screen presenter for video previews
+final class VideoPreviewPresenter {
+    static let shared = VideoPreviewPresenter()
+    private var window: UIWindow?
+
+    func show<Content: View>(root: Content) {
+        guard window == nil else { return }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        guard let scene = scenes.first else { return }
+        let w = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: root)
+        host.view.backgroundColor = .black
+        w.rootViewController = host
+        w.windowLevel = .alert + 1
+        w.makeKeyAndVisible()
+        window = w
+    }
+
+    func dismiss() {
+        window?.isHidden = true
+        window = nil
+    }
+}
+
 // Lightweight UIKit image picker bridged into SwiftUI
 struct ImagePicker: UIViewControllerRepresentable {
     @Binding var image: UIImage?

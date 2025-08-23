@@ -20,7 +20,7 @@ struct ReelPreviewView: View {
             // Top-left close
             VStack {
                 HStack {
-                    Button(action: { dismiss() }) {
+                    Button(action: { VideoPreviewPresenter.shared.dismiss() }) {
                         Image("icon_preview_close")
                             .renderingMode(.original)
                             .resizable()

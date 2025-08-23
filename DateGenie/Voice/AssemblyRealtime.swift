@@ -131,7 +131,7 @@ final class AssemblyRealtime: NSObject {
 		inputFormat = input.inputFormat(forBus: 0)
 		outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: numChannels, interleaved: false)
 		if let inFmt = inputFormat, let outFmt = outputFormat { converter = AVAudioConverter(from: inFmt, to: outFmt) }
-		// Enable Apple voice processing (AEC/NR/AGC)
+		// Re-enable Apple voice processing (AEC/NR/AGC) for robust near-field defaults
 		try? audioEngine.inputNode.setVoiceProcessingEnabled(true)
 	}
 
@@ -188,7 +188,7 @@ final class AssemblyRealtime: NSObject {
 						flushPrebufferIfNeeded(); gateFlushUntilSoS = false
 					}
 				}
-				// Aggregate to ~targetChunkMs before sending; while SoS gate is active, enforce hard cap to avoid input duration violations
+				// Aggregate to ~targetChunkMs before sending; while gated keep chunks small and capped
 				pendingChunk.append(data)
 				currentTurnPcm.append(data)
 				pendingChunkMs += ms
