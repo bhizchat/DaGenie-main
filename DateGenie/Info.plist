@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>PressStart2P-Regular.ttf</string>
+		<string>VT323-Regular.ttf</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>DaGenie</string>
+	<key>NSCameraUsageDescription</key>
+	<string>We use the camera so you can capture photos and videos in DaGenie.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We use the microphone to record audio when you capture videos in DaGenie.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save highlight reels to your Photos.</string>
+	<key>ITSAppUsesNonExemptEncryption </key>
+	<false/>
+</dict>
+</plist>

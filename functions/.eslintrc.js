@@ -29,5 +29,8 @@ module.exports = {
     "quotes": ["error", "double"],
     "import/no-unresolved": 0,
     "indent": ["error", 2],
+    // relax style-only rules that block deploys
+    "require-jsdoc": "off",
+    "max-len": ["warn", {"code": 100, "ignoreUrls": true}],
   },
 };

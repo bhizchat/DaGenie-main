@@ -1,5 +1,5 @@
-/* eslint-disable max-len, require-jsdoc, valid-jsdoc, operator-linebreak, quotes, @typescript-eslint/no-explicit-any */
-import {onRequest} from "firebase-functions/v2/https";
+/* eslint-disable max-len, require-jsdoc, valid-jsdoc, operator-linebreak, quotes, @typescript-eslint/no-explicit-any, indent */
+import * as functions from "firebase-functions/v1";
 
 import * as logger from "firebase-functions/logger";
 import {Request, Response} from "express";
@@ -190,7 +190,10 @@ function clamp10(n: number): number {
   return Math.max(0, Math.min(10, n));
 }
 
-export const generatePlans = onRequest({region: "us-central1", timeoutSeconds: 540, secrets: ["OPENAI_KEY", "GOOGLE_PLACES_KEY"]}, async (req: Request, res: Response): Promise<void> => {
+export const generatePlans = functions
+  .runWith({timeoutSeconds: 540, secrets: ["OPENAI_KEY", "GOOGLE_PLACES_KEY"]})
+  .region("us-central1")
+  .https.onRequest(async (req: Request, res: Response): Promise<void> => {
   const t0 = Date.now();
   logger.info("🔄 generatePlans invoked");
   try {

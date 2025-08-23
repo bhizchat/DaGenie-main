@@ -1,0 +1,947 @@
+
+  {
+    "slug": "dtsj_brewing_co",
+    "action": "Students usually split a tasting flight and vibe to the taproom’s vinyl nights with friends. Fridays hit different when they’re open and spinning.",
+    "photoPrompt": "Hold your taster flight in front of the tap handles for a quick cheers pic."
+  },
+  {
+    "slug": "loto_ja_ice_cream",
+    "action": "Students usually pop in for throwback paletas and character bars, then trade first bites. Saturday nights is usually lit.",
+    "photoPrompt": "Pose with your picks in front of the old-school freezer case."
+  },
+  {
+    "slug": "gameshop_downstairs",
+    "action": "Students usually dig through retro cartridges and import titles, swapping nostalgia over their finds. Downtown weekends bring great people-watching.",
+    "photoPrompt": "Snap your best find against the cartridge shelf."
+  },
+  {
+    "slug": "san_jose_museum_of_art",
+    "action": "Students usually explore free-with-ID galleries and trade favorite pieces. First Fridays of the month are the move for free evening vibes.",
+    "photoPrompt": "Take a photo beneath Pae White’s ‘Noisy Blushes’ in the atrium."
+  },
+  {
+    "slug": "hyde_park_lounge",
+    "action": "Students usually slide in for friendly bartenders, DJ nights, and no-frills hangs. Karaoke pops off on 1st & 3rd Tuesdays.",
+    "photoPrompt": "Snap a toast at the bartop with the lounge lights glowing behind you."
+  },
+  {
+    "slug": "rollos_donuts",
+    "action": "Students usually share a giant apple fritter and grab a couple of classics for later. Late-night weekend runs usually hit the sweet spot.",
+    "photoPrompt": "Hold up a favorite donut by the display case for a first-bite shot."
+  },
+  {
+    "slug": "jakes_of_willow_glen",
+    "action": "Students usually meet up for pizza, wings, and the game on the TV wall. Sundays are the best for NFL and big game days are packed.",
+    "photoPrompt": "Snap a slice pic with the TV wall lit up behind you."
+  },
+  {
+    "slug": "exhibition_lighting_adventure",
+    "action": "Students typically wander the SoFA block after dark and play with the glowing art spots. First Fridays has mad street-market energy.",
+    "photoPrompt": "Pose under the brightest installation along S 1st St for an ambient portrait."
+  },
+  {
+    "slug": "market_bar",
+    "action": "Students typically meet under San Pedro Square’s string lights for drinks and food-hall energy. Live music lands most nights, with Fridays/Saturdays the loudest.",
+    "photoPrompt": "Hold your glasses high beneath the courtyard string lights."
+  },
+  {
+    "slug": "ancora_vino_by_enoteca_la_storia",
+    "action": "Students typically chat with the somms, sample pours, and pick a bottle to share later. Friday tastings make it feel extra curated.",
+    "photoPrompt": "Take a photo by the bottle wall with your two top picks."
+  },
+  {
+    "slug": "peters_bakery",
+    "action": "Students typically line up for the famous burnt almond cake. Saturdays sell out early so get there before noon.",
+    "photoPrompt": "Hold a slice of burnt almond cake with the bakery’s retro sign behind."
+  }
+
+
+  {
+    "slug": "la_original_paleteria_y_neveria",
+    "action": "Students typically grab fresh paletas and mangonadas after class. Sundays feel like a neighborhood block party here.",
+    "photoPrompt": "Pose with your paleta in front of the colorful flavor board."
+  },
+  {
+    "slug": "save_n_continue",
+    "action": "Students typically hang out playing retro arcade games and consoles. Friday nights have the liveliest crowd.",
+    "photoPrompt": "Snap a shot with your favorite arcade machine lit up."
+  },
+  {
+    "slug": "ume_tea",
+    "action": "Students typically chill here for fruit teas and mochi donuts. Wednesday BOGO deals make it the sweet spot.",
+    "photoPrompt": "Hold your tea and donut together by the shop’s window light."
+  },
+  {
+    "slug": "arisan_tea_and_coffee_house",
+    "action": "Students typically come for loose-leaf teas and cozy study vibes. Sunday afternoons are mellow for homework marathons.",
+    "photoPrompt": "Snap your teapot setup with the latte art in frame."
+  },
+  {
+    "slug": "bobo_drinks",
+    "action": "Students typically grab late-night boba, beignets, and hang with friends. Fridays and Saturdays stay buzzing until 1am.",
+    "photoPrompt": "Hold your colorful drink by the neon shop sign."
+  },
+  {
+    "slug": "sjsu_student_union_bowling_center",
+    "action": "Students typically hit the bowling lanes between classes or on Friday nights when the vibe is the liveliest.",
+    "photoPrompt": "Snap your bowling shoes and ball at the lane before the first throw."
+  },
+  {
+    "slug": "paper_plane_adventure",
+    "action": "Students typically stop here for craft cocktails or mocktails with a playful twist. Thursdays are popular for drink specials.",
+    "photoPrompt": "Snap your drink against the bar’s vintage tile backdrop."
+  },
+  {
+    "slug": "walmart_supercenter",
+    "action": "Students typically swing by for dorm snacks, supplies, and budget finds. Sunday mornings are the least crowded.",
+    "photoPrompt": "Pose with a cart stacked high in the grocery section."
+  },
+  {
+    "slug": "japanese_american_museum_of_san_jose",
+    "action": "Students typically explore exhibits on Japanese American history and culture. Thursdays through Sundays from noon to 4pm are the only times to visit.",
+    "photoPrompt": "Snap the red torii gate outside the museum."
+  },
+  {
+    "slug": "biodesign_studio",
+    "action": "Students typically get hands-on with bio-tech projects and exhibits. Weekday afternoons are quieter for exploring.",
+    "photoPrompt": "Snap your gloved hands working on a mini-lab project."
+  },
+  {
+    "slug": "the_tech_interactive",
+    "action": "Students typically check out interactive science and innovation exhibits. Fridays through Sundays are open for full access.",
+    "photoPrompt": "Snap the bright orange building facade before heading in."
+  },
+  {
+    "slug": "tech_interactive_free_street_parking",
+    "action": "Students typically park here for The Tech or downtown events. Arrive before 11am on weekends to grab a spot.",
+    "photoPrompt": "Snap your car with The Tech Interactive visible in the background."
+  },
+  {
+    "slug": "exhibition_lighting_adventure",
+    "action": "Students typically wander the SoFA block to see the light installations. First Fridays add live music and vendors.",
+    "photoPrompt": "Pose under the brightest installation for that dreamy glow."
+  },
+  [
+    {
+      "slug": "quetzalcoatl_sculpture",
+      "action": "Students typically meet here as a landmark before heading to nearby events. Early evenings give the best golden hour photos.",
+      "photoPrompt": "Snap the sculpture framed by the surrounding plaza trees."
+    },
+    {
+      "slug": "luna_bella_painting",
+      "action": "Students typically spot freshly painted murals on campus walls and think of local crew vibes. Monday meets are chill when streets are empty.",
+      "photoPrompt": "Pose near a freshly painted wall for that crisp, bold color."
+    },
+    {
+      "slug": "happy_hollow_park_and_zoo",
+      "action": "Students typically enjoy nostalgic rides and lemur sightings. Return days around midday midweek are quieter and calmer.",
+      "photoPrompt": "Snap a candid moment with the reopened Danny the Dragon ride in frame."
+    },
+    {
+      "slug": "lisa_elley_art_gallery_and_studio",
+      "action": "Students typically explore colorful palette-knife landscapes or attend studio workshops. First Fridays bring gallery open houses and meet-the-artist vibes.",
+      "photoPrompt": "Strike a pose beside a vibrant oil painting on the gallery wall."
+    },
+    {
+      "slug": "san_jose_welcome_sign",
+      "action": "Students typically snap a quick postcard selfie at the ‘Welcome to San Jose’ mural. Mornings are best to beat the crowd.",
+      "photoPrompt": "Pose in front of the blue letters like you’re on a real-life postcard."
+    },
+    {
+      "slug": "bills_backyard",
+      "action": "Students typically bring younger siblings for interactive nature zones and climbing. Weekday afternoons are easier for quiet exploration.",
+      "photoPrompt": "Strike a pose by the LookOut Tower with curious hands."
+    },
+    {
+      "slug": "kaleid_gallery",
+      "action": "Students typically browse affordable prints and vibe with local artists. Weekday midday visits are quieter; First Fridays feel buzzy.",
+      "photoPrompt": "Snap your favorite print or ceramic next to the gallery’s sleek interior."
+    },
+    {
+      "slug": "gonzales_peralta_adobe_fallon_house",
+      "action": "Students typically explore early San Jose history in restored adobe and Victorian rooms. Mornings offer quiet time before downtown buzz.",
+      "photoPrompt": "Pose outside the adobe’s horno or with the Fallon House facade."
+    },
+    {
+      "slug": "greetings_from_san_jose_wall",
+      "action": "Students typically post up like a postcard in front of the ‘Greetings from San Jose’ mural. Weekend mornings make it easy to shoot without crowds.",
+      "photoPrompt": "Stand in front of the mural text—be the postcard."
+    },
+    {
+      "slug": "exhibit_at_j_town_apartments",
+      "action": "Students typically pause by J Town’s rotating ground-floor exhibits while walking the block. Afternoons during open moves are easiest to catch.",
+      "photoPrompt": "Take a picture with the current art piece and building behind."
+    },
+    {
+      "slug": "parade_of_floats_adventure",
+      "action": "Students typically meet by the colorful ‘Parade of Floats’ sculptures downtown. Weekday evenings offer cool lighting and empty sidewalks.",
+      "photoPrompt": "Pose in front of one of the sculpture floats with its colorful design behind you."
+    },
+    {
+      "slug": "hoggish_customs_inc",
+      "action": "Students typically spot creative custom bikes and art cars here. Fridays are when builds often get the most eyeballs.",
+      "photoPrompt": "Snap a shot leaning on a custom bike or painted car."
+    },
+    {
+      "slug": "san_jose_museum_of_quilts_and_textiles",
+      "action": "Students typically find art quilts and fiber installations. First Fridays from 6–9 pm are FREE and packed with creativity.",
+      "photoPrompt": "Pose in front of a striking quilt or textile wall."
+    }
+  ]
+  [
+    {
+      "slug": "victory_salute_statue",
+      "action": "Students typically pause at the Victory Salute Statue near SJSU memorial grove. Mornings bring quiet reflection and soft light.",
+      "photoPrompt": "Stand with the statue in frame, as if sharing the salute."
+    },
+    {
+      "slug": "cyber_detectives",
+      "action": "Students typically tackle cyber puzzles at the Cyber Detectives exhibit inside The Tech. Afternoons on weekends are less crowded.",
+      "photoPrompt": "Snap your hands working on a touchscreen hacker challenge."
+    },
+    {
+      "slug": "the_tech_studio",
+      "action": "Students typically prototype ideas in The Tech Studio maker space. Weekday afternoons are prime for hands-on creativity.",
+      "photoPrompt": "Pose with tools or projects mid-build at the workbench."
+    },
+    {
+      "slug": "solve_for_earth",
+      "action": "Students typically challenge sustainability puzzles at Solve for Earth. Midday on weekends tends to be less packed.",
+      "photoPrompt": "Snap yourself turning a knob on the Connections Wall."
+    },
+    {
+      "slug": "institute_of_contemporary_art_san_jose",
+      "action": "Students typically check emerging art at ICA San José. Thursdays opening day is perfect for art walks and gallery crawl energy.",
+      "photoPrompt": "Pose near a bold or kinetic piece inside the gallery."
+    },
+    {
+      "slug": "del_monte_park",
+      "action": "Students typically chill by the Guadalupe River or grassy lawns at Del Monte Park. Early weekend mornings are peaceful and green.",
+      "photoPrompt": "Snap yourself lounging with the river or lawn in the background."
+    },
+    {
+      "slug": "gardner_community_center",
+      "action": "Students typically join rec sports or pick-up games at Gardner Community Center. Evenings after school bring community energy.",
+      "photoPrompt": "Pose mid-action with a ball or court in the shot."
+    },
+    {
+      "slug": "cahill_park",
+      "action": "Students typically lounge on the grassy knolls or shoot hoops on the half-court. Early weekday afternoons stay chill.",
+      "photoPrompt": "Snap your group sprawled out on the lawn or shooting a basket."
+    },
+    {
+      "slug": "guadalupe_river_park",
+      "action": "Students typically stroll the Guadalupe River Trail or lounge by public art installations. Early mornings by the river are so peaceful.",
+      "photoPrompt": "Pose with the river trail or public art seating behind."
+    },
+    {
+      "slug": "ryland_park",
+      "action": "Students typically catch a sunset from the grassy mounds or play soccer with friends. Golden hour is unbeatable here.",
+      "photoPrompt": "Snap your silhouette on the hill as the sun dips."
+    },
+    {
+      "slug": "plaza_de_cesar_chavez",
+      "action": "Students typically vibe here during Music in the Park or chill at lunch. Evenings when lights hit the fountain feel magical.",
+      "photoPrompt": "Pose near the fountain or statue with the crowd in the back."
+    },
+    {
+      "slug": "walmart_garden_center",
+      "action": "Students typically grab succulents or seedlings for dorm greenery. Weekend mornings mean fewer crowds and cooler picks.",
+      "photoPrompt": "Snap your new plant family lined up in your cart."
+    },
+    {
+      "slug": "backesto_park",
+      "action": "Students typically come here for open-air movies or night skate vibes. Fridays when the glow-in-the-dark games pop off.",
+      "photoPrompt": "Snap the lit-up skate circle or open-air movie screen behind you."
+    },
+    {
+      "slug": "monopoly_in_the_park",
+      "action": "Students typically drop in for the giant Monopoly board at Discovery Meadow. Afternoons are great when the board’s light and game-ready.",
+      "photoPrompt": "Pose standing on your favorite property square of the giant board."
+    },
+    {
+      "slug": "darling_fischer_garden_chapel",
+      "action": "Students typically stop for quiet reflection by the garden chapel. Weekday mid-afternoons are especially peaceful.",
+      "photoPrompt": "Snap the chapel doorway framed with greenery."
+    },
+    {
+      "slug": "japanese_friendship_garden",
+      "action": "Students typically feed koi or wander the ponds. Mornings after opening are peaceful and the koi are active.",
+      "photoPrompt": "Pose near a koi pond with the pagoda in view."
+    },
+    {
+      "slug": "biebrach_park",
+      "action": "Students typically pick up frisbee or dog-walk along winding paths. Late afternoon shadows feel golden on the hills.",
+      "photoPrompt": "Snap your frisbee toss in mid-air with park hills behind."
+    },
+    {
+      "slug": "kelley_park",
+      "action": "Students typically picnic in shaded lawns or hit the disc-golf course behind History Park. Weekday mornings are the best for peaceful walks.",
+      "photoPrompt": "Snap your crew lounging among the trees with Happy Hollow in the background."
+    },
+    {
+      "slug": "william_street_park",
+      "action": "Students typically walk pets or chill in the community park. Bark in the Park dog show days are a vibe.",
+      "photoPrompt": "Pose near the grassy field or by a cute pup during the dog event."
+    },
+    {
+      "slug": "selma_olinder_park",
+      "action": "Students typically stroll or chill by Coyote Creek at this quiet local spot. Late afternoons feel extra peaceful.",
+      "photoPrompt": "Stand near the creek or on the walking path for a nature moment."
+    },
+    {
+      "slug": "bonita_park",
+      "action": "Students typically drop by for swing set hangs or quick pick-up games. Afternoons after class are prime for a park vibe.",
+      "photoPrompt": "Snap your feet swinging or a candid while sitting on the grass."
+    },
+    {
+      "slug": "martin_park",
+      "action": "Students typically meet up for picnic hangs under the big trees. Weekends are mellow and perfect for group hangs.",
+      "photoPrompt": "Pose with blanket and snacks under tree shade."
+    },
+    {
+      "slug": "discovery_meadow",
+      "action": "Students typically play on the giant Monopoly board and explore the river trail. Afternoon light and fewer crowds make it perfect.",
+      "photoPrompt": "Pose on your favorite property tile of the giant board."
+    },
+    {
+      "slug": "viet_heritage_garden",
+      "action": "Students typically stroll this pocket garden for quiet flora and cultural vibe. Evenings when lanterns light up make it magical.",
+      "photoPrompt": "Snap with a lantern or garden sculpture in view."
+    },
+    {
+      "slug": "st_james_park",
+      "action": "Students typically chill around the palm-tree plaza or grab a light rail ride nearby. Mornings are peaceful before downtown picks up.",
+      "photoPrompt": "Pose under a palm tree with the courthouse visible behind."
+    },
+    {
+      "slug": "rotary_playgarden",
+      "action": "Students typically visit this inclusive play garden for nostalgic vibes or event hangs. Weekends are busy with parents and pets.",
+      "photoPrompt": "Snap next to the wheelchair-accessible carousel or interactive art."
+    },
+    {
+      "slug": "bestor_art_park",
+      "action": "Students typically rest or doodle murals in this SoFA-side mini-park. Golden hour lighting makes for chill sketching or snaps.",
+      "photoPrompt": "Pose beside the mural or bench with artistic textures behind you."
+    },
+    {
+      "slug": "odonnell_garden_park",
+      "action": "Students typically chill by the splash features or swing sets. Early weekday afternoons are chill with less crowd.",
+      "photoPrompt": "Snap your group mid-splash or swinging on the playground."
+    },
+    {
+      "slug": "yum_yum_donuts",
+      "action": "Students typically grab late-night donuts and breakfast sammies. It’s open 24/7 so any hour hits.",
+      "photoPrompt": "Hold up your donut haul like a badge of honor amid the morning line."
+    },
+    {
+      "slug": "academic_coffee",
+      "action": "Students typically swing by for ethically sourced lattes and study vibes. Weekday mornings before 10 am hit different.",
+      "photoPrompt": "Pose with your latte and croissant in the modern café light."
+    },
+    {
+      "slug": "walmart_neighborhood_market",
+      "action": "Students typically swing through for snacks and essentials. Early weekday evenings after class are the least chaotic.",
+      "photoPrompt": "Snap your cart loaded up with ramen, fruit, or study snacks by the front entrance."
+    },
+    {
+      "slug": "k_and_j_sweets_and_bakery",
+      "action": "Students typically pick up Filipino breads and pastries when craving something sweet. Late afternoons are when the new batches drop.",
+      "photoPrompt": "Hold your pan de coco or ensaymada in front of the pastry case."
+    },
+      {
+        "slug": "holy_cannoli_catering",
+        "action": "Students typically pre-order trays for buckle parties or study group fuel. Fridays are clutch for pick-up before weekend hangs.",
+        "photoPrompt": "Snap the cannoli tray with a campus backdrop."
+      },
+      {
+        "slug": "paleta_planeta",
+        "action": "Students typically crave the wild fusion paletas downtown. Weekdays after class mean no lines for mango-fresa with chamoy.",
+        "photoPrompt": "Pose with your paleta topped with gummy bears and chamoy in front of the shop."
+      },
+      {
+        "slug": "ding_tea_house",
+        "action": "Students typically grab boba and chill with the café quotes. IDK if you knew but Tuesday-Sunday evenings are the move for slower lines.",
+        "photoPrompt": "Snap your tea cup with the wall quotes behind you."
+      },
+      {
+        "slug": "fosters_freeze",
+        "action": "Students typically hit this retro spot for soft-serve runs with friends. Weekend afternoons are peak for milkshake hangs.",
+        "photoPrompt": "Hold your milkshake or sundae like a trophy in front of the vintage sign."
+      },
+      {
+        "slug": "gong_cha_willow_glen",
+        "action": "Students typically swing by for taro or honeydew milk teas near campus. Weekend midday vibes are perfect for line-wait chill.",
+        "photoPrompt": "Pose with your pretty Gong Cha cup under the log-style shop facade."
+      },
+      {
+        "slug": "sinceretea_adventure",
+        "action": "Students typically grab mochi egg puffs and floral teas. Afternoon chill-time (Tuesday–Friday) vibes are mellow and cozy.",
+        "photoPrompt": "Hold your pastel tea with mochi puff near the counter."
+      },
+      {
+        "slug": "voltaire_coffee_roasters",
+        "action": "Students typically kick start their day here with ethically roasted lattes. Morning coffee runs during weekdays are smooth without the line.",
+        "photoPrompt": "Pose with a latte and a pastry on the corner table."
+      },
+      {
+        "slug": "towers_cafe",
+        "action": "Students typically drop by for breakfast sandwiches and real-deal local waffles. Weekday mornings before 10 AM is the sweet spot.",
+        "photoPrompt": "Hold your waffle or breakfast burrito with the Market St. backdrop."
+      },
+      {
+        "slug": "boba_love",
+        "action": "Students typically grab bubble tea and takoyaki after class. Thursdays are clutch—only open then and the vibe is chill.",
+        "photoPrompt": "Pose with your boba and takoyaki tray under shop neon."
+      },
+      {
+        "slug": "dulcinea_panaderia_oaxaquena",
+        "action": "Students typically snag Oaxacan pastries like memelitas and croissant sandwiches. Early weekday mornings (5–7 AM) are fresh-out-of-oven bliss.",
+        "photoPrompt": "Hold a memelita or pan de elote with the bakery shelves behind."
+      },
+      {
+        "slug": "grace_deli_and_cafe",
+        "action": "Students typically grab burritos or fresh sandwiches for study sesh fuel. Weekday lunch hours (7 AM–2 PM) are peak but worth the hype.",
+        "photoPrompt": "Pose with your wrap against the bright patio wall."
+      },
+      {
+        "slug": "susiecakes_willow_glen",
+        "action": "Students typically satisfy celebrations with custom cupcakes or cakes. Midday on weekends means a chill queue and sugar’s ready.",
+        "photoPrompt": "Pose with a cupcake tower and the Willow Glen vibe behind."
+      },
+      {
+        "slug": "sweet_passions_bakery",
+        "action": "Students typically treat themselves with cream-filled conchas or strawberry cake. Bright weekdays (4:30 AM open) mean scoring fresh morning sweets.",
+        "photoPrompt": "Hold your cake slice near the display counter glow."
+      },
+      {
+        "slug": "nirvana_soul_coffee",
+        "action": "Students typically find sample-roast brews and cozy seats here. Late weekday mornings are perfect for a quiet sip sesh.",
+        "photoPrompt": "Pose with your pour-over and soft lighting behind."
+      },
+      {
+        "slug": "111_bakery_inc",
+        "action": "Students typically grab fresh bagels or muffins on the move. Mornings when the oven’s just off are prime for warm carbs.",
+        "photoPrompt": "Hold a warm muffin with bakery aroma in frame."
+      },
+      {
+        "slug": "la_michoacana_las_delicias",
+        "action": "Students typically cool off with creative paletas like arroz con leche and tres leches. Weekday afternoons keep lines short and scoops fresh.",
+        "photoPrompt": "Hold your paleta or banana split by the neon menu with a grateful grin."
+      },
+      {
+        "slug": "the_gelato_shop",
+        "action": "Students typically treat themselves to artisan gelato and espresso downtown. Friday or Saturday nights extend to midnight vibes.",
+        "photoPrompt": "Pose with a gelato cone and the market bustle behind you."
+      },
+      {
+        "slug": "el_rico_pan_bakery",
+        "action": "Students typically grab warm conchas or empanadas early for study sesh fuel. Doors open around 4 AM so you’re always first batch energy.",
+        "photoPrompt": "Hold a hot pan dulce in front of the cozy display as the morning lights in."
+      },
+      {
+        "slug": "voyager_st_john",
+        "action": "Students typically sip Tokyo lattes or pistachio rose morning cake here. Saturday mornings around 10 AM feel extra stylish and chill.",
+        "photoPrompt": "Pose with your Tokyo latte or pastry with the café patio behind."
+      },
+      {
+        "slug": "moc_delights",
+        "action": "Students typically grab Saigon-style snacks and bold milk teas in Vietnam Town. Weekday afternoons post-class are perfect for bites without the line.",
+        "photoPrompt": "Hold a house milk tea next to the vibrant interior wall."
+      },
+      {
+        "slug": "j_and_k_boba",
+        "action": "Students typically dab into fruity teas like mango and passionfruit. It's a start-up vibe so weekday evenings feel hype with fresh drops.",
+        "photoPrompt": "Pose with your eerie vivid drink and the minimalist shop sign."
+      },
+      {
+        "slug": "baetea_coffee_house_and_arabian_coffee",
+        "action": "Students typically discover Arabian coffee and live-spoken performances. Evenings on Tully Road feel chill and creative.",
+        "photoPrompt": "Hold your fragrant coffee with lantern or cafe decor behind."
+      },
+      {
+        "slug": "fernandez_bakery",
+        "action": "Students typically pick up custom-decorated treats or laing meat pies for events. Mornings are calm before the deli and party tray rush.",
+        "photoPrompt": "Snap the bakery case with cartoon-themed cakes and your pickup order."
+      },
+      {
+        "slug": "cafe_do_canto_portuguese_cafe",
+        "action": "Students typically sip Portuguese derretido or grab pastel de nata. Weekend mornings on Second Street feel cozy and quiet.",
+        "photoPrompt": "Hold a pastel de nata with café tiles in view."
+      },
+      {
+        "slug": "tea_degree",
+        "action": "Students typically fuel late-night study with a strong tea fix. Evening trips after the library close feel focused but uplifting.",
+        "photoPrompt": "Pose with your tea cup against their cozy menu board."
+      },
+      {
+        "slug": "buon_me_cafe",
+        "action": "Students typically start their day with egg coffee and vintage vibes. Weekend evenings (Fri–Sat) stretch to midnight and feel extra chill.",
+        "photoPrompt": "Hold your signature egg or avocado coffee with the café’s retro neon behind."
+      },
+      {
+        "slug": "el_buen_gusto",
+        "action": "Students typically grab tacos and pan dulce for affordable late-day snacks. Evenings around 8 PM keep the bakery line moving.",
+        "photoPrompt": "Posing with tacos or sweet pan dulce near the service counter."
+      },
+      {
+        "slug": "dumont_creamery_and_cafe",
+        "action": "Students typically swing by for gelato or boba and study collabs. Open all day (7 AM–10 PM) so afternoon chill sessions feel seamless.",
+        "photoPrompt": "Hold your favorite ice cream flavor with the cafe counter backdrop."
+      },
+      {
+        "slug": "el_pan_dulce_bakery",
+        "action": "Students typically pick up fresh pan dulce before sunrise. Their early morning window (open by dawn) is prime for straight-out-of-oven energy.",
+        "photoPrompt": "Hold a warm concha or empanada in front of the glowing bakery display."
+      },
+      {
+        "slug": "target",
+        "action": "Students typically stock up on dorm essentials or café snacks. Sunday mornings tend to be the least crowded.",
+        "photoPrompt": "Pose in your cart loaded with snacks and supplies at the front line."
+      },
+      {
+        "slug": "paris_avenue",
+        "action": "Students typically check out streetwear or vintage finds here. Weekend browsing is relaxed and full of vibes.",
+        "photoPrompt": "Pose with a standout pin or trench from the storefront wall."
+      },
+      {
+        "slug": "bui_phong_bakery",
+        "action": "Students typically grab bánh mì and pandan treats on the go. Mornings before class are quick and satisfying.",
+        "photoPrompt": "Hold your bánh mì or pandan roll with the bakery sign behind."
+      },
+      {
+        "slug": "la_lune_sucree_pastry_shop",
+        "action": "Students typically treat themselves with French-style sweets and croissants. Afternoon pick-me-up runs hit perfectly after class.",
+        "photoPrompt": "Pose with a macaron tower or croissant stack behind a table."
+      }
+      {
+        "slug": "iceboom",
+        "action": "Students typically recharge with refreshing slushes or shaved ice. Weekend lines move fast, especially during sunny afternoons.",
+        "photoPrompt": "Hold your colorful slush cup in front of the vibrant menu."
+      },
+      {
+        "slug": "nievelandia",
+        "action": "Students typically crave sweet Mexican fried ice\u2014like churro cones with ice cream. Weekday afternoons are low-key and ready for sugar kicks.",
+        "photoPrompt": "Hold your churro-wrapped ice cream in front of the bright cart or storefront."
+      },
+      {
+        "slug": "ca_bakehouse",
+        "action": "Students typically go for the pandan waffles or durian egg tarts. Thursday through Sunday midday is when the fresh batches drop.",
+        "photoPrompt": "Hold a pandan green waffle or pastel tart in front of the shop entrance."
+      }
+      {
+        "slug": "thanh_son_hien_khanh",
+        "action": "Students typically grab Vietnamese teas and sweets like taro or pandan jelly. Late afternoons post-class are smooth and not crowded.",
+        "photoPrompt": "Pose with your colorful tea and pudding combos in the grab-and-go window."
+      },
+      {
+        "slug": "bun_rieu_cua_tan_dinh",
+        "action": "Students typically crave rich noodle soups and noodle dishes like bún riêu or bánh canh. Weekdays are clutch before the dinner line builds.",
+        "photoPrompt": "Hold your steaming bowl of bún riêu with slurp-ready chopsticks."
+      },
+      {
+        "slug": "paris_baguette_hostetter",
+        "action": "Students typically snag morning pastries or birthday cakes. Weekday mornings after 9 AM mean fresh croissants and shorter lines.",
+        "photoPrompt": "Pose with a fruit tart or éclair in front of the pastel bakery counter."
+      },
+      {
+        "slug": "mexico_bakery",
+        "action": "Students typically grab fresh bolillos or sweet conchas when they need study fuel. Early weekday mornings are straight oven-to-table.",
+        "photoPrompt": "Hold a sugar-dusted concha up with a soft bakery backdrop."
+      },
+      {
+        "slug": "cd_bakery_and_deli",
+        "action": "Students typically pick up fresh baked goods or sandwiches to-go. Rush hour evenings are great when bread just came out of the oven.",
+        "photoPrompt": "Hold a deli sandwich or pastry loaf with the display case glow behind."
+      },
+      {
+        "slug": "pastelaria_adega",
+        "action": "Students typically stop by for Portuguese custard tarts or almond pastry. Weekend afternoons bring the flakiest best bites.",
+        "photoPrompt": "Pose with a pastel de nata or almond croissant and pastel shop decor behind."
+      },
+      {
+        "slug": "pink_elephant_bakeries",
+        "action": "Students typically celebrate with oversized cupcakes or custom cakes. Pre-noon runs for new batches are always worth it.",
+        "photoPrompt": "Hold a jumbo cupcake with playful shop décor behind."
+      },
+      {
+        "slug": "corner_market_kitchen",
+        "action": "Students typically grab breakfast sandwiches or coffee between classes. Weekday mornings think 7–9 AM—short wait and smooth café vibes.",
+        "photoPrompt": "Pose with your sandwich and latte in the café window glare."
+      },
+      {
+        "slug": "frost_cupcake_factory",
+        "action": "Students usually swing by for gourmet cupcakes fresh daily. Fridays and Saturdays stay open late until 6 PM, perfect for after-class treats.",
+        "photoPrompt": "Pose with your cupcake stack in front of the colorful display case."
+      },
+      {
+        "slug": "lindas_bakery",
+        "action": "Students typically grab custom cakes like mocha or rum tiramisu for celebrations. Weekday afternoons after school are chill and perfect for ordering ahead.",
+        "photoPrompt": "Hold your cake box near the bakery counter full of pan dulce."
+      },
+      {
+        "slug": "nomikai",
+        "action": "Students typically vibe over izakaya bites and karaoke. Weeknight happy hours hit different with late munchies and chill crowds.",
+        "photoPrompt": "Pose with a skewered snack or sashimi plate under cozy lighting."
+      },
+      {
+        "slug": "still_og_and_alter_ego_cocktail_club",
+        "action": "Students typically hit this for craft cocktails with friends. Fridays feel electric when the DJ and locals show up.",
+        "photoPrompt": "Hold your cocktail glass with moody lights behind."
+      },
+      {
+        "slug": "good_karma_fine_ales_food_and_hifi",
+        "action": "Students typically flip through records while sipping ales. Weekend afternoons bring full tables and good tunes.",
+        "photoPrompt": "Pose with an ale and vinyl crate next to you."
+      },
+      {
+        "slug": "the_caravan_lounge",
+        "action": "Students typically wander in for lounge vibes, board games and exotic tea. Sunday evenings calm down, perfect for low-key hangs.",
+        "photoPrompt": "Hold your tea cup or board game piece in cozy corner lighting."
+      },
+      {
+        "slug": "little_wine_house",
+        "action": "Students typically discover natural wines in an intimate setting. Thursday nights bring quieter wine chats with friends.",
+        "photoPrompt": "Pose holding your wine glass next to the bottle wall."
+      },
+      {
+        "slug": "san_jose_brew_bike",
+        "action": "Students typically roll by this group ride for craft beer pedaling fun. Weekend late afternoons are prime for cycles full of laughs.",
+        "photoPrompt": "Pose pedaling with a pint in hand and bike bar behind."
+      },
+      {
+        "slug": "bijan_wine_bar",
+        "action": "Students typically dive into elegant wines after dinner. Weekday quiet evenings are perfect for low-key wine tasting with friends.",
+        "photoPrompt": "Pose with a wine glass near a cozy lounge seat."
+      },
+      {
+        "slug": "labyrinth_bar_and_kitchen",
+        "action": "Students usually unwind here with creative cocktails and dim vibes. Thursday nights bring relaxed flirty energy before the weekend.",
+        "photoPrompt": "Hold a cleverly garnished drink against the moody bar backdrop."
+      },
+      {
+        "slug": "fountainhead_bar",
+        "action": "Students typically kick off the night with architect-inspired cocktails at this SoFA Market bar. Fridays bring live DJs and night-market flickers.",
+        "photoPrompt": "Pose with your colorful cocktail against the SoFA hall vibe in the background."
+      },
+      {
+        "slug": "three_sisters_whiskey_bar",
+        "action": "Students typically sip whiskey flights in San Pedro Square Market. Trio Thursdays are triple the fun with trivia or live setup.",
+        "photoPrompt": "Hold a flight of whiskeys with the outdoor patio behind."
+      },
+      {
+        "slug": "55_south",
+        "action": "Students typically lounge over cocktails and mac & cheese. Fridays and Saturdays stretch late with lounge-worthy vibes.",
+        "photoPrompt": "Pose with your mac & cheese or cocktail inside the sleek patio."
+      },
+      {
+        "slug": "oflahertys_irish_pub",
+        "action": "Students typically rally here before Sharks games or for happy-hour hangs. Round-the-clock use on weekends keeps it buzzing.",
+        "photoPrompt": "Pose with a frosty pint and the Irish pub sign behind."
+      },
+      {
+        "slug": "floodcraft_brewing_co",
+        "action": "Students typically tap into craft brews at this modern brewery. Weekends are perfect for hitting the patio and tasting new pours.",
+        "photoPrompt": "Pose holding a fresh draft with the brewery tanks behind."
+      },
+      {
+        "slug": "loft_bar_and_bistro",
+        "action": "Students typically start with rooftop hangs or event vibes. Thursday nights and weekend patios feel like local mini-raves.",
+        "photoPrompt": "Pose with a cocktail on the rooftop terrace under string lights."
+      },
+      {
+        "slug": "skewers_and_brew",
+        "action": "Students typically pair skewers with brew flights. Late-night munches on weekends hit hard with flavor and chill beats.",
+        "photoPrompt": "Hold your skewer combo and pint next to the bar lights."
+      },
+      {
+        "slug": "narrative_fermentations",
+        "action": "Students typically sip sours and hang at trivia or Blues Jam nights. Sundays from 4–7 PM bring vibes and best pours.",
+        "photoPrompt": "Pose with your sour ale by the rustic taproom wall."
+      }
+      {
+        "slug": "five_points",
+        "action": "Students typically grab a twist – brunch, bites, or brews. Weekends feel eclectic and communal with food carts or pop-ups.",
+        "photoPrompt": "Pose with the food cart backdrop or eclectic seating palette."
+      },
+      {
+        "slug": "district_bar",
+        "action": "Students typically come here for bold cocktails in sleek interiors. Weekend late-nights are smooth with lounge darkness and mood lighting.",
+        "photoPrompt": "Hold your cocktail amber-lit beside the bar’s neon sign."
+      },
+      {
+        "slug": "the_brit_sports_pub_and_patio",
+        "action": "Students typically rally here before SAP Center events or watch the game. Wednesdays through Saturdays have good food deals and a lively crowd.",
+        "photoPrompt": "Pose with wings or bangers & mash in front of the pub’s neon sign."
+      },
+      {
+        "slug": "cash_only",
+        "action": "Students tip back honky-tonk cocktails with Johnny Cash murals and pool tables. Weekdays 2–6 PM bring free pool and quieter vibes.",
+        "photoPrompt": "Pose with your drink in front of the Johnny Cash wall mural."
+      },
+      {
+        "slug": "fairway_zone_sports_bar_and_lounge",
+        "action": "Students typically cheer over virtual golf or games near the muni course. Weeknights under new ownership bring fresh decor and hype.",
+        "photoPrompt": "Pose with a virtual golf screen or pints with your crew."
+      },
+      {
+        "slug": "sp2_communal_bar_and_restaurant",
+        "action": "Students typically unwind over shared apps and cocktails on the patio. Late-night vibes hit peak Fri–Sat when they stay open till 2 AM.",
+        "photoPrompt": "Hold your truffle fries or pizza slice with the chic outdoor seating behind."
+      },
+      {
+        "slug": "goosetown_lounge",
+        "action": "Students typically belt karaoke or chill with strong pours and good bartenders. Friday & Saturday nights are karaoke central.",
+        "photoPrompt": "Pose mid-lyric on the lounge’s tiny karaoke stage."
+      },
+      {
+        "slug": "clandestine_brewing",
+        "action": "Students typically sip small-batch brews inside their Willow Glen taproom. Taproom opens Wed–Sun, and Fridays–Saturdays are perfect for fresh pours.",
+        "photoPrompt": "Hold your brand-new IPA in front of the fermentation tanks."
+      },
+      {
+        "slug": "the_continental_bar_lounge_and_patio",
+        "action": "Students typically vibe with craft cocktails and live DJs in the historic SoFA brick spot. Happy hour’s 3:30–9 PM Mon–Sat, and live sets after make it timeless.",
+        "photoPrompt": "Pose with a cocktail in the leather lounge or on the patio."
+      },
+      {
+        "slug": "haberdasher",
+        "action": "Students typically sip prohibition-style cocktails in this pro-mixology speakeasy. Late Fri–Sat nights bring moody vibes and smooth pours.",
+        "photoPrompt": "Pose with your craft cocktail in the dim, red-lit basement."
+      },
+      {
+        "slug": "willow_den_public_house",
+        "action": "Students typically swing by for pool, shuffleboard, and DJs in a dim, dive-style bar. Thursdays through Saturdays are jammed with live beats.",
+        "photoPrompt": "Pose with a drink in front of the Johnny Cash mural or shuffleboard tables."
+      },
+      {
+        "slug": "firehouse_no_1",
+        "action": "Students typically pull up for gastropub vibes with sliders and fire-flair cocktails. Happy hour (Tue–Thu 4–9 PM) is the prime time to beat the crowd.",
+        "photoPrompt": "Pose with a flaming Dr Pepper or slider stack in fire-engine red decor."
+      },
+      {
+        "slug": "la_sonorense_bakery",
+        "action": "Students typically grab sweet pan dulce or tortas with café vibes. Early weekday mornings are prime for freshly baked conchas right out of the oven.",
+        "photoPrompt": "Hold your pan dulce in front of the bakery display with warm lighting behind."
+      },
+      {
+        "slug": "guildhouse",
+        "action": "Students typically meet here for elevated gaming, drinks, or community play. Weekend nights bring DJs or digital battles with a social buzz.",
+        "photoPrompt": "Pose with a controller or drink by the gaming rigs."
+      },
+      {
+        "slug": "cub_n_cony",
+        "action": "Students typically pop in for indie art, gifts, or pop-up events. Saturdays during MOMENT or holiday weekends bring the craftiest energy.",
+        "photoPrompt": "Hold your latest print or stationery find with the storefront behind."
+      },
+      {
+        "slug": "spartan_recreation_and_aquatic_center",
+        "action": "Students typically join cycling, climbing, or swim laps here. Evenings on weeknights are chillest—pool lanes clear and treadmills wait.",
+        "photoPrompt": "Pose with a pool lane or rock-climb wall behind you."
+      },
+      {
+        "slug": "the_old_wagon_saloon_and_grill_adventure",
+        "action": "Students typically ride in for wild-west cocktails and hearty grub. Friday night saloon vibes bring extra energy and laughs.",
+        "photoPrompt": "Pose with your burger or shot glass in front of western decor."
+      },
+      {
+        "slug": "game_kastle",
+        "action": "Students typically drop in for tabletop, RPGs, or grabbing collectable games. Weekend afternoons after tournaments are the perfect vibe.",
+        "photoPrompt": "Hold your favorite board game or dice set in the game aisles."
+      },
+      {
+        "slug": "best_buy",
+        "action": "Students typically hit Best Buy for dorm tech or study gear. Early weekday evenings before the rush are stress-free and smooth.",
+        "photoPrompt": "Pose with your laptop or headphones box in the electronics aisle."
+      },
+      {
+        "slug": "tt_glass_and_windows",
+        "action": "Students typically look here for bespoke glass decor or mini room dividers. Weekday visits are quieter so you can chat with staff easily.",
+        "photoPrompt": "Hold a swatch or sample window against the workshop backdrop."
+      },
+        {
+          "slug": "rec_room",
+          "action": "Students typically hang to play billiards, darts, or pinball with friends. Weekdays after class are perfect—quieter tables and friendly competition.",
+          "photoPrompt": "Hold a pool cue or stand by a classic arcade game."
+        },
+        {
+          "slug": "renegades",
+          "action": "Students typically rally here for bold brews or pub grub. Late Fridays & Saturdays bring a good-time local crowd and live energy.",
+          "photoPrompt": "Hold your pint next to a neon sign or booth vibe."
+        },
+        {
+          "slug": "slingshot_pinball",
+          "action": "Students usually hit up Slingshot Pinball for a retro arcade escape with over 20 machines. Weekend afternoons are prime for less wait time and max flipping.",
+          "photoPrompt": "Pose mid-flip at your favorite pinball machine under the neon glow."
+        },
+        {
+          "slug": "san_pedro_social",
+          "action": "Students typically pregame here before gigs—bowling, arcade, and vibes all in one spot. Late-night Fridays and Saturdays are where the energy peaks.",
+          "photoPrompt": "Pose with your slider and bowl before tearing into games or bowling lanes."
+        },
+        {
+          "slug": "a_m_craft",
+          "action": "Students usually grab thoughtfully made cocktails or pints with polished vibes. Happy hour weekdays are still smooth before the buzz kicks in.",
+          "photoPrompt": "Pose with a craft cocktail next to their sleek bar setup."
+        },
+        {
+          "slug": "jakes_of_willow_glen",
+          "action": "Students typically meet for wings, beer, and big games. Sundays are stadium-style—full screens and hype energy.",
+          "photoPrompt": "Pose with a cheesy wing and a turf-filled screen in view."
+        },
+        {
+          "slug": "urban_putt_san_jose",
+          "action": "Students typically swing by for mini-golf meets with creative holes. Friday night dates or squad hangs are always extra buzzed.",
+          "photoPrompt": "Pose mid-putt with one of the quirky golf holes behind."
+        },
+        {
+          "slug": "mega_claws",
+          "action": "Students typically drop quarters for prize-grab machines and laughs. Late-night weekends get viral energy and packed claw lines.",
+          "photoPrompt": "Pose pulling the claw control with heels in the prize bin behind."
+        },
+        {
+          "slug": "games_nomad",
+          "action": "Students typically hunt used games or consoles for retro scores. Thrift-vibes Wednesdays and Saturdays after class are treasure hunts.",
+          "photoPrompt": "Pose with your retro game haul in the stacked shelf aisle."
+        },
+        {
+          "slug": "4th_street_bowl",
+          "action": "Students usually catch casual bowling nights for old-school neon lanes. Friday after class is the real MVP—lanes to yourself.",
+          "photoPrompt": "Pose mid-throw in neon-lit lane with ball in hand."
+        },
+        {
+          "slug": "gamestop",
+          "action": "Students typically browse drops or trade used games after classes. Weekday afternoons post-class are chill with restocked swag.",
+          "photoPrompt": "Pose holding a collectible or new release shelf behind you."
+        },
+        {
+          "slug": "pete_be_center",
+          "action": "Students typically hit up the Pete BE Center for ceramics, glass, or VLSI classes. Evenings during open studio time are focused and creative.",
+          "photoPrompt": "Pose mid-sculpt or near firing kilns and benches."
+        },
+        {
+          "slug": "dr_funk",
+          "action": "Students typically escape into tropical tiki vibes and rum cocktails. Friday and Saturday nights go late—midnight to 2 AM—for prime island energy.",
+          "photoPrompt": "Pose with your rum cocktail in front of the thatched booths or bamboo bar."
+        },
+        {
+          "slug": "art_boutiki_music_hall",
+          "action": "Students typically catch live indie music tucked into a comic-book venue. Friday and Saturday 6–9 PM sets bring that intimate stage glow.",
+          "photoPrompt": "Pose with your beverage in front of the stage and comic-filled walls."
+        },
+        {
+          "slug": "gordon_biersch_brewing",
+          "action": "Students typically roll in for house-brewed beers and casual bites. Weekends around game time bring strong hops and friendly chatter.",
+          "photoPrompt": "Hold your fresh pint by the brewing tanks or open patio."
+        },
+        {
+          "slug": "the_office_bar_and_lounge",
+          "action": "Students typically slip into this lounge for low-key cocktails post-class. Late Wednesdays unwind easily with smooth beats and plush seats.",
+          "photoPrompt": "Pose with your crafty cocktail mellow-lit in the lounge."
+        },
+        {
+          "slug": "chromatic_music_academy",
+          "action": "Students typically drop in for music lessons or jam sessions. Evenings, especially midweek, are perfect for creative focus.",
+          "photoPrompt": "Pose mid-strum or with your instrument leaning next to the lesson poster."
+        },
+        {
+          "slug": "music_in_the_park",
+          "action": "Students typically swing by for free live sets outdoors. Summer Sunday evenings are prime when bands play and the grass is a chill spot.",
+          "photoPrompt": "Pose with the stage and string lights behind you in the park."
+        },
+        {
+          "slug": "on_the_corner_music",
+          "action": "Students typically pop in for sheet music or local instrument supply. Weekday afternoons are the quietest time to browse or ask for help.",
+          "photoPrompt": "Pose with sheet music or an instrument in front of the store window."
+        },
+        {
+          "slug": "aura_kitchen_and_bar",
+          "action": "Students typically gather over small plates and cocktails in a sleek setting. Friday post-class vibes open with full bar and mood lighting.",
+          "photoPrompt": "Hold an appetizer and cocktail together on the lit bar surface."
+        },
+        {
+          "slug": "jinnys_music_studio",
+          "action": "Students typically come here for private lessons or practice sessions. Weekday afternoon hours hit quiet peak for focus and skill moves.",
+          "photoPrompt": "Pose near the piano or lesson reflection in the mirror wall."
+        },
+        {
+          "slug": "park_avenue_music_center",
+          "action": "Students typically visit for instrument tuning or quick guitar fixes. Weekday afternoons are chill for chat and jam.",
+          "photoPrompt": "Pose with a headstock or music gear behind."
+        },
+        {
+          "slug": "rasputin_music_anastasias_vintage",
+          "action": "Students typically dig for vinyl treasures or quirky movie swag. Weekday afternoons (W–F) offer low-key thrift finds in peace.",
+          "photoPrompt": "Snapshot your record haul leaning against a wall of vinyl sleeves."
+        },
+        {
+          "slug": "applebees_grill_and_bar",
+          "action": "Students usually hit this for familiar eats and group dinners. Friday night hangouts come easy with classic bites and mood lighting.",
+          "photoPrompt": "Pose with their signature sizzling fajitas under the grill banner."
+        },
+        {
+          "slug": "market_beer_company",
+          "action": "Students typically head here for unique brews and laid-back vibes. Weekday happy hours (M–Th 4–7 PM) are the move for discounted pints.",
+          "photoPrompt": "Hold up your pint with their tap wall in soft focus behind."
+        },
+        {
+          "slug": "goodtime_bar",
+          "action": "Students typically vibe here over natural wines—no menu, just chat. Sundays are casual and cozy, especially for low-key meetups.",
+          "photoPrompt": "Pose with your wine glass under the disco ball-lit nook."
+        },
+        {
+          "slug": "fountain_blues_foundation",
+          "action": "Students usually catch soulful live sets by Cesar Chavez Plaza. Free Thursday night shows draw mellow crowds and laid-back feels.",
+          "photoPrompt": "Pose waving near the plaza stage with dusk lighting ahead."
+        },
+      
+        {
+          "slug": "lolah_entertainment",
+          "action": "Students typically find surprise performances or pop-ups. Evenings during downtown art walk feel extra curated and cool.",
+          "photoPrompt": "Pose with your wristband or event flyer and venue glow behind."
+        },
+        {
+          "slug": "orchestria_palm_court",
+          "action": "Students typically wander in for jazz-vibe cocktails under palms. Weekends have mellow swing sessions and lounge elegance.",
+          "photoPrompt": "Pose mid-sip with a martini and chandelier-lit palms around."
+        },
+        {
+          "slug": "hello_tea",
+          "action": "Students typically grab a fruit tea and study in peace. Thursday afternoons are the move when the line stays short and vibes chill.",
+          "photoPrompt": "Hold your cup with colorful fruit bits visible by the pastel cafe."
+        },
+        {
+          "slug": "teaspoon_campbell",
+          "action": "Students usually swing for refreshing boba and cake. Weekend afternoons fill fast—opt for weekdays just after class for chill sips.",
+          "photoPrompt": "Pose with your boba and slice of cake by the tea case."
+        },
+        {
+          "slug": "the_concert_hall_of_sjsu",
+          "action": "Students typically drop in for campus concerts or recitals. Evening shows are a perfect pre-game or date night campus vibe.",
+          "photoPrompt": "Pose outside the grand entrance with poster nights framing you."
+        },
+        {
+          "slug": "tea_alley",
+          "action": "Students typically swing by when the night peaks for boba and fried milk vibes. Open until 2 AM every night—that late-night magic hours.",
+          "photoPrompt": "Hold your crispy fried milk or boba in front of the neon-lit alley sign."
+        },
+        {
+          "slug": "hedley_club",
+          "action": "Students typically sip Prohibition-style cocktails to live jazz in an Art Deco lounge. Thursdays–Saturdays are the move with live sets and happy hour vibes.",
+          "photoPrompt": "Pose with a French 75 or ‘Diving Diva’ cocktail under the jazz-lit glow."
+        },
+        {
+          "slug": "san_jose_bar_and_grill",
+          "action": "Students typically land here for classic bar food and sports screens. Weekend happy hours bring that familiar and chill squad energy.",
+          "photoPrompt": "Hold your burger or wings in front of the bar’s LEDs or TV glow."
+        },
+        {
+          "slug": "tcafe",
+          "action": "Students usually grab quick grab-and-go café treats between classes. Mid-mornings after 10 AM are low-key and smooth for to-go lines.",
+          "photoPrompt": "Pose with your café snack and coffee by the counter or grab bar."
+        },
+        {
+          "slug": "the_almaden_cafe",
+          "action": "Students typically stop here for hearty café sandwiches or salads. Early weekday lunches (before 1 PM) are chill and quick.",
+          "photoPrompt": "Hold your sandwich or salad under the café sign or window light."
+        },

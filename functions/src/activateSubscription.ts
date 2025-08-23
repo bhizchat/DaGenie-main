@@ -1,5 +1,6 @@
-/* eslint-disable max-len */
-import {onCall, HttpsError} from "firebase-functions/v2/https";
+/* eslint-disable max-len, indent */
+import * as functions from "firebase-functions/v1";
+const {HttpsError} = functions.https;
 import {getFirestore} from "firebase-admin/firestore";
 
 const db = getFirestore();
@@ -9,17 +10,19 @@ const db = getFirestore();
  * Expects { expiryMillis: number } where expiryMillis is the Unix epoch ms
  * specifying when the current subscription period ends.
  */
-export const activateSubscription = onCall({region: "us-central1"}, async (request): Promise<void> => {
-  if (!request.auth) {
+export const activateSubscription = functions
+  .region("us-central1")
+  .https.onCall(async (data: any, context: functions.https.CallableContext): Promise<void> => {
+  if (!context.auth) {
     throw new HttpsError("unauthenticated", "Must be signed in");
   }
 
-  const {expiryMillis} = request.data ?? {};
+  const {expiryMillis} = data ?? {};
   if (typeof expiryMillis !== "number" || expiryMillis <= Date.now()) {
     throw new HttpsError("invalid-argument", "expiryMillis required and must be in the future");
   }
 
-  const uid = request.auth.uid;
+  const uid = context.auth!.uid;
   const userRef = db.collection("users").doc(uid);
   await userRef.set({
     subscription: {

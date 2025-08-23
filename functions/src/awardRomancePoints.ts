@@ -1,5 +1,6 @@
-/* eslint-disable max-len */
-import {onCall, HttpsError} from "firebase-functions/v2/https";
+/* eslint-disable max-len, indent */
+import * as functions from "firebase-functions/v1";
+const {HttpsError} = functions.https;
 import {FieldValue, getFirestore} from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
@@ -18,19 +19,21 @@ const db = getFirestore();
  * Ensures each planId can only be redeemed once per user.
  * Increments users/{uid}/stats.romancePoints (creates doc if missing).
  */
-export const awardRomancePoints = onCall({region: "us-central1"}, async (request) => {
-  if (!request.auth) {
+export const awardRomancePoints = functions
+  .region("us-central1")
+  .https.onCall(async (data: any, context: functions.https.CallableContext) => {
+  if (!context.auth) {
     throw new HttpsError("unauthenticated", "Must be signed in");
   }
 
-  const {planId} = request.data as {planId?: string};
+  const {planId} = data as {planId?: string};
   if (!planId || typeof planId !== "string") {
     throw new HttpsError("invalid-argument", "planId required");
   }
-  const ptsRaw = request.data?.points;
+  const ptsRaw = data?.points;
   const points = typeof ptsRaw === "number" && ptsRaw > 0 ? Math.min(ptsRaw, 10) : 3;
 
-  const uid = request.auth.uid;
+  const uid = context.auth!.uid;
   const userRef = db.collection("users").doc(uid);
   const awardRef = userRef.collection("awardedPlans").doc(planId);
   const statsRef = userRef.collection("stats").doc("aggregates");

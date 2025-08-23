@@ -3,10 +3,11 @@
  * Logic for automated, research-backed re-engagement push notifications.
  */
 
-import {onDocumentWritten} from "firebase-functions/v2/firestore";
-import {onSchedule} from "firebase-functions/v2/scheduler";
+import * as functions from "firebase-functions/v1";
+import {firestore as firestoreV1, pubsub as pubsubV1, Change, EventContext} from "firebase-functions/v1";
+
 import * as logger from "firebase-functions/logger";
-import {FieldValue, getFirestore} from "firebase-admin/firestore";
+import {FieldValue, Timestamp, getFirestore} from "firebase-admin/firestore";
 import {getMessaging} from "firebase-admin/messaging";
 import {initializeApp, applicationDefault, getApps} from "firebase-admin/app";
 
@@ -66,22 +67,24 @@ function nextPushTimestamp(stage: Stage): number | null {
 }
 
 /** Firestore trigger: recalc stage & nextPushAt whenever a user doc is updated. */
-export const onUserUpdate = onDocumentWritten("users/{uid}", async (event) => {
-  if (!event.data) return;
-  const after = event.data?.after?.data();
-  if (!after) return; // deletion
+export const onUserUpdate = firestoreV1
+  .document("users/{uid}")
+  .onWrite(async (change: Change<functions.firestore.DocumentSnapshot>, _context) => {
+    const after = change.after.data();
+    if (!after) return;
 
-  const {createdAt, lastOpenAt} = after;
-  if (!createdAt || !lastOpenAt) return;
 
-  const stage = calculateStage(createdAt, lastOpenAt);
-  const next = nextPushTimestamp(stage);
+    const {createdAt, lastOpenAt} = after;
+    if (!createdAt || !lastOpenAt) return;
 
-  await event.data.after.ref.update({
-    stage,
-    nextPushAt: next === null ? FieldValue.delete() : next,
+    const stage = calculateStage(createdAt, lastOpenAt);
+    const next = nextPushTimestamp(stage);
+
+    await change.after.ref.update({
+      stage,
+      nextPushAt: next === null ? FieldValue.delete() : Timestamp.fromMillis(next),
+    });
   });
-});
 
 /** Message templates per stage */
 const TEMPLATES: Record<Stage, string[]> = {
@@ -118,59 +121,64 @@ function pickTemplate(stage: Stage): string | null {
  * Cloud Scheduler entry-point – runs every 5 min.
  * Sends notifications whose `nextPushAt` is due and reschedules.
  */
-export const scheduledPushes = onSchedule("every 5 minutes", async () => {
-  const now = Date.now();
-  const snap = await db.collection("users")
-    .where("nextPushAt", "<=", now)
-    .where("fcmToken", "!=", null)
-    .limit(500)
-    .get();
+export const scheduledPushes = pubsubV1
+  .schedule("every 5 minutes")
+  .onRun(async (_context: EventContext) => {
+    const now = Date.now();
+    const nowTs = Timestamp.fromMillis(now);
+    // Always emit a log entry so we can confirm each invocation in Cloud Logs
+    logger.info("scheduledPushes invoked", {now});
+    const snap = await db.collection("users")
+      .where("nextPushAt", "<=", nowTs)
+      .where("fcmToken", "!=", null)
+      .limit(500)
+      .get();
 
-  if (snap.empty) return;
+    if (snap.empty) return;
 
-  const batch = db.batch();
-  const sendTasks: Promise<void>[] = [];
+    const batch = db.batch();
+    const sendTasks: Promise<void>[] = [];
 
-  snap.forEach((doc) => {
-    const data = doc.data();
-    const token = data.fcmToken as string;
-    const stage = data.stage as Stage;
+    snap.forEach((doc) => {
+      const data = doc.data();
+      const token = data.fcmToken as string;
+      const stage = data.stage as Stage;
 
-    const body = pickTemplate(stage);
-    if (!body) return;
+      const body = pickTemplate(stage);
+      if (!body) return;
 
-    // Build APNs / FCM message
-    sendTasks.push(messaging.send({
-      token,
-      notification: {
-        title: "DateGenie",
-        body,
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-            badge: 1,
+      // Build APNs / FCM message
+      sendTasks.push(messaging.send({
+        token,
+        notification: {
+          title: "DateGenie",
+          body,
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+              badge: 1,
+            },
           },
         },
-      },
-      data: {
-        deepLink: "dategenie://home", // Adjust to real deep-link
-      },
-    }).then(() => {
-      logger.info(`🔔 Sent push to ${doc.id}`);
-    }).catch((err) => {
-      logger.warn(`Failed push to ${doc.id}`, err);
-    }));
+        data: {
+          deepLink: "dategenie://home", // Adjust to real deep-link
+        },
+      }).then(() => {
+        logger.info(`🔔 Sent push to ${doc.id}`);
+      }).catch((err) => {
+        logger.warn(`Failed push to ${doc.id}`, err);
+      }));
 
-    // Schedule next push (or clear) per cadence
-    const next = nextPushTimestamp(stage);
-    batch.update(doc.ref, {
-      lastPushAt: now,
-      nextPushAt: next === null ? FieldValue.delete() : next,
+      // Schedule next push (or clear) per cadence
+      const next = nextPushTimestamp(stage);
+      batch.update(doc.ref, {
+        lastPushAt: now,
+        nextPushAt: next === null ? FieldValue.delete() : Timestamp.fromMillis(next),
+      });
     });
-  });
 
-  await Promise.all(sendTasks);
-  await batch.commit();
-});
+    await Promise.all(sendTasks);
+    await batch.commit();
+  });

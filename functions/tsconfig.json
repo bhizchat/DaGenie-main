@@ -9,6 +9,7 @@
     "sourceMap": true,
     "strict": true,
     "isolatedModules": true,
+    "skipLibCheck": true,
     "types": ["node", "jest"],
     "target": "es2017"
   },

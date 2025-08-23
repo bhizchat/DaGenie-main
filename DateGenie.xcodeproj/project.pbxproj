@@ -6,6 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		58CE15F52E45963A0021E8BF /* YPImagePicker in Frameworks */ = {isa = PBXBuildFile; productRef = 58CE15F42E45963A0021E8BF /* YPImagePicker */; };
+		58CE15FF2E46A6D20021E8BF /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 58CE15FE2E46A6D20021E8BF /* FirebaseStorage */; };
+		58CE16012E46A6D20021E8BF /* FirebaseStorageCombine-Community in Frameworks */ = {isa = PBXBuildFile; productRef = 58CE16002E46A6D20021E8BF /* FirebaseStorageCombine-Community */; };
+		58CFAC122E2DE82C004B17A3 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 58CFAC112E2DE82C004B17A3 /* FirebaseAnalytics */; };
+		58CFAC142E2DE82C004B17A3 /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 58CFAC132E2DE82C004B17A3 /* FirebaseAnalyticsCore */; };
+		58CFAC162E2DE82C004B17A3 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 58CFAC152E2DE82C004B17A3 /* FirebaseAuth */; };
+		58CFAC182E2DE82C004B17A3 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 58CFAC172E2DE82C004B17A3 /* FirebaseFirestore */; };
+		58CFAC462E2F1596004B17A3 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 58CFAC452E2F1596004B17A3 /* FirebaseFunctions */; };
+		58CFAC682E3828F7004B17A3 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 58CFAC672E3828F7004B17A3 /* FirebaseMessaging */; };
+		58CFAC992E3DDA28004B17A3 /* SDWebImageSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = 58CFAC982E3DDA28004B17A3 /* SDWebImageSwiftUI */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		58F78AEA2E28314F001763AC /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -29,9 +42,22 @@
 		58F78AF32E28314F001763AC /* DateGenieUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DateGenieUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		58CFAC6A2E382A95004B17A3 /* Exceptions for "DateGenie" folder in "DateGenie" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 58F78AD62E28314D001763AC /* DateGenie */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		58F78AD92E28314D001763AC /* DateGenie */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				58CFAC6A2E382A95004B17A3 /* Exceptions for "DateGenie" folder in "DateGenie" target */,
+			);
 			path = DateGenie;
 			sourceTree = "<group>";
 		};
@@ -52,6 +78,16 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				58CFAC992E3DDA28004B17A3 /* SDWebImageSwiftUI in Frameworks */,
+				58CFAC682E3828F7004B17A3 /* FirebaseMessaging in Frameworks */,
+				58CE16012E46A6D20021E8BF /* FirebaseStorageCombine-Community in Frameworks */,
+				58CE15FF2E46A6D20021E8BF /* FirebaseStorage in Frameworks */,
+				58CFAC122E2DE82C004B17A3 /* FirebaseAnalytics in Frameworks */,
+				58CFAC182E2DE82C004B17A3 /* FirebaseFirestore in Frameworks */,
+				58CFAC462E2F1596004B17A3 /* FirebaseFunctions in Frameworks */,
+				58CFAC162E2DE82C004B17A3 /* FirebaseAuth in Frameworks */,
+				58CFAC142E2DE82C004B17A3 /* FirebaseAnalyticsCore in Frameworks */,
+				58CE15F52E45963A0021E8BF /* YPImagePicker in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +148,16 @@
 			);
 			name = DateGenie;
 			packageProductDependencies = (
+				58CFAC112E2DE82C004B17A3 /* FirebaseAnalytics */,
+				58CFAC132E2DE82C004B17A3 /* FirebaseAnalyticsCore */,
+				58CFAC152E2DE82C004B17A3 /* FirebaseAuth */,
+				58CFAC172E2DE82C004B17A3 /* FirebaseFirestore */,
+				58CFAC452E2F1596004B17A3 /* FirebaseFunctions */,
+				58CFAC672E3828F7004B17A3 /* FirebaseMessaging */,
+				58CFAC982E3DDA28004B17A3 /* SDWebImageSwiftUI */,
+				58CE15F42E45963A0021E8BF /* YPImagePicker */,
+				58CE15FE2E46A6D20021E8BF /* FirebaseStorage */,
+				58CE16002E46A6D20021E8BF /* FirebaseStorageCombine-Community */,
 			);
 			productName = DateGenie;
 			productReference = 58F78AD72E28314D001763AC /* DateGenie.app */;
@@ -195,6 +241,11 @@
 			);
 			mainGroup = 58F78ACE2E28314C001763AC;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				58CFAC972E3DDA28004B17A3 /* XCRemoteSwiftPackageReference "SDWebImageSwiftUI" */,
+				58CE15F32E45963A0021E8BF /* XCRemoteSwiftPackageReference "YPImagePicker" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 58F78AD82E28314D001763AC /* Products */;
 			projectDirPath = "";
@@ -393,27 +444,35 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = DateGenie/DateGenie.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"DateGenie/Preview Content\"";
 				DEVELOPMENT_TEAM = 735QJ69665;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DateGenie/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access so you can snap a photo and earn romance points.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bhizchat.DateGenie;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -422,27 +481,35 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = DateGenie/DateGenie.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"DateGenie/Preview Content\"";
 				DEVELOPMENT_TEAM = 735QJ69665;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DateGenie/Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access so you can snap a photo and earn romance points.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bhizchat.DateGenie;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -558,6 +625,84 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		58CE15F32E45963A0021E8BF /* XCRemoteSwiftPackageReference "YPImagePicker" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Yummypets/YPImagePicker";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.3.0;
+			};
+		};
+		58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.0.0;
+			};
+		};
+		58CFAC972E3DDA28004B17A3 /* XCRemoteSwiftPackageReference "SDWebImageSwiftUI" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/SDWebImage/SDWebImageSwiftUI";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.1.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		58CE15F42E45963A0021E8BF /* YPImagePicker */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CE15F32E45963A0021E8BF /* XCRemoteSwiftPackageReference "YPImagePicker" */;
+			productName = YPImagePicker;
+		};
+		58CE15FE2E46A6D20021E8BF /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FirebaseStorage;
+		};
+		58CE16002E46A6D20021E8BF /* FirebaseStorageCombine-Community */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = "FirebaseStorageCombine-Community";
+		};
+		58CFAC112E2DE82C004B17A3 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		58CFAC132E2DE82C004B17A3 /* FirebaseAnalyticsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsCore;
+		};
+		58CFAC152E2DE82C004B17A3 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		58CFAC172E2DE82C004B17A3 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		58CFAC452E2F1596004B17A3 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
+		58CFAC672E3828F7004B17A3 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CFAC102E2DE82C004B17A3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+		58CFAC982E3DDA28004B17A3 /* SDWebImageSwiftUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 58CFAC972E3DDA28004B17A3 /* XCRemoteSwiftPackageReference "SDWebImageSwiftUI" */;
+			productName = SDWebImageSwiftUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 58F78ACF2E28314C001763AC /* Project object */;
 }

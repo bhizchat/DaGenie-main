@@ -1,5 +1,6 @@
-/* eslint-disable max-len, require-jsdoc, @typescript-eslint/no-explicit-any, operator-linebreak */
-import {onCall, HttpsError} from "firebase-functions/v2/https";
+/* eslint-disable max-len, require-jsdoc, @typescript-eslint/no-explicit-any, operator-linebreak, indent */
+import * as functions from "firebase-functions/v1";
+const {HttpsError} = functions.https;
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getFirestore} from "firebase-admin/firestore";
 
@@ -22,12 +23,14 @@ const db = getFirestore();
  * Environment variable required:
  *   APPLE_SHARED_SECRET – the app-specific shared secret from App Store Connect.
  */
-export const validateReceipt = onCall({region: "us-central1"}, async (request) => {
-  if (!request.auth) {
+export const validateReceipt = functions
+  .region("us-central1")
+  .https.onCall(async (data: any, context: functions.https.CallableContext) => {
+  if (!context.auth) {
     throw new HttpsError("unauthenticated", "Must be signed in");
   }
 
-  const {receiptData} = request.data ?? {};
+  const {receiptData} = data ?? {};
   if (!receiptData || typeof receiptData !== "string") {
     throw new HttpsError("invalid-argument", "receiptData required");
   }
@@ -74,7 +77,7 @@ export const validateReceipt = onCall({region: "us-central1"}, async (request) =
   }
 
   // Persist subscription status under the user document.
-  const uid = request.auth.uid;
+  const uid = context.auth!.uid;
   await db.collection("users").doc(uid).set({
     subscription: {
       active: expiryMillis > Date.now(),

@@ -1,18 +1,81 @@
-rules_version='2'
-
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Public, read-only hunt templates
+    match /hunts/{huntId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User profile root doc
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Per-user highlight reels
+    match /users/{uid}/highlightReels/{reelId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Per-user saved plans
+    match /users/{uid}/savedPlans/{doc} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Helper: does ownerId appear in caller’s deviceIds array?
+    function legacyDeviceMatch(uid, ownerId) {
+      return ownerId in get(/databases/$(database)/documents/users/$(uid)).data.deviceIds;
+    }
+
+    // Journeys (media metadata + mission progress)
+    match /journeys/{ownerId} {
+      match /levels/{level} {
+        // Header doc at /journeys/{ownerId}/levels/{level}
+        // READ: owner OR any legacy deviceId stored on the user doc
+        allow read: if request.auth != null &&
+          (request.auth.uid == ownerId || legacyDeviceMatch(request.auth.uid, ownerId));
+        // WRITE: only the signed-in owner may write (used by saveLevelHeader and finalizeLevel)
+        allow write: if request.auth != null && request.auth.uid == ownerId;
+        // Per-node media docs under the level
+        match /nodes/{node} {
+          // READ: owner OR any legacy deviceId stored on the user doc
+          allow read: if request.auth != null &&
+            (request.auth.uid == ownerId || legacyDeviceMatch(request.auth.uid, ownerId));
+
+          // WRITE: only the signed-in owner may write
+          allow write: if request.auth != null && request.auth.uid == ownerId;
+        }
+      }
+    }
+
+    // Date instances (live hunts)
+    match /dates/{dateId} {
+      allow create: if request.auth != null &&
+        (request.auth.uid == request.resource.data.uidA || request.auth.uid == request.resource.data.uidB);
+      allow read, update, delete: if request.auth != null &&
+        (request.auth.uid == resource.data.uidA || request.auth.uid == resource.data.uidB);
+    }
+
+    // Analytics logs – write-only
+    match /analytics_logs/{doc} {
+      allow write: if request.auth != null;
+      allow read: if false;
+    }
+
+    // Ad generation jobs – each user can access only their own job docs
+    match /adJobs/{jobId} {
+      // Create: require the creating user to set uid to their own
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      // Read/update/delete: only the owner may access after creation
+      allow read, update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    // Default: deny everything else
     match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2025, 8, 15);
+       allow read, write: if false;
     }
   }
 }
+ 
+  

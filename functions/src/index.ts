@@ -1,4 +1,4 @@
-/**
+/*
  * Import function triggers from their respective submodules:
  *
  * import {onCall} from "firebase-functions/v2/https";
@@ -6,8 +6,6 @@
  *
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
-
-import {setGlobalOptions} from "firebase-functions";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -22,10 +20,10 @@ import {setGlobalOptions} from "firebase-functions";
 // functions should each use functions.runWith({ maxInstances: 10 }) instead.
 // In the v1 API, each function can only serve one request per container, so
 // this will be the maximum concurrent request count.
-setGlobalOptions({maxInstances: 10});
 
-export {generatePlans} from "./generatePlans";
-export {validateReceipt} from "./validateReceipt";
-export {activateSubscription} from "./activateSubscription";
-export {awardRomancePoints} from "./awardRomancePoints";
-export {onUserUpdate, scheduledPushes} from "./pushScheduler";
+export {generateCampusPlans} from "./generateCampusPlans";
+export {voiceAssistant} from "./voiceAssistant";
+export {getAssemblyToken} from "./getAssemblyToken";
+export {createAdJob} from "./veo/createAdJob";
+export {adPromptBuilder} from "./veo/adPromptBuilder";
+export {startVeoForJob} from "./veo/startVeoForJob";
