@@ -56,6 +56,9 @@ final class VoiceAssistantVM: ObservableObject {
 
 	private let assembly = AssemblyRealtime()
 	private var sseTask: Task<Void, Never>?
+	private var sseIntroFallbackTask: Task<Void, Never>?
+	private var sseIntroAudioStarted: Bool = false
+	private var sseIntroFallbackActivated: Bool = false
 	private var audioPlayer: AVAudioPlayer?
 	private let speechSynth = AVSpeechSynthesizer()
 	private var speechDelegate: SpeechDelegate?
@@ -662,6 +665,7 @@ final class VoiceAssistantVM: ObservableObject {
 		case "audio":
 			let size = (json["bytes"] as? Int) ?? -1
 			print("[VoiceAssistantVM] received audio event bytes=\(size)")
+			sseIntroAudioStarted = true
 			if let b64 = json["base64"] as? String, let data = Data(base64Encoded: b64) {
 				await playAudio(data, fallbackText: assistantStreamingText)
 			}
@@ -1016,7 +1020,8 @@ final class VoiceAssistantVM: ObservableObject {
 			}
 		}()
 		print("[VoiceAssistantVM] playing intro via SSE/ElevenLabs greeted=\(greeted)")
-		startIntroSSE(text: intro)
+		// Fast-start: allow 800ms for SSE to start delivering audio, else speak locally
+		startIntroSSE(text: intro, deadlineMs: 800)
 		UserDefaults.standard.set(true, forKey: perUserKey)
 	}
 
@@ -1025,8 +1030,11 @@ final class VoiceAssistantVM: ObservableObject {
 		return UserRepository.shared
 	}
 
-	private func startIntroSSE(text: String) {
+	private func startIntroSSE(text: String, deadlineMs: Int? = nil) {
 		sseTask?.cancel()
+		sseIntroFallbackTask?.cancel(); sseIntroFallbackTask = nil
+		sseIntroAudioStarted = false
+		sseIntroFallbackActivated = false
 		assistantStreamingText = ""
 		showBanner = true
 		let url = URL(string: "https://us-central1-\(Self.projectId()).cloudfunctions.net/voiceAssistant")!
@@ -1040,6 +1048,20 @@ final class VoiceAssistantVM: ObservableObject {
 			"tts": "eleven"
 		]
 		req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+		// Optional fast-start: if no audio arrives by the deadline, cancel SSE and speak locally
+		if let ms = deadlineMs, ms > 0 {
+			let deadline = UInt64(ms) * 1_000_000
+			sseIntroFallbackTask = Task { [weak self] in
+				try? await Task.sleep(nanoseconds: deadline)
+				guard let self else { return }
+				if !self.sseIntroAudioStarted {
+					self.sseTask?.cancel()
+					self.sseIntroFallbackActivated = true
+					await self.speakLocally(text)
+				}
+			}
+		}
 
 		sseTask = Task { [weak self] in
 			guard let self else { return }
@@ -1062,7 +1084,7 @@ final class VoiceAssistantVM: ObservableObject {
 				// Retry once for style prompt; no Apple TTS
 				if self.awaitingStylePrompt && !self.stylePromptRetried {
 					self.stylePromptRetried = true
-					self.startIntroSSE(text: text)
+					self.startIntroSSE(text: text, deadlineMs: deadlineMs)
 				}
 			}
 		}
