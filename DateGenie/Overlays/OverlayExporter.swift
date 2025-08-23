@@ -117,6 +117,20 @@ enum VideoOverlayExporter {
             try compTrack.insertTimeRange(CMTimeRange(start: .zero, duration: asset.duration), of: track, at: .zero)
         } catch { completion(nil); return }
 
+        // Include original audio tracks if present so the export retains sound
+        let audioTracks = asset.tracks(withMediaType: .audio)
+        for src in audioTracks {
+            if let dst = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                do {
+                    let timeRange = CMTimeRange(start: .zero, duration: min(src.timeRange.duration, asset.duration))
+                    try dst.insertTimeRange(timeRange, of: src, at: .zero)
+                } catch {
+                    // Skip audio track on error, continue with others
+                    continue
+                }
+            }
+        }
+
         // Compute render size respecting preferredTransform
         let t = track.preferredTransform
         let sizeApplied = track.naturalSize.applying(t)
