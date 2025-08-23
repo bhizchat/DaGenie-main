@@ -1020,8 +1020,8 @@ final class VoiceAssistantVM: ObservableObject {
 			}
 		}()
 		print("[VoiceAssistantVM] playing intro via SSE/ElevenLabs greeted=\(greeted)")
-		// Fast-start: allow 800ms for SSE to start delivering audio, else speak locally
-		startIntroSSE(text: intro, deadlineMs: 800)
+		// Use ElevenLabs only for greeting; do not fall back to local TTS.
+		startIntroSSE(text: intro)
 		UserDefaults.standard.set(true, forKey: perUserKey)
 	}
 
