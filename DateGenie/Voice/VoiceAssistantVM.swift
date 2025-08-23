@@ -47,6 +47,9 @@ final class VoiceAssistantVM: ObservableObject {
 	@Published var generatedVideoURL: URL? = nil
 	// Generating overlay state
 	@Published var isGenerating: Bool = false
+	@Published var awaitingRepeat: Bool = false
+	@Published var awaitingStylePrompt: Bool = false
+	private var stylePromptRetried: Bool = false
 	
 	// Lightweight chat history for staged follow-ups
 	private var chatHistory: [[String: String]] = [] // elements like ["role": "user"|"assistant", "content": text]
@@ -260,10 +263,20 @@ final class VoiceAssistantVM: ObservableObject {
 		if finalText.isEmpty {
 			// If we didn't capture a final, try prompting the user politely instead of failing silently
 			AnalyticsManager.shared.logEvent("voice_empty_final", parameters: ["reason": "manual_stop_empty"]) 
+			// If we are in a style or generating prompt flow, stay silent to avoid confusion
+			if awaitingStylePrompt || {
+				if case .generating = overlayState { return true } else { return false }
+			}() {
+				uiState = .idle
+				showBanner = false
+				return
+			}
 			uiState = .idle
 			showBanner = true
-			assistantStreamingText = "I didn’t catch that — could you say that once more?"
-			Task { await self.speakLocally(self.assistantStreamingText) }
+			assistantStreamingText = "I didn’t catch that — please say it again."
+			awaitingRepeat = true
+			// ElevenLabs voice; mic will reopen when TTS completes
+			startIntroSSE(text: assistantStreamingText)
 			return
 		}
 		if sendToLLM {
@@ -386,6 +399,15 @@ final class VoiceAssistantVM: ObservableObject {
 		// but proceed even if the phrase is missing.
 		let processed = stripWakePhraseIfPresent(userText)
 		let textToSend = processed.stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+		// Require a product image before engaging the Q&A flow
+		if attachedImage == nil {
+			uiState = .idle
+			assistantStreamingText = "I don’t see a product image yet. Please add one by taking a picture or tapping the plus, then hit the mic to start."
+			showBanner = true
+			AnalyticsManager.shared.logEvent("image_required_block", parameters: ["phase": "pre_sse"])
+			startIntroSSE(text: assistantStreamingText)
+			return
+		}
 		let url = URL(string: "https://us-central1-\(Self.projectId()).cloudfunctions.net/voiceAssistant")!
 		var req = URLRequest(url: url)
 		req.httpMethod = "POST"
@@ -418,11 +440,51 @@ final class VoiceAssistantVM: ObservableObject {
 				}
 			} catch {
 				print("[VoiceAssistantVM] SSE error: \(error.localizedDescription)")
+				// Suppress any fallback while style selection prompt is active or confirmation/generating overlays
+				let isOverlayBlocking: Bool = {
+					if case .confirming = self.overlayState { return true }
+					if case .generating = self.overlayState { return true }
+					return false
+				}()
+				if self.awaitingStylePrompt || isOverlayBlocking {
+					await MainActor.run {
+						self.uiState = .idle
+						self.showBanner = false
+						self.assistantStreamingText = ""
+					}
+					return
+				}
+				// Otherwise, route fallback via ElevenLabs and enable repeat mode
+				await MainActor.run {
+					self.uiState = .idle
+					self.showBanner = true
+					self.assistantStreamingText = "I didn’t catch that — please tap the mic and speak into it again one word at a time."
+					self.awaitingRepeat = true
+				}
+				self.startIntroSSE(text: "I didn’t catch that — please tap the mic and speak into it again one word at a time.")
 			}
 		}
 	}
 
 	// MARK: - Wake phrase utilities
+	private func reopenMicForRepeat() async {
+		await MainActor.run {
+			self.uiState = .idle
+		}
+		// Fetch token via the same path the UI uses
+		let projectId = FirebaseApp.app()?.options.projectID ?? Self.projectId()
+		guard let url = URL(string: "https://us-central1-\(projectId).cloudfunctions.net/getAssemblyToken") else { return }
+		var req = URLRequest(url: url); req.httpMethod = "GET"
+		do {
+			let (data, _) = try await URLSession.shared.data(for: req)
+			if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let token = obj["token"] as? String {
+				await MainActor.run { self.awaitingRepeat = false }
+				self.startListening(withToken: token)
+			}
+		} catch {
+			print("[VoiceAssistantVM] reopenMicForRepeat token error: \(error.localizedDescription)")
+		}
+	}
 	private func stripWakePhraseIfPresent(_ text: String) -> (stripped: String, found: Bool) {
 		// Accept common variants and punctuation: "hey genie", "hi genie", "genie,"
 		let lowered = text.lowercased()
@@ -478,6 +540,8 @@ final class VoiceAssistantVM: ObservableObject {
 		guard let data = img.jpegData(compressionQuality: 0.9) else { return nil }
 		let metadata = StorageMetadata(); metadata.contentType = "image/jpeg"
 		let _ = try await ref.putDataAsync(data, metadata: metadata)
+		// Ensure Firebase creates a download token (used by server fallback)
+		_ = try? await ref.downloadURL()
 		return "gs://\(storage.reference().bucket)/user_uploads/\(uid)/\(jobId)/input.jpg"
 	}
 
@@ -547,7 +611,14 @@ final class VoiceAssistantVM: ObservableObject {
 			if status == "error" {
 				self?.isGenerating = false
 				self?.transitionOverlay(to: .none)
-				AnalyticsManager.shared.logEvent("generating_error", parameters: ["message": data["error"] as? String ?? "unknown"])
+				let err = data["error"] as? String ?? "unknown"
+				AnalyticsManager.shared.logEvent("generating_error", parameters: ["message": err])
+				if err == "image_required" || err == "image_sign_failed" {
+					let msg = "I don’t see a product image yet. Please add one by taking a picture or tapping the plus, then try again."
+					self?.assistantStreamingText = msg
+					self?.showBanner = true
+					self?.startIntroSSE(text: msg)
+				}
 			}
 		}
 	}
@@ -562,6 +633,8 @@ final class VoiceAssistantVM: ObservableObject {
 		case "token":
 			// Suppress any streamed text while confirmation/generating overlays are active
 			guard allowStreamingText else { break }
+			// During style prompt, ignore upstream text so we don’t show fallback from empty stream
+			if awaitingStylePrompt { break }
 			if sseFirstTokenAt == nil {
 				sseFirstTokenAt = Date()
 				if let start = sseStartedAt {
@@ -592,6 +665,8 @@ final class VoiceAssistantVM: ObservableObject {
 			if let b64 = json["base64"] as? String, let data = Data(base64Encoded: b64) {
 				await playAudio(data, fallbackText: assistantStreamingText)
 			}
+			// If we were awaiting the style prompt to finish, clear the flag now once audio arrived
+			if awaitingStylePrompt { awaitingStylePrompt = false }
 		case "tts_fallback":
 			let msg = (json["message"] as? String) ?? ""
 			let detail = (json["detail"] as? String) ?? ""
@@ -599,23 +674,33 @@ final class VoiceAssistantVM: ObservableObject {
 			await speakLocally(assistantStreamingText)
 		case "done":
 			// If we intentionally suppressed streaming text (e.g., during confirmation/generating),
-			// do NOT play the Apple TTS fallback or show any banner.
+			// do NOT play any fallback or show a banner.
 			if !allowStreamingText {
 				uiState = .idle
 				showBanner = false
 				break
 			}
 			uiState = .idle
-			// Push the assistant's final text into local chat history for the next turn
 			let final = assistantStreamingText.trimmingCharacters(in: .whitespacesAndNewlines)
-			if !final.isEmpty {
-				chatHistory.append(["role": "assistant", "content": final])
+			if final.isEmpty {
+				// Suppress any fallback entirely during style prompt or generating
+				if awaitingStylePrompt || ({ if case .generating = overlayState { return true } else { return false } }()) {
+					showBanner = false
+					break
+				}
+				// If we are awaiting a repeat, reopen mic now
+				if awaitingRepeat {
+					await reopenMicForRepeat()
+				} else {
+					// Route fallback via ElevenLabs and then reopen mic
+					awaitingRepeat = true
+					let msg = "I didn’t catch that — please tap the mic and speak into it again one word at a time."
+					assistantStreamingText = msg
+					showBanner = true
+					startIntroSSE(text: msg)
+				}
 			} else {
-				// Guarantee a response: if nothing streamed, speak a short clarification
-				let fallback = "Sorry, I missed that. Could you repeat or say it another way?"
-				assistantStreamingText = fallback
-				showBanner = true
-				await speakLocally(fallback)
+				chatHistory.append(["role": "assistant", "content": final])
 			}
 			showBanner = false
 			// Visual style picker is disabled for now
@@ -683,6 +768,16 @@ final class VoiceAssistantVM: ObservableObject {
 	func presentStylePicker() {
 		showStylePicker = true
 		allowStreamingText = false
+		awaitingStylePrompt = true
+		stylePromptRetried = false
+		let line = "What style would you say fits your taste — a cinematic style or creative animation? Tap your choice to continue."
+		startIntroSSE(text: line)
+	}
+
+	// Ensure the style prompt line plays when the popup becomes visible.
+	// Safe to call multiple times; it restarts the SSE prompt if needed and has built-in retry.
+	func ensureStylePromptPlaying() {
+		guard awaitingStylePrompt else { return }
 		let line = "What style would you say fits your taste — a cinematic style or creative animation? Tap your choice to continue."
 		startIntroSSE(text: line)
 	}
@@ -746,6 +841,18 @@ final class VoiceAssistantVM: ObservableObject {
 
 	func confirmCreation() async {
 		guard let styleKey = pendingStyleKey else { return }
+		// Hard-require an attached image before generating
+		if attachedImage == nil {
+			await MainActor.run {
+				self.transitionOverlay(to: .none)
+				self.uiState = .idle
+				self.assistantStreamingText = "I don’t see a product image yet. Please add one by taking a picture or tapping the plus, then hit Confirm again."
+				self.showBanner = true
+			}
+			AnalyticsManager.shared.logEvent("image_required_block", parameters: ["phase": "confirm"])
+			startIntroSSE(text: assistantStreamingText)
+			return
+		}
 		let lastUser = chatHistory.reversed().first { $0["role"] == "user" }?["content"] ?? ""
 		do {
 			// Enter generating state immediately
@@ -765,12 +872,19 @@ final class VoiceAssistantVM: ObservableObject {
 				let db = Firestore.firestore()
 				try await db.collection("adJobs").document(jobId).setData(["inputImagePath": gsPath], merge: true)
 			}
-			// 3) Build final prompt for this job (persisted server-side)
-			await buildFinalPromptForJob(jobId: jobId, styleKey: styleKey, withSound: pendingAudioWithSound)
-			// 4) Start Veo for the job and observe for readiness
-			let ok = try await startVeoForJobCallable(jobId: jobId)
-			print("[VoiceAssistantVM] startVeoForJob status=\(ok)")
+			// 3) Begin observing job BEFORE triggering generation so we don't miss ready events
 			await observeJob(jobId: jobId)
+			// 4) Build final prompt for this job (persisted server-side)
+			await buildFinalPromptForJob(jobId: jobId, styleKey: styleKey, withSound: pendingAudioWithSound)
+			// 5) Fire-and-forget start call; rely on Firestore listener to drive UI
+			Task { [weak self] in
+				do {
+					let ok = try await self?.startVeoForJobCallable(jobId: jobId)
+					print("[VoiceAssistantVM] startVeoForJob status=\(ok ?? false)")
+				} catch {
+					print("[VoiceAssistantVM] startVeoForJob fire-and-forget error: \(error.localizedDescription)")
+				}
+			}
 			await MainActor.run { self.isAwaitingConfirmation = false }
 		} catch {
 			print("[VoiceAssistantVM] confirmCreation pipeline error: \(error.localizedDescription)")
@@ -889,8 +1003,8 @@ final class VoiceAssistantVM: ObservableObject {
 		}()
 		let intro: String = {
 			if !greeted {
-				if let n = preferredName { return "Hello there, \(n), I’m the Genie — your creative AI voice ad specialist. Use the camera or tap the plus to attach a product photo, then hit the mic and tell me your vision. I’ll bring it to life." }
-				return "Hello there, I’m the Genie — your creative AI voice ad specialist. Use the camera or tap the plus to attach a product photo, then hit the mic and tell me your vision. I’ll bring it to life."
+				if let n = preferredName { return "Hello there, \(n), I’m the Genie — your creative AI voice ad specialist. Use the camera or tap the plus to attach a product photo, then tap the mic and speak into it to tell me your vision. I’ll bring it to life." }
+				return "Hello there, I’m the Genie — your creative AI voice ad specialist. Use the camera or tap the plus to attach a product photo, then tap the mic and speak into it to tell me your vision. I’ll bring it to life."
 			} else {
 				let n = preferredName ?? "friend"
 				let jokes = [
@@ -937,11 +1051,19 @@ final class VoiceAssistantVM: ObservableObject {
 						guard let data = payload.data(using: .utf8),
 						      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 						await self.handleSSE(json)
+						// When the TTS completes and we're awaiting a repeat, reopen mic
+						if let t = json["type"] as? String, t == "done", self.awaitingRepeat {
+							await self.reopenMicForRepeat()
+						}
 					}
 				}
 			} catch {
 				print("[VoiceAssistantVM] Intro SSE error: \(error.localizedDescription)")
-				await self.speakLocally(text)
+				// Retry once for style prompt; no Apple TTS
+				if self.awaitingStylePrompt && !self.stylePromptRetried {
+					self.stylePromptRetried = true
+					self.startIntroSSE(text: text)
+				}
 			}
 		}
 	}

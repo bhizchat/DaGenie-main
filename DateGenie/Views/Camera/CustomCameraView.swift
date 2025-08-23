@@ -173,6 +173,10 @@ struct CustomCameraView: View {
 		})) {
 			StyleSelectionPopup()
 				.environmentObject(voiceVM)
+				.onAppear {
+					// Guarantee the style prompt line plays when the popup appears
+					voiceVM.ensureStylePromptPlaying()
+				}
 		}
 		.sheet(isPresented: $showProfile) {
 			ProfileView().environmentObject(AuthViewModel()).environmentObject(userRepo)
@@ -206,11 +210,7 @@ struct CustomCameraView: View {
 		// Present immediate preview when a final video URL arrives
 		.onChange(of: voiceVM.generatedVideoURL) { url in
 			guard let url else { return }
-			let preview = UIHostingController(rootView: ReelPreviewView(url: url))
-			preview.modalPresentationStyle = .overFullScreen
-			preview.isModalInPresentation = true
-			preview.view.backgroundColor = .black
-			UIApplication.shared.topMostViewController()?.present(preview, animated: true)
+			VideoPreviewPresenter.shared.show(root: ReelPreviewView(url: url))
 		}
 		// Visual style picker disabled
 	}
@@ -292,11 +292,15 @@ struct StyleSelectionPopup: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
+            // Make the entire background white (no dim overlay)
+            Color.white.ignoresSafeArea()
             VStack(spacing: 0) {
                 VStack(spacing: 18) {
                     // Header lamp for brand continuity
-                    Image("Logo_DG").resizable().scaledToFit().frame(width: 90, height: 90)
+                    Image("Logo_DG").resizable().scaledToFit().frame(width: 90, height: 90).offset(y: -10)
+                    Text("Select your style")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.black)
 
                     // Card: Cinematic
                     selectionCard(imageName: "Cinematic_ad", title: "Cinematic ad", isSelected: selected == .cinematic)
@@ -321,10 +325,9 @@ struct StyleSelectionPopup: View {
                     .disabled(selected == nil)
                     .padding(.top, 8)
                 }
-                .padding(20)
-                .background(Color.white)
-                .cornerRadius(16)
                 .padding(.horizontal, 20)
+                .padding(.top, 28)
+                .padding(.bottom, 20)
             }
         }
     }
