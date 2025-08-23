@@ -167,6 +167,13 @@ struct CustomCameraView: View {
 				.padding(.horizontal, 24)
 			}
 		}
+		// Style selection popup (full-screen) driven by VM.showStylePicker
+		.fullScreenCover(isPresented: Binding(get: { voiceVM.showStylePicker }, set: { newVal in
+			if !newVal { voiceVM.showStylePicker = false }
+		})) {
+			StyleSelectionPopup()
+				.environmentObject(voiceVM)
+		}
 		.sheet(isPresented: $showProfile) {
 			ProfileView().environmentObject(AuthViewModel()).environmentObject(userRepo)
 		}
@@ -175,14 +182,24 @@ struct CustomCameraView: View {
 		}) {
 			ImagePicker(image: $pickedImage, sourceType: .photoLibrary)
 		}
-		.alert("Ready to create your ad?", isPresented: $voiceVM.isAwaitingConfirmation) {
+		// New confirmation popup driven by overlayState
+		.alert("Ready to create your ad?", isPresented: Binding(get: {
+			if case .confirming = voiceVM.overlayState { return true }
+			return false
+		}, set: { newVal in
+			if !newVal { voiceVM.transitionOverlay(to: .none) }
+		})) {
 			Button("Cancel", role: .cancel) { voiceVM.cancelAndAddDetails() }
 			Button("Confirm") { Task { await voiceVM.confirmCreation() } }
 		} message: {
-			Text(voiceVM.confirmationSummary)
+			Text(voiceVM.confirmationSummary.isEmpty ? voiceVM.confirmationSubtitleText : voiceVM.confirmationSummary)
 		}
-		// Full-screen generating overlay
-		.fullScreenCover(isPresented: $voiceVM.isGenerating) {
+		// Full-screen generating overlay driven by overlayState
+		.fullScreenCover(isPresented: Binding(get: {
+			if case .generating = voiceVM.overlayState { return true } else { return false }
+		}, set: { newVal in
+			if !newVal { voiceVM.transitionOverlay(to: .none) }
+		})) {
 			GeneratingView()
 				.environmentObject(voiceVM)
 		}
@@ -264,6 +281,73 @@ struct GeneratingView: View {
                 spokenOnce = true
                 Task { await voiceVM.speakGeneratingEleven() }
             }
+        }
+    }
+}
+
+// MARK: - Style Selection Popup
+struct StyleSelectionPopup: View {
+    @EnvironmentObject var voiceVM: VoiceAssistantVM
+    @State private var selected: VoiceAssistantVM.AdStyle? = nil
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+            VStack(spacing: 0) {
+                VStack(spacing: 18) {
+                    // Header lamp for brand continuity
+                    Image("Logo_DG").resizable().scaledToFit().frame(width: 90, height: 90)
+
+                    // Card: Cinematic
+                    selectionCard(imageName: "Cinematic_ad", title: "Cinematic ad", isSelected: selected == .cinematic)
+                        .onTapGesture { selected = .cinematic }
+
+                    // Card: Creative animation
+                    selectionCard(imageName: "Creative_animation", title: "Creative animation", isSelected: selected == .animation)
+                        .onTapGesture { selected = .animation }
+
+                    Button(action: {
+                        guard let style = selected else { return }
+                        voiceVM.applyStyleSelection(style: style)
+                    }) {
+                        Text("Continue")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background((selected == nil) ? Color.gray.opacity(0.4) : Color.black)
+                            .cornerRadius(12)
+                    }
+                    .disabled(selected == nil)
+                    .padding(.top, 8)
+                }
+                .padding(20)
+                .background(Color.white)
+                .cornerRadius(16)
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func selectionCard(imageName: String, title: String, isSelected: Bool) -> some View {
+        VStack(spacing: 10) {
+            ZStack(alignment: .topTrailing) {
+                Image(imageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .cornerRadius(12)
+                Circle()
+                    .fill(isSelected ? Color.green : Color.white)
+                    .frame(width: 18, height: 18)
+                    .overlay(Circle().stroke(Color.black, lineWidth: 2))
+                    .padding(8)
+            }
+            Text(title)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(.black)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }

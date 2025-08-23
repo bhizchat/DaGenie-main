@@ -10,7 +10,17 @@ import UIKit
 @MainActor
 final class VoiceAssistantVM: ObservableObject {
 	enum UIState { case idle, listening, thinking, speaking, choosingStyle }
+	// Phase 1: Unified overlay state for confirmation/generating surfaces
+	enum AdStyle { case cinematic, animation }
+	enum OverlayState {
+		case none
+		case confirming(summary: String, style: AdStyle)
+		case generating(style: AdStyle)
+	}
 	@Published var uiState: UIState = .idle
+	@Published var overlayState: OverlayState = .none
+	@Published var allowStreamingText: Bool = true
+	@Published var showStylePicker: Bool = false
 	@Published var partialTranscript: String = ""
 	@Published var assistantStreamingText: String = ""
 	@Published var showBanner: Bool = false
@@ -29,7 +39,7 @@ final class VoiceAssistantVM: ObservableObject {
 	@Published var pendingStyleOptions: [StyleOption]? = nil
 	@Published var isResolvingPreviews: Bool = false
 	@Published var lastBuiltPromptJSON: [String: Any]? = nil
-	// Confirmation state for creation
+	// Confirmation state for creation (kept for compatibility; driven by overlayState)
 	@Published var isAwaitingConfirmation: Bool = false
 	@Published var confirmationSummary: String = ""
 	@Published var pendingStyleKey: String? = nil
@@ -522,6 +532,7 @@ final class VoiceAssistantVM: ObservableObject {
 				self?.uiState = .idle
 				self?.showBanner = false
 				self?.isGenerating = false
+				self?.transitionOverlay(to: .none)
 				if let start = self?.generatingStartedAt {
 					let ms = Int(Date().timeIntervalSince(start) * 1000)
 					AnalyticsManager.shared.logEvent("generating_ready", parameters: ["latency_ms": ms])
@@ -535,6 +546,7 @@ final class VoiceAssistantVM: ObservableObject {
 			}
 			if status == "error" {
 				self?.isGenerating = false
+				self?.transitionOverlay(to: .none)
 				AnalyticsManager.shared.logEvent("generating_error", parameters: ["message": data["error"] as? String ?? "unknown"])
 			}
 		}
@@ -548,6 +560,8 @@ final class VoiceAssistantVM: ObservableObject {
 			let len = (json["lastUserLen"] as? Int) ?? -1
 			print("[VoiceAssistantVM] server meta image=\(img) lastUserLen=\(len)")
 		case "token":
+			// Suppress any streamed text while confirmation/generating overlays are active
+			guard allowStreamingText else { break }
 			if sseFirstTokenAt == nil {
 				sseFirstTokenAt = Date()
 				if let start = sseStartedAt {
@@ -559,6 +573,19 @@ final class VoiceAssistantVM: ObservableObject {
 			let t = (json["text"] as? String) ?? ""
 			assistantStreamingText += t
 			showBanner = true
+			// Heuristic: if assistant is asking the style-choice question, surface the style picker immediately
+			let lower = assistantStreamingText.lowercased()
+			if !showStylePicker {
+				if case .none = overlayState {
+				let mentionsStyles = (lower.contains("cinematic") && (lower.contains("creative animation") || lower.contains("animation")))
+				let asksStyle = lower.contains("which style fits your taste") || lower.contains("which style fits your")
+				if mentionsStyles && asksStyle {
+					presentStylePicker()
+					assistantStreamingText = ""
+					showBanner = false
+				}
+				}
+			}
 		case "audio":
 			let size = (json["bytes"] as? Int) ?? -1
 			print("[VoiceAssistantVM] received audio event bytes=\(size)")
@@ -571,6 +598,13 @@ final class VoiceAssistantVM: ObservableObject {
 			print("[VoiceAssistantVM] tts_fallback msg=\(msg) detail=\(detail)")
 			await speakLocally(assistantStreamingText)
 		case "done":
+			// If we intentionally suppressed streaming text (e.g., during confirmation/generating),
+			// do NOT play the Apple TTS fallback or show any banner.
+			if !allowStreamingText {
+				uiState = .idle
+				showBanner = false
+				break
+			}
 			uiState = .idle
 			// Push the assistant's final text into local chat history for the next turn
 			let final = assistantStreamingText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -594,19 +628,74 @@ final class VoiceAssistantVM: ObservableObject {
 			let lowered = lastUser.lowercased()
 			let hasStyleWord = lowered.contains("cinematic") || lowered.contains("animation")
 			guard (self.isReadyForStyleOptionsGate() && (hasStyleWord || srvStyleKey != nil)) else { break }
-			let summary = (json["summary"] as? String) ?? ""
-			let audioPref = (json["audioPreference"] as? String) ?? "with_sound"
-			self.confirmationSummary = summary
-			self.pendingStyleKey = srvStyleKey
-			self.pendingAudioWithSound = (audioPref == "with_sound")
-			// Hide any previously streamed outline when showing the confirm prompt
+			// Default audio to with_sound; present the style picker popup first
+			self.pendingAudioWithSound = true
 			self.assistantStreamingText = ""
 			self.showBanner = false
-			self.isAwaitingConfirmation = true
 			self.uiState = .idle
+			self.presentStylePicker()
 		default:
 			break
 		}
+	}
+
+	// MARK: - Overlay state transitions (Phase 1)
+	func transitionOverlay(to newState: OverlayState) {
+		let old = overlayState
+		overlayState = newState
+		print("[VoiceAssistantVM] overlay \(old) -> \(newState)")
+		// Keep legacy flags in sync for any existing views
+		switch newState {
+		case .none:
+			isAwaitingConfirmation = false
+			isGenerating = false
+			allowStreamingText = true
+		case .confirming:
+			isAwaitingConfirmation = true
+			isGenerating = false
+			allowStreamingText = false
+		case .generating:
+			isAwaitingConfirmation = false
+			isGenerating = true
+			allowStreamingText = false
+		}
+	}
+
+	// MARK: - Confirmation helpers
+	var confirmationSubtitleText: String {
+		let style: AdStyle = {
+			switch overlayState {
+			case .confirming(_, let s): return s
+			case .generating(let s): return s
+			default:
+				return (self.pendingStyleKey ?? "").contains("cinematic") ? .cinematic : .animation
+			}
+		}()
+		switch style {
+		case .cinematic:
+			return "We’ll create a cinematic video style with dialogue and sound effects."
+		case .animation:
+			return "We’ll create a playful animation style without dialogue or sound effects."
+		}
+	}
+
+	// Present style picker with a voice prompt; audio is always with sound (default)
+	func presentStylePicker() {
+		showStylePicker = true
+		allowStreamingText = false
+		let line = "What style would you say fits your taste — a cinematic style or creative animation? Tap your choice to continue."
+		startIntroSSE(text: line)
+	}
+
+	func applyStyleSelection(style: AdStyle) {
+		pendingStyleKey = (style == .cinematic) ? "cinematic" : "animation"
+		pendingAudioWithSound = true
+		let summary: String = (style == .cinematic)
+			? "We’ll create a cinematic video style with dialogue and sound effects."
+			: "We’ll create a playful animation style with dialogue and sound effects."
+		confirmationSummary = summary
+		showStylePicker = false
+		transitionOverlay(to: .confirming(summary: summary, style: style))
 	}
 
 	// MARK: - Flag loading (Firestore)
@@ -661,9 +750,9 @@ final class VoiceAssistantVM: ObservableObject {
 		do {
 			// Enter generating state immediately
 			await MainActor.run {
-				self.isGenerating = true
+				let style: AdStyle = (self.pendingStyleKey ?? "").contains("cinematic") ? .cinematic : .animation
 				self.generatingStartedAt = Date()
-				self.isAwaitingConfirmation = false // dismiss alert immediately
+				self.transitionOverlay(to: .generating(style: style))
 			}
 			// 1) Create job first
 			guard let jobId = try await createAdJobCallable(transcript: lastUser) else {
@@ -720,6 +809,7 @@ final class VoiceAssistantVM: ObservableObject {
 		partialTranscript = ""
 		showBanner = true
 		assistantStreamingText = "Okay — add any extra details and hit the mic when you're ready."
+		transitionOverlay(to: .none)
 	}
 
 	private func playAudio(_ data: Data, fallbackText: String) async {

@@ -4,7 +4,7 @@ import {defineSecret} from "firebase-functions/params";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getFirestore, Timestamp} from "firebase-admin/firestore";
 import {getStorage} from "firebase-admin/storage";
-import {GoogleGenerativeAI} from "@google/generative-ai";
+import axios from "axios";
 
 const VEO_API_KEY = defineSecret("VEO_API_KEY");
 
@@ -76,10 +76,10 @@ export const startVeoForJob = onCall({
     }
   }
 
-  // Create Gemini/Veo client
-  const client = new GoogleGenerativeAI(process.env.VEO_API_KEY as string);
+  // Prepare REST endpoints for Veo (Generative Language API)
+  const apiKey = process.env.VEO_API_KEY as string;
+  const apiBase = "https://generativelanguage.googleapis.com/v1beta";
   const modelName = (job.model as string) || "veo-3.0-generate-preview";
-  const model = (client as any).getGenerativeModel({model: modelName});
 
   await jobRef.update({status: "queued", provider: "veo3", updatedAt: Timestamp.now()});
   const request: any = {prompt};
@@ -88,16 +88,21 @@ export const startVeoForJob = onCall({
   if (imageUrl) request.image = {uri: imageUrl};
 
   try {
-    const operation = await (model as any).generateVideo(request);
-    await jobRef.update({status: "processing", providerJobId: operation?.name || null, updatedAt: Timestamp.now()});
+    // Kick off generateMedia
+    const genUrl = `${apiBase}/models/${encodeURIComponent(modelName)}:generateMedia?key=${encodeURIComponent(apiKey)}`;
+    const genResp = await axios.post(genUrl, request, {timeout: 120000});
+    const operationName = genResp.data?.name || genResp.data?.operation || genResp.data?.id;
+    await jobRef.update({status: "processing", providerJobId: operationName || null, updatedAt: Timestamp.now()});
 
-    // Poll
-    let op = operation;
+    // Poll the operation until done
     let tries = 0;
     const maxTries = 48; // up to ~8 min
+    let op: any = {done: false};
     while (!op?.done && tries < maxTries) {
       await new Promise((r) => setTimeout(r, 10000));
-      op = await (client as any).getOperation({name: operation.name || operation});
+      const opUrl = `${apiBase}/operations/${encodeURIComponent(operationName)}?key=${encodeURIComponent(apiKey)}`;
+      const opResp = await axios.get(opUrl, {timeout: 60000});
+      op = opResp.data;
       tries++;
     }
 
@@ -106,8 +111,8 @@ export const startVeoForJob = onCall({
       throw new HttpsError("deadline-exceeded", "Veo operation timed out");
     }
 
-    const gv = (op.result?.generatedVideos?.[0]) || (op.response?.generated_videos?.[0]);
-    const downloadUrl = gv?.video?.uri || gv?.video || null;
+    const gv = (op.result?.generatedVideos?.[0]) || (op.response?.generatedVideos?.[0]) || (op.response?.generated_videos?.[0]);
+    const downloadUrl = gv?.video?.uri || gv?.video?.url || gv?.video || gv?.uri || null;
     if (!downloadUrl) {
       await jobRef.update({status: "error", error: "no_video", updatedAt: Timestamp.now()});
       throw new HttpsError("internal", "No video URL in operation result");
