@@ -6,6 +6,8 @@ import FirebaseAuth
 import FirebaseFirestore
 import FirebaseStorage
 import UIKit
+import SwiftUI
+import StoreKit
 
 @MainActor
 final class VoiceAssistantVM: ObservableObject {
@@ -296,9 +298,11 @@ final class VoiceAssistantVM: ObservableObject {
 	private func handleFinalTranscript(_ text: String) {
 		partialTranscript = text
 		print("[VoiceAssistantVM] final transcript length=\(text.count)")
-		// Start chat response only; defer job creation until user confirms
-		stopListening(sendToLLM: true)
-		// Optional: two-pass verification for critical turns
+		// New: skip follow-ups; immediately generate from first input
+		stopListening(sendToLLM: false)
+		chatHistory.append(["role": "user", "content": text])
+		Task { @MainActor in await self.confirmCreation() }
+		// Keep verification telemetry (non-blocking)
 		Task { @MainActor in
 			await self.verifyIfCritical(streamingText: text)
 		}
@@ -405,7 +409,7 @@ final class VoiceAssistantVM: ObservableObject {
 		// Require a product image before engaging the Q&A flow
 		if attachedImage == nil {
 			uiState = .idle
-			assistantStreamingText = "I don’t see a product image yet. Please add one by taking a picture or tapping the plus, then hit the mic to start."
+			assistantStreamingText = "I don’t see a product image yet. Please add one by taking a picture or tapping the plus, then type your idea below to begin."
 			showBanner = true
 			AnalyticsManager.shared.logEvent("image_required_block", parameters: ["phase": "pre_sse"])
 			startIntroSSE(text: assistantStreamingText)
@@ -461,10 +465,10 @@ final class VoiceAssistantVM: ObservableObject {
 				await MainActor.run {
 					self.uiState = .idle
 					self.showBanner = true
-					self.assistantStreamingText = "I didn’t catch that — please tap the mic and speak into it again one word at a time."
+					self.assistantStreamingText = "I didn’t catch that — please type your idea again using short, clear phrases."
 					self.awaitingRepeat = true
 				}
-				self.startIntroSSE(text: "I didn’t catch that — please tap the mic and speak into it again one word at a time.")
+				self.startIntroSSE(text: "I didn’t catch that — please type your idea again using short, clear phrases.")
 			}
 		}
 	}
@@ -582,6 +586,18 @@ final class VoiceAssistantVM: ObservableObject {
 		return json ?? [:]
 	}
 
+	// New: createAdFromConversation callable wrapper
+	private func createAdFromConversationCallable(messages: [[String:String]], productImageGsPath: String?) async throws -> (String?, [String: Any]) {
+		let url = URL(string: "https://us-central1-\(Self.projectId()).cloudfunctions.net/createAdFromConversation")!
+		var inner: [String: Any] = ["messages": messages]
+		if let gs = productImageGsPath { inner["assets"] = ["productImageGsPath": gs] }
+		let payload: [String: Any] = ["data": inner]
+		let json = try await callCallable(url: url, payload: payload)
+		let result = (json["result"] as? [String: Any]) ?? json
+		let jobId = result["jobId"] as? String
+		return (jobId, result)
+	}
+
 	private func currentIdToken() async throws -> String? {
 		if let user = Auth.auth().currentUser {
 			return try await user.getIDToken()
@@ -636,8 +652,7 @@ final class VoiceAssistantVM: ObservableObject {
 		case "token":
 			// Suppress any streamed text while confirmation/generating overlays are active
 			guard allowStreamingText else { break }
-			// During style prompt, ignore upstream text so we don’t show fallback from empty stream
-			if awaitingStylePrompt { break }
+			// Style picker removed: no awaitingStylePrompt gating
 			if sseFirstTokenAt == nil {
 				sseFirstTokenAt = Date()
 				if let start = sseStartedAt {
@@ -649,19 +664,7 @@ final class VoiceAssistantVM: ObservableObject {
 			let t = (json["text"] as? String) ?? ""
 			assistantStreamingText += t
 			showBanner = true
-			// Heuristic: if assistant is asking the style-choice question, surface the style picker immediately
-			let lower = assistantStreamingText.lowercased()
-			if !showStylePicker {
-				if case .none = overlayState {
-				let mentionsStyles = (lower.contains("cinematic") && (lower.contains("creative animation") || lower.contains("animation")))
-				let asksStyle = lower.contains("which style fits your taste") || lower.contains("which style fits your")
-				if mentionsStyles && asksStyle {
-					presentStylePicker()
-					assistantStreamingText = ""
-					showBanner = false
-				}
-				}
-			}
+			// Style picker removed: ignore style-choice cues
 		case "audio":
 			let size = (json["bytes"] as? Int) ?? -1
 			print("[VoiceAssistantVM] received audio event bytes=\(size)")
@@ -669,8 +672,7 @@ final class VoiceAssistantVM: ObservableObject {
 			if let b64 = json["base64"] as? String, let data = Data(base64Encoded: b64) {
 				await playAudio(data, fallbackText: assistantStreamingText)
 			}
-			// If we were awaiting the style prompt to finish, clear the flag now once audio arrived
-			if awaitingStylePrompt { awaitingStylePrompt = false }
+			// Style picker removed
 		case "tts_fallback":
 			let msg = (json["message"] as? String) ?? ""
 			let detail = (json["detail"] as? String) ?? ""
@@ -687,8 +689,8 @@ final class VoiceAssistantVM: ObservableObject {
 			uiState = .idle
 			let final = assistantStreamingText.trimmingCharacters(in: .whitespacesAndNewlines)
 			if final.isEmpty {
-				// Suppress any fallback entirely during style prompt or generating
-				if awaitingStylePrompt || ({ if case .generating = overlayState { return true } else { return false } }()) {
+				// Suppress any fallback entirely during generating
+				if ({ if case .generating = overlayState { return true } else { return false } }()) {
 					showBanner = false
 					break
 				}
@@ -707,22 +709,12 @@ final class VoiceAssistantVM: ObservableObject {
 				chatHistory.append(["role": "assistant", "content": final])
 			}
 			showBanner = false
-			// Visual style picker is disabled for now
+			// Style options removed
 		case "style_options":
-			print("[VoiceAssistantVM] style_options received (ignored while visuals disabled)")
+			break
 		case "request_confirmation":
-			// Prefer server signal; allow if either step-count gate passed OR server provided a styleKey
-			let srvStyleKey = json["styleKey"] as? String
-			let lastUser = chatHistory.reversed().first { $0["role"] == "user" }?["content"] ?? ""
-			let lowered = lastUser.lowercased()
-			let hasStyleWord = lowered.contains("cinematic") || lowered.contains("animation")
-			guard (self.isReadyForStyleOptionsGate() && (hasStyleWord || srvStyleKey != nil)) else { break }
-			// Default audio to with_sound; present the style picker popup first
-			self.pendingAudioWithSound = true
-			self.assistantStreamingText = ""
-			self.showBanner = false
-			self.uiState = .idle
-			self.presentStylePicker()
+			// Style confirmation removed: ignore
+			break
 		default:
 			break
 		}
@@ -752,50 +744,11 @@ final class VoiceAssistantVM: ObservableObject {
 
 	// MARK: - Confirmation helpers
 	var confirmationSubtitleText: String {
-		let style: AdStyle = {
-			switch overlayState {
-			case .confirming(_, let s): return s
-			case .generating(let s): return s
-			default:
-				return (self.pendingStyleKey ?? "").contains("cinematic") ? .cinematic : .animation
-			}
-		}()
-		switch style {
-		case .cinematic:
-			return "We’ll create a cinematic video style with dialogue and sound effects."
-		case .animation:
-			return "We’ll create a playful animation style without dialogue or sound effects."
-		}
+		// Generic subtitle now that style selection is removed
+		return "We’ll tailor the visuals and pacing based on what you shared."
 	}
 
-	// Present style picker with a voice prompt; audio is always with sound (default)
-	func presentStylePicker() {
-		showStylePicker = true
-		allowStreamingText = false
-		awaitingStylePrompt = true
-		stylePromptRetried = false
-		let line = "What style would you say fits your taste — a cinematic style or creative animation? Tap your choice to continue."
-		startIntroSSE(text: line)
-	}
-
-	// Ensure the style prompt line plays when the popup becomes visible.
-	// Safe to call multiple times; it restarts the SSE prompt if needed and has built-in retry.
-	func ensureStylePromptPlaying() {
-		guard awaitingStylePrompt else { return }
-		let line = "What style would you say fits your taste — a cinematic style or creative animation? Tap your choice to continue."
-		startIntroSSE(text: line)
-	}
-
-	func applyStyleSelection(style: AdStyle) {
-		pendingStyleKey = (style == .cinematic) ? "cinematic" : "animation"
-		pendingAudioWithSound = true
-		let summary: String = (style == .cinematic)
-			? "We’ll create a cinematic video style with dialogue and sound effects."
-			: "We’ll create a playful animation style with dialogue and sound effects."
-		confirmationSummary = summary
-		showStylePicker = false
-		transitionOverlay(to: .confirming(summary: summary, style: style))
-	}
+	// Style picker removed
 
 	// MARK: - Flag loading (Firestore)
 	private func loadFlagsOnce() async {
@@ -843,8 +796,37 @@ final class VoiceAssistantVM: ObservableObject {
 		return keyterms.contains(where: { lower.contains($0.lowercased()) })
 	}
 
+	// MARK: - Text input entry point (use instead of mic when desired)
+	func submitText(_ text: String) {
+		let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else { return }
+		print("[VoiceAssistantVM] submitText len=\(trimmed.count)")
+		// Require a product image; do not proceed without it
+		if attachedImage == nil {
+			assistantStreamingText = "I don’t see a product image yet. Please add one by taking a picture or tapping the plus, then hit Generate."
+			showBanner = true
+			return
+		}
+		// Bypass chat: immediately go to generating and kick off pipeline
+		chatHistory.append(["role": "user", "content": trimmed])
+		transitionOverlay(to: .generating(style: .cinematic))
+		generatingStartedAt = Date()
+		Task { @MainActor in await self.confirmCreation() }
+	}
+
 	func confirmCreation() async {
-		guard let styleKey = pendingStyleKey else { return }
+		// Hard gate: require subscription if user previously declined and is flagged
+		let require = await SubscriptionGate.getRequireForGeneration()
+		if !SubscriptionManager.shared.isSubscribed && require {
+			await MainActor.run {
+				if let top = UIApplication.shared.topMostViewController() {
+					let hosting = UIHostingController(rootView: PaywallView())
+					hosting.modalPresentationStyle = .pageSheet
+					top.present(hosting, animated: true)
+				}
+			}
+			return
+		}
 		// Hard-require an attached image before generating
 		if attachedImage == nil {
 			await MainActor.run {
@@ -861,34 +843,21 @@ final class VoiceAssistantVM: ObservableObject {
 		do {
 			// Enter generating state immediately
 			await MainActor.run {
-				let style: AdStyle = (self.pendingStyleKey ?? "").contains("cinematic") ? .cinematic : .animation
 				self.generatingStartedAt = Date()
-				self.transitionOverlay(to: .generating(style: style))
+				self.transitionOverlay(to: .generating(style: .cinematic)) // placeholder style enum retained
 			}
-			// 1) Create job first
-			guard let jobId = try await createAdJobCallable(transcript: lastUser) else {
-				print("[VoiceAssistantVM] confirmCreation failed: no jobId")
-				await MainActor.run { self.isGenerating = false }
-				return
-			}
-			// 2) Upload image if any and persist gs path on job
-			if let gsPath = try await uploadAttachedImage(jobId: jobId) {
-				let db = Firestore.firestore()
-				try await db.collection("adJobs").document(jobId).setData(["inputImagePath": gsPath], merge: true)
-			}
-			// 3) Begin observing job BEFORE triggering generation so we don't miss ready events
+			// New flow: call createAdFromConversation with history + asset gs path. It will auto-start if image is present.
+			// 1) Ensure image is uploaded and resolve gs path
+			var gsPath: String? = nil
+			if let _ = attachedImage { gsPath = try await uploadAttachedImage(jobId: UUID().uuidString) /* temp id only for path; server stores real job */ }
+			// 2) Build messages with only the first user input to enforce one-shot generation
+			let messages: [[String: String]] = [["role": "user", "content": lastUser]]
+			// 3) Call server
+			let (jobId, result) = try await self.createAdFromConversationCallable(messages: messages, productImageGsPath: gsPath)
+			if let fmt = result["inferredFormat"] as? String { print("[VoiceAssistantVM] inferredFormat=\(fmt)") }
+			guard let jobId else { throw NSError(domain: "VoiceAssistantVM", code: -1, userInfo: [NSLocalizedDescriptionKey: "no jobId"]) }
+			// 4) Observe job status
 			await observeJob(jobId: jobId)
-			// 4) Build final prompt for this job (persisted server-side)
-			await buildFinalPromptForJob(jobId: jobId, styleKey: styleKey, withSound: pendingAudioWithSound)
-			// 5) Fire-and-forget start call; rely on Firestore listener to drive UI
-			Task { [weak self] in
-				do {
-					let ok = try await self?.startVeoForJobCallable(jobId: jobId)
-					print("[VoiceAssistantVM] startVeoForJob status=\(ok ?? false)")
-				} catch {
-					print("[VoiceAssistantVM] startVeoForJob fire-and-forget error: \(error.localizedDescription)")
-				}
-			}
 			await MainActor.run { self.isAwaitingConfirmation = false }
 		} catch {
 			print("[VoiceAssistantVM] confirmCreation pipeline error: \(error.localizedDescription)")
@@ -1007,8 +976,8 @@ final class VoiceAssistantVM: ObservableObject {
 		}()
 		let intro: String = {
 			if !greeted {
-				if let n = preferredName { return "Hello there, \(n), I’m the Genie — your creative AI voice ad specialist. Use the camera or tap the plus to attach a product photo, then tap the mic and speak into it to tell me your vision. I’ll bring it to life." }
-				return "Hello there, I’m the Genie — your creative AI voice ad specialist. Use the camera or tap the plus to attach a product photo, then tap the mic and speak into it to tell me your vision. I’ll bring it to life."
+				if let n = preferredName { return "Hello there, \(n), I’m the Genie — your creative AI ad specialist. Tap the plus to attach a product photo, then type what you want to create below and I’ll bring it to life." }
+				return "Hello there, I’m the Genie — your creative AI ad specialist. Tap the plus to attach a product photo, then type what you want to create below and I’ll bring it to life."
 			} else {
 				let n = preferredName ?? "friend"
 				let jokes = [

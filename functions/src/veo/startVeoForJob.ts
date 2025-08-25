@@ -27,17 +27,7 @@ type VideoPromptV1 = {
   output: { resolution: string; duration_s: number };
 };
 
-export const startVeoForJob = onCall({
-  region: "us-central1",
-  timeoutSeconds: 540,
-  memory: "1GiB",
-  secrets: [VEO_API_KEY],
-}, async (req: CallableRequest<StartVeoInput>) => {
-  const uid = req.auth?.uid;
-  if (!uid) throw new HttpsError("unauthenticated", "User must be signed in.");
-  const jobId = (req.data?.jobId || "").trim();
-  if (!jobId) throw new HttpsError("invalid-argument", "Missing jobId");
-
+export async function startVeoForJobCore(uid: string, jobId: string): Promise<{status: string; finalVideoUrl?: string}> {
   const jobRef = db.collection("adJobs").doc(jobId);
   const snap = await jobRef.get();
   if (!snap.exists) throw new HttpsError("not-found", "Job not found");
@@ -49,6 +39,12 @@ export const startVeoForJob = onCall({
   // Enforce: image is required for Veo generation
   if (!p.product?.imageGsPath || typeof p.product.imageGsPath !== "string") {
     await jobRef.update({status: "error", error: "image_required", updatedAt: Timestamp.now()});
+    // analytics
+    try {
+      await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_error", jobId, reason: "image_required", createdAt: Date.now()});
+    } catch (anErr) {
+      console.error("[startVeoForJob] analytics image_required log error", (anErr as Error)?.message);
+    }
     throw new HttpsError("failed-precondition", "image_required");
   }
 
@@ -64,6 +60,14 @@ export const startVeoForJob = onCall({
   }).join(" \n");
   const cta = p.cta?.copy ? ` End on a clean hero frame. CTA vibe: ${p.cta.copy}.` : " End on a clean hero frame.";
   const prompt = `${header} Subject: ${p.product.description}. ${scenes}.${cta}${audio ? " " + audio : ""}`.trim();
+  // Debug: persist and log a preview of the prompt so we can see it from client/devtools
+  try {
+    const preview = prompt.slice(0, 800);
+    await jobRef.set({debug: {promptPreview: preview}}, {merge: true});
+    console.log("[startVeoForJob] prompt_preview", {len: prompt.length, head: preview});
+  } catch (e: any) {
+    console.error("[startVeoForJob] prompt preview write failed", e?.message);
+  }
 
   // Resolve image (required) from gs:// to a signed URL; fallback to Firebase token URL.
   // If the bucket in gs:// is not accessible (e.g., firebasestorage.app host), try the project's default bucket.
@@ -85,7 +89,10 @@ export const startVeoForJob = onCall({
       rawBucketForInline = primaryBucketName;
       rawObjectPathForInline = objectPath;
       const defaultBucket = storage.bucket(); // project's default bucket
-      const defaultBucketName = defaultBucket.name;
+      let defaultBucketName = defaultBucket.name;
+      if (defaultBucketName.endsWith(".firebasestorage.app")) {
+        defaultBucketName = defaultBucketName.replace(/\.firebasestorage\.app$/, ".appspot.com");
+      }
 
       const tryBuildFrom = async (bucketName: string): Promise<string | undefined> => {
         try {
@@ -115,6 +122,8 @@ export const startVeoForJob = onCall({
         imageUrl = await tryBuildFrom(defaultBucketName);
         if (imageUrl) {
           console.log("[startVeoForJob] resolved via default bucket");
+          rawBucketForInline = defaultBucketName;
+          rawObjectPathForInline = objectPath;
         }
       }
     }
@@ -132,7 +141,12 @@ export const startVeoForJob = onCall({
   }
 
   // Prepare REST endpoints for Veo (Generative Language API)
-  const apiKey = process.env.VEO_API_KEY as string;
+  const apiKey = (process.env.VEO_API_KEY as string | undefined)?.trim();
+  const masked = apiKey ? `${String(apiKey).slice(0, 6)}••••${String(apiKey).slice(-4)}` : "missing";
+  console.log("[startVeoForJob] apiKey_present=", !!apiKey, "apiKey_masked=", masked);
+  if (!apiKey) {
+    throw new HttpsError("failed-precondition", "missing_veo_api_key");
+  }
   const apiBase = "https://generativelanguage.googleapis.com/v1beta";
   const normalizeModel = (m?: string): string => {
     if (!m) return "veo-3.0-generate-preview";
@@ -145,6 +159,12 @@ export const startVeoForJob = onCall({
   console.log("[startVeoForJob] begin jobId=", jobId, " model=", modelName);
   console.log("[startVeoForJob] codepath=REST_v1beta axios");
   await jobRef.update({status: "queued", provider: "veo3", updatedAt: Timestamp.now()});
+  // analytics: generation started
+  try {
+    await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_started", jobId, model: modelName, createdAt: Date.now()});
+  } catch (anErr) {
+    console.error("[startVeoForJob] analytics started log error", (anErr as Error)?.message);
+  }
   // Build predictLongRunning body (prefer inline image bytes; gcsUri is not supported for Veo 3)
   const instances: any[] = [{prompt}];
   if (inlineImageB64) {
@@ -164,6 +184,11 @@ export const startVeoForJob = onCall({
   if (!instances[0].image) {
     console.error("[startVeoForJob] image sign/inline failed; aborting generation");
     await jobRef.update({status: "error", error: "image_sign_failed", updatedAt: Timestamp.now()});
+    try {
+      await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_error", jobId, reason: "image_sign_failed", createdAt: Date.now()});
+    } catch (anErr) {
+      console.error("[startVeoForJob] analytics image_sign_failed log error", (anErr as Error)?.message);
+    }
     throw new HttpsError("failed-precondition", "image_sign_failed");
   }
 
@@ -192,6 +217,11 @@ export const startVeoForJob = onCall({
 
     if (!op?.done) {
       await jobRef.update({status: "error", error: "timeout", updatedAt: Timestamp.now()});
+      try {
+        await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_error", jobId, reason: "timeout", createdAt: Date.now()});
+      } catch (anErr) {
+        console.error("[startVeoForJob] analytics timeout log error", (anErr as Error)?.message);
+      }
       throw new HttpsError("deadline-exceeded", "Veo operation timed out");
     }
 
@@ -203,6 +233,11 @@ export const startVeoForJob = onCall({
     const downloadUrl = sample?.video?.uri || sample?.video?.url || gv?.video?.uri || gv?.video?.url || gv?.video || gv?.uri || null;
     if (!downloadUrl) {
       await jobRef.update({status: "error", error: "no_video", updatedAt: Timestamp.now()});
+      try {
+        await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_error", jobId, reason: "no_video", createdAt: Date.now()});
+      } catch (anErr) {
+        console.error("[startVeoForJob] analytics no_video log error", (anErr as Error)?.message);
+      }
       throw new HttpsError("internal", "No video URL in operation result");
     }
 
@@ -225,18 +260,46 @@ export const startVeoForJob = onCall({
       });
       const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(outPath)}?alt=media&token=${token}`;
       await jobRef.update({status: "ready", finalVideoUrl: publicUrl, updatedAt: Timestamp.now()});
+      try {
+        await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_ready", jobId, url: publicUrl, createdAt: Date.now()});
+      } catch (anErr) {
+        console.error("[startVeoForJob] analytics ready log error", (anErr as Error)?.message);
+      }
       return {status: "ready", finalVideoUrl: publicUrl};
     } catch (rehErr: any) {
       console.error("[startVeoForJob] rehost failed; returning original url", rehErr?.message);
       await jobRef.update({status: "ready", finalVideoUrl: downloadUrl, updatedAt: Timestamp.now()});
+      try {
+        await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_ready", jobId, url: downloadUrl, createdAt: Date.now()});
+      } catch (anErr) {
+        console.error("[startVeoForJob] analytics ready log error (fallback)", (anErr as Error)?.message);
+      }
       return {status: "ready", finalVideoUrl: downloadUrl};
     }
   } catch (e: any) {
     const msg = typeof e?.message === "string" ? e.message : String(e);
     console.error("[startVeoForJob] generate/poll error", msg, e?.response?.data || e?.stack);
     await jobRef.update({status: "error", error: msg?.slice(0, 500) || "internal", updatedAt: Timestamp.now()});
+    try {
+      await db.collection("analyticsEvents").add({uid, event: "ad_job_generation_error", jobId, reason: msg?.slice(0, 200) || "internal", createdAt: Date.now()});
+    } catch (anErr) {
+      console.error("[startVeoForJob] analytics error log error", (anErr as Error)?.message);
+    }
     throw new HttpsError("internal", msg || "Veo generate failed");
   }
+}
+
+export const startVeoForJob = onCall({
+  region: "us-central1",
+  timeoutSeconds: 540,
+  memory: "1GiB",
+  secrets: [VEO_API_KEY],
+}, async (req: CallableRequest<StartVeoInput>) => {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "User must be signed in.");
+  const jobId = (req.data?.jobId || "").trim();
+  if (!jobId) throw new HttpsError("invalid-argument", "Missing jobId");
+  return await startVeoForJobCore(uid, jobId);
 });
 
 

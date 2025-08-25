@@ -21,11 +21,20 @@ final class SubscriptionManager: ObservableObject {
     @Published var backendSyncInProgress = false
     @Published var error: Error?
 
-    private let productID = "com.bhizchat.dategenie.unlimited" // UPDATE in App Store Connect
+    private let productID = "com.bhizchat.dategenie.unlimited_weekly" // Weekly plan
     private let functions = Functions.functions(region: "us-central1")
 
     private init() {
         Task { await self.refreshEntitlements() }
+        // Live updates for renewals/cancellations
+        Task {
+            for await update in Transaction.updates {
+                if case .verified(let transaction) = update, transaction.productID == productID {
+                    await self.handle(transaction: transaction)
+                    await transaction.finish()
+                }
+            }
+        }
     }
 
     // MARK: - Product
@@ -127,6 +136,17 @@ final class SubscriptionManager: ObservableObject {
             print("[Subscription] Backend validation call completed ✅")
         } catch {
             print("[Subscription] Backend validation failed: \(error)")
+        }
+    }
+
+    // MARK: - Restore
+    func restore() async {
+        do {
+            try await AppStore.sync()
+            await refreshEntitlements()
+            await sendReceiptToBackend()
+        } catch {
+            self.error = error
         }
     }
 

@@ -1,12 +1,17 @@
 import SwiftUI
 import Photos
 import PencilKit
+import StoreKit
 
 struct PhotoPreviewView: View {
     let url: URL
     @Environment(\.dismiss) private var dismiss
     @State private var image: UIImage? = nil
     @State private var toast: ToastMessage? = nil
+    @State private var showPaywall: Bool = false
+    @StateObject private var sub = SubscriptionManager.shared
+    @State private var pendingAction: PendingAction? = nil
+    enum PendingAction { case save, share }
     // Inline overlays state
     @State private var overlayState = OverlayState()
     @State private var canvasRect: CGRect = .zero
@@ -147,6 +152,26 @@ struct PhotoPreviewView: View {
         .toast(message: $toast)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear(perform: loadImage)
+        .sheet(isPresented: $showPaywall, onDismiss: {
+            print("[PhotoPreviewView] paywall dismissed; isSubscribed=\(sub.isSubscribed)")
+            if !sub.isSubscribed {
+                print("[PhotoPreviewView] setting requiresSubscriptionForGeneration=true after dismiss")
+                Task { await SubscriptionGate.setRequireForGenerationTrue() }
+            }
+        }) {
+            PaywallView()
+                .onAppear { print("[PhotoPreviewView] presenting PaywallView (pending=\(String(describing: pendingAction)))") }
+        }
+        .onChange(of: sub.isSubscribed) { ok in
+            guard ok, showPaywall else { return }
+            switch pendingAction {
+            case .save: saveToPhotos()
+            case .share: share()
+            case .none: break
+            }
+            pendingAction = nil
+            showPaywall = false
+        }
         .onAppear {
             // Fallback: if measurement is delayed, compute a best-effort canvas from screen bounds
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
@@ -185,6 +210,7 @@ struct PhotoPreviewView: View {
     }
 
     private func saveToPhotos() {
+        guard sub.isSubscribed else { pendingAction = .save; showPaywall = true; print("[PhotoPreviewView] gating save → showPaywall=true"); return }
         // If overlays exist, merge first
         if let img = image, hasOverlays {
             let merged = OverlayExporter.renderMergedImage(baseImage: img,
@@ -224,6 +250,7 @@ struct PhotoPreviewView: View {
     }
 
     private func share() {
+        guard sub.isSubscribed else { pendingAction = .share; showPaywall = true; print("[PhotoPreviewView] gating share → showPaywall=true"); return }
         let itemURL: URL = {
             if let img = image, hasOverlays {
                 let merged = OverlayExporter.renderMergedImage(baseImage: img,

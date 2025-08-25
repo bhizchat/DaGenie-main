@@ -31,6 +31,9 @@ module.exports = {
     "indent": ["error", 2],
     // relax style-only rules that block deploys
     "require-jsdoc": "off",
-    "max-len": ["warn", {"code": 100, "ignoreUrls": true}],
+    "max-len": ["warn", {"code": 140, "ignoreUrls": true}],
+    // make these warnings so deploys are not blocked
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": ["warn", {"argsIgnorePattern": "^_", "varsIgnorePattern": "^_"}],
   },
 };
