@@ -13,9 +13,7 @@ struct CustomCameraView: View {
 	@State private var isHoldingMic: Bool = false
 	@State private var showImagePicker: Bool = false
 	@State private var pickedImage: UIImage? = nil
-	@State private var showStylePicker: Bool = false
-	@State private var includeSound: Bool = true
-	@State private var selectedStyleKey: String? = nil
+    @State private var composerText: String = ""
 
 	var body: some View {
 		ZStack {
@@ -96,52 +94,17 @@ struct CustomCameraView: View {
 
             VStack {
                 ZStack {
-					// Mic: tap to start / tap to stop
-					MicrophoneButton(
-						isActive: voiceVM.uiState == .listening,
-						onTap: {
-							if voiceVM.uiState == .listening {
-								UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-								voiceVM.stopListening(sendToLLM: true)
-                            } else {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-								Task {
-									let token = await fetchAssemblyToken()
-									if let token = token {
-										voiceVM.startListening(withToken: token)
-                                        } else {
-										print("[VoiceUI] token fetch returned nil")
-									}
-								}
-							}
-						}
-					)
-					.environmentObject(voiceVM)
-
-					GeometryReader { geo in
-						VStack(spacing: 6) {
-							// Left camera icon: opens custom camera
-							HStack(spacing: 180) {
-								Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); openCamera() }) {
-									Image("icon_camera_solid").resizable().scaledToFit().frame(width: 28, height: 28)
-								}
-								// Right plus icon: open photo picker
-							Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); presentPicker() }) {
-								Image("plus_icon").resizable().scaledToFit().frame(width: 28, height: 28)
-							}
-							}
-						}
-						.position(x: geo.size.width / 2, y: geo.size.height / 2)
-					}
-				}
-				.offset(y: 300)
-			}
+                    // Mic UI removed for text-only mode
+                }
+                .offset(y: 300)
+            }
 		}
 		.onAppear { voiceVM.speakIntroOnFirstOpen() }
 		.onChange(of: pickedImage) { newValue in
 			if let img = newValue { voiceVM.attachedImage = img }
 		}
 		.onChange(of: voiceVM.uiState) { _ in }
+		// Top streaming banner overlay (kept fixed when keyboard appears)
 		.overlay(alignment: .top) {
 			if voiceVM.showBanner || !voiceVM.assistantStreamingText.isEmpty {
 				ZStack(alignment: .topTrailing) {
@@ -165,19 +128,11 @@ struct CustomCameraView: View {
 				}
 				.padding(.top, 60)
 				.padding(.horizontal, 24)
+				.ignoresSafeArea(.keyboard, edges: .bottom)
+				.zIndex(10)
 			}
 		}
-		// Style selection popup (full-screen) driven by VM.showStylePicker
-		.fullScreenCover(isPresented: Binding(get: { voiceVM.showStylePicker }, set: { newVal in
-			if !newVal { voiceVM.showStylePicker = false }
-		})) {
-			StyleSelectionPopup()
-				.environmentObject(voiceVM)
-				.onAppear {
-					// Guarantee the style prompt line plays when the popup appears
-					voiceVM.ensureStylePromptPlaying()
-				}
-		}
+		// Style picker removed
 		.sheet(isPresented: $showProfile) {
 			ProfileView().environmentObject(AuthViewModel()).environmentObject(userRepo)
 		}
@@ -212,7 +167,45 @@ struct CustomCameraView: View {
 			guard let url else { return }
 			VideoPreviewPresenter.shared.show(root: ReelPreviewView(url: url))
 		}
-		// Visual style picker disabled
+		// Visual style picker removed
+		.safeAreaInset(edge: .bottom) {
+			HStack(spacing: 10) {
+				Button(action: { presentPicker() }) {
+					Image("plus_icon").resizable().scaledToFit().frame(width: 28, height: 28)
+				}
+				ZStack(alignment: .trailing) {
+					ZStack(alignment: .topLeading) {
+						if composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+							Text("Describe the ad you want to create…")
+								.foregroundColor(.secondary)
+								.padding(.leading, 10)
+								.padding(.top, 12)
+						}
+						TextEditor(text: $composerText)
+							.frame(minHeight: 36, maxHeight: 96)
+							.scrollContentBackground(.hidden)
+							.padding(.horizontal, 6)
+							.padding(.vertical, 6)
+							.background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.15)))
+					}
+					if !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+						Button(action: {
+							let text = composerText
+							composerText = ""
+							voiceVM.submitText(text)
+							UIImpactFeedbackGenerator(style: .light).impactOccurred()
+							UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+						}) {
+							Image(systemName: "paperplane.fill").foregroundColor(.white)
+						}
+						.padding(.trailing, 12)
+					}
+				}
+			}
+			.padding(.horizontal, 14)
+			.padding(.vertical, 10)
+			.background(.ultraThinMaterial)
+		}
 	}
 
 	private func fetchAssemblyToken() async -> String? {
@@ -285,75 +278,7 @@ struct GeneratingView: View {
     }
 }
 
-// MARK: - Style Selection Popup
-struct StyleSelectionPopup: View {
-    @EnvironmentObject var voiceVM: VoiceAssistantVM
-    @State private var selected: VoiceAssistantVM.AdStyle? = nil
-
-    var body: some View {
-        ZStack {
-            // Make the entire background white (no dim overlay)
-            Color.white.ignoresSafeArea()
-            VStack(spacing: 0) {
-                VStack(spacing: 18) {
-                    // Header lamp for brand continuity
-                    Image("Logo_DG").resizable().scaledToFit().frame(width: 90, height: 90).offset(y: -10)
-                    Text("Select your style")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.black)
-
-                    // Card: Cinematic
-                    selectionCard(imageName: "Cinematic_ad", title: "Cinematic ad", isSelected: selected == .cinematic)
-                        .onTapGesture { selected = .cinematic }
-
-                    // Card: Creative animation
-                    selectionCard(imageName: "Creative_animation", title: "Creative animation", isSelected: selected == .animation)
-                        .onTapGesture { selected = .animation }
-
-                    Button(action: {
-                        guard let style = selected else { return }
-                        voiceVM.applyStyleSelection(style: style)
-                    }) {
-                        Text("Continue")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background((selected == nil) ? Color.gray.opacity(0.4) : Color.black)
-                            .cornerRadius(12)
-                    }
-                    .disabled(selected == nil)
-                    .padding(.top, 8)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 28)
-                .padding(.bottom, 20)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func selectionCard(imageName: String, title: String, isSelected: Bool) -> some View {
-        VStack(spacing: 10) {
-            ZStack(alignment: .topTrailing) {
-                Image(imageName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .cornerRadius(12)
-                Circle()
-                    .fill(isSelected ? Color.green : Color.white)
-                    .frame(width: 18, height: 18)
-                    .overlay(Circle().stroke(Color.black, lineWidth: 2))
-                    .padding(8)
-            }
-            Text(title)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundColor(.black)
-                .frame(maxWidth: .infinity, alignment: .center)
-        }
-    }
-}
+// Style selection popup removed
 
 // Simple GIF renderer using WKWebView backed by a Data asset
 import WebKit
@@ -376,55 +301,7 @@ struct GIFView: UIViewRepresentable {
 }
 
 // MARK: - Overlay builder extracted to avoid deep nesting confusing the parser
-private extension CustomCameraView {
-    // Overlay presented when the user is choosing a video style
-    // Extracted into its own computed property to avoid deeply nested code in the main body
-	@ViewBuilder
-    var stylePickerOverlay: some View {
-		if voiceVM.uiState == .choosingStyle {
-			VStack(alignment: .leading, spacing: 12) {
-				Text("Choose your video style")
-					.font(.system(size: 20, weight: .bold))
-					.foregroundColor(.black)
-					.padding(.horizontal, 16)
-				Toggle(isOn: $includeSound) { Text("Include dialogue & sound effects") }
-					.padding(.horizontal, 16)
-				ScrollView(.vertical, showsIndicators: true) {
-					VStack(spacing: 20) {
-						ForEach(voiceVM.styleOptions) { opt in
-							VStack(alignment: .leading, spacing: 8) {
-								AsyncImage(url: opt.posterURL) { phase in
-									switch phase {
-									case .empty: Color.gray.opacity(0.2)
-									case .success(let img): img.resizable().scaledToFill()
-									case .failure: Color.gray.opacity(0.2)
-									@unknown default: Color.gray.opacity(0.2)
-									}
-								}
-								.frame(height: 180)
-								.clipped()
-								.cornerRadius(12)
-								.overlay(
-									RoundedRectangle(cornerRadius: 12)
-										.stroke(selectedStyleKey == opt.key ? Color.blue : Color.clear, lineWidth: 3)
-								)
-								Text(opt.title)
-									.font(.system(size: 18, weight: .semibold))
-									.foregroundColor(.black)
-								Text(opt.subtitle)
-									.font(.system(size: 14))
-									.foregroundColor(.black)
-							}
-							.onTapGesture { selectedStyleKey = opt.key }
-						}
-					}
-					.padding(.horizontal, 16)
-				}
-			}
-			.padding(.bottom, 16)
-		}
-	}
-}
+private extension CustomCameraView {}
 
 // MARK: - Subviews
 struct MicrophoneButton: View {

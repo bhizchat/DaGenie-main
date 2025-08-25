@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		58A532B12E5A9D1100DCA8C2 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 58A532B02E5A9D1100DCA8C2 /* StoreKit.framework */; };
 		58CE15F52E45963A0021E8BF /* YPImagePicker in Frameworks */ = {isa = PBXBuildFile; productRef = 58CE15F42E45963A0021E8BF /* YPImagePicker */; };
 		58CE15FF2E46A6D20021E8BF /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 58CE15FE2E46A6D20021E8BF /* FirebaseStorage */; };
 		58CE16012E46A6D20021E8BF /* FirebaseStorageCombine-Community in Frameworks */ = {isa = PBXBuildFile; productRef = 58CE16002E46A6D20021E8BF /* FirebaseStorageCombine-Community */; };
@@ -37,6 +38,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		58A532B02E5A9D1100DCA8C2 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		58F78AD72E28314D001763AC /* DateGenie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DateGenie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		58F78AE92E28314F001763AC /* DateGenieTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DateGenieTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		58F78AF32E28314F001763AC /* DateGenieUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DateGenieUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -88,6 +90,7 @@
 				58CFAC162E2DE82C004B17A3 /* FirebaseAuth in Frameworks */,
 				58CFAC142E2DE82C004B17A3 /* FirebaseAnalyticsCore in Frameworks */,
 				58CE15F52E45963A0021E8BF /* YPImagePicker in Frameworks */,
+				58A532B12E5A9D1100DCA8C2 /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -108,12 +111,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		58A532AF2E5A9D1100DCA8C2 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				58A532B02E5A9D1100DCA8C2 /* StoreKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		58F78ACE2E28314C001763AC = {
 			isa = PBXGroup;
 			children = (
 				58F78AD92E28314D001763AC /* DateGenie */,
 				58F78AEC2E28314F001763AC /* DateGenieTests */,
 				58F78AF62E28314F001763AC /* DateGenieUITests */,
+				58A532AF2E5A9D1100DCA8C2 /* Frameworks */,
 				58F78AD82E28314D001763AC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -463,7 +475,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3;
+				MARKETING_VERSION = 3.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bhizchat.DateGenie;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -500,7 +512,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3;
+				MARKETING_VERSION = 3.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bhizchat.DateGenie;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import Photos
+import StoreKit
 
 struct ReelPreviewView: View {
     let url: URL
@@ -8,6 +9,11 @@ struct ReelPreviewView: View {
     @State private var isPlaying: Bool = true
     @Environment(\.dismiss) private var dismiss
     @State private var toast: ToastMessage? = nil
+    @State private var showPaywall: Bool = false
+    @StateObject private var sub = SubscriptionManager.shared
+    @State private var pendingAction: PendingAction? = nil
+
+    enum PendingAction { case save, share }
 
     var body: some View {
         ZStack {
@@ -36,6 +42,26 @@ struct ReelPreviewView: View {
             }
         }
         .toast(message: $toast)
+        .sheet(isPresented: $showPaywall, onDismiss: {
+            print("[ReelPreviewView] paywall dismissed; isSubscribed=\(sub.isSubscribed)")
+            if !sub.isSubscribed {
+                print("[ReelPreviewView] setting requiresSubscriptionForGeneration=true after dismiss")
+                Task { await SubscriptionGate.setRequireForGenerationTrue() }
+            }
+        }) {
+            PaywallView()
+                .onAppear { print("[ReelPreviewView] presenting PaywallView (pending=\(String(describing: pendingAction)))") }
+        }
+        .onChange(of: sub.isSubscribed) { ok in
+            guard ok, showPaywall else { return }
+            switch pendingAction {
+            case .save: saveToPhotos()
+            case .share: share()
+            case .none: break
+            }
+            pendingAction = nil
+            showPaywall = false
+        }
     }
 
     private func togglePlay() {
@@ -44,6 +70,7 @@ struct ReelPreviewView: View {
     }
 
     private func saveToPhotos() {
+        guard sub.isSubscribed else { pendingAction = .save; showPaywall = true; print("[ReelPreviewView] gating save → showPaywall=true"); return }
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
                 DispatchQueue.main.async {
@@ -70,6 +97,7 @@ struct ReelPreviewView: View {
     }
 
     private func share() {
+        guard sub.isSubscribed else { pendingAction = .share; showPaywall = true; print("[ReelPreviewView] gating share → showPaywall=true"); return }
         let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         UIApplication.shared.topMostViewController()?.present(av, animated: true)
     }

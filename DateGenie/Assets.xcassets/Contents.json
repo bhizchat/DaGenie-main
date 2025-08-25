@@ -1,10 +1,1 @@
-{
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  },
-  "properties" : {
-    "compression-type" : "lossless",
-    "generate-swift-asset-symbol-extensions" : "disabled"
-  }
-}
+{ "info": { "author": "xcode", "version": 1 } }

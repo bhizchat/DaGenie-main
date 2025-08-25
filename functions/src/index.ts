@@ -27,3 +27,6 @@ export {getAssemblyToken} from "./getAssemblyToken";
 export {createAdJob} from "./veo/createAdJob";
 export {adPromptBuilder} from "./veo/adPromptBuilder";
 export {startVeoForJob} from "./veo/startVeoForJob";
+export {validateReceipt} from "./validateReceipt";
+export {conversationToBrief} from "./veo/conversationToBrief";
+export {createAdFromConversation} from "./veo/createAdFromConversation";

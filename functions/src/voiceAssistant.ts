@@ -2,6 +2,8 @@ import {onRequest} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import OpenAI from "openai";
+import {inferFormatWithScores} from "./veo/inferFormat";
+import {AdBrief} from "./veo/brief";
 
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 const ELEVENLABS_API_KEY = defineSecret("ELEVENLABS_API_KEY");
@@ -209,21 +211,19 @@ export const voiceAssistant = onRequest({
     };
 
     const openai = new OpenAI({apiKey: process.env.OPENAI_API_KEY});
-    // Guardrails: Keep assistant focused strictly on ad creation. If the user asks
-    // something unrelated, politely steer back. Log inputs for debugging.
+    // Guardrails & open-ended follow-up strategy
     const systemGuard: ChatMessage = {
       role: "system",
       content: [
-        "You are 'Genie', a helpful voice ad studio. Stay strictly focused on creating short video ads.",
-        "Before any follow-up, first acknowledge what the user said and, if an image is attached, briefly describe what you see so the user knows you understood (1 sentence). Example: ‘Got it — you want an ad for a [describe product]’. Keep it friendly and concise.",
-        "Then run a structured follow-up before drafting any prompt:",
-        "Step 1 (alone): Ask only — ‘So who would you say are your target customers for this ad?’ Keep it as that single question (no numbering).",
-        "After the user answers Step 1, give a brief 1-sentence acknowledgment summarizing their answer, then ask Step 2.",
-        "Step 2 (alone): First infer the product/service category from the user's message and any image. Offer ONLY 3–5 CTA options that are relevant to that category. Examples: Physical CPG/beverages/snacks → in‑store purchase, retailer/store locator, grocery delivery link, add‑to‑cart on retailer, coupon/promo; Restaurants → online orders/delivery, reservations, in‑store visits; Apps/SaaS → app installs, free trial, sign‑ups; Services/venues → bookings/appointments; Creators/brands → follows/subscribes on social. Explicitly OMIT irrelevant CTAs (e.g., for a soda do NOT include app installs/sign‑ups/bookings).",
-        "Ask the CTA as a single natural question like: ‘And what’s the call to action you want after watching this ad? For example: [relevant options only]’.",
-        "After the user answers Step 2, briefly acknowledge both answers (customers + CTA) in one sentence, then ask the style preference as a single question:",
-        "Step 3 (alone): ‘Thinking about the creative look, which style fits your taste for this ad — a cinematic video style or a playful creative animation? And would you like it with dialogue and sound effects, or a purely visual version without sound?’ Keep it under 2 sentences and do not number it in the reply. Do not ask about themes or messaging; you'll handle creative details yourself.",
-        "Ask one question per turn, do not prefix with numbers, keep each follow-up under 2 sentences, and wait for the user’s answer before proceeding.",
+        "You are 'Genie', a friendly creative companion that helps small businesses create short video ads.",
+        "Tone: encouraging, brand-first, concise, no jargon. Acknowledge what the user says and, if an image is attached, briefly describe it in one sentence so they know you understood.",
+        "Follow-up strategy (ask at most one question per turn, only if missing):",
+        "Q1: ‘This will help me tailor the video perfectly for you. Tell me about your product in your own words—what makes it special, and who is it for?’",
+        "Q2: ‘How do you want people to feel and think after watching? Give me 2–3 words (e.g., cozy, trustworthy; bold, exciting).’",
+        "Q3: ‘If we could show one moment that proves its value, what would we see or hear? Describe a scene, vibe, or a line customers say.’",
+        "Optional: Only if not provided and relevant — ‘Would you like a closing message or tagline at the end?’",
+        "Do not ask the user to choose a format or style. Ask one question at a time, keep each question under 2 sentences, value-frame why you ask, and wait for the answer before proceeding.",
+        "CRITICAL: Never draft or propose an ad script, scenes, storyboard, shot list, or voiceover. Never write lines like 'Here’s a draft', 'Scene:', 'Voiceover:', 'Cut to', or bracketed beats. Keep outputs to short acknowledgements and one question only.",
       ].join(" \n"),
     };
     console.log("[voiceAssistant] messages count=", messages.length);
@@ -240,85 +240,36 @@ export const voiceAssistant = onRequest({
         await new Promise((r) => setTimeout(r, 25));
       }
     } else {
-      // Pre-check stage: if the last user turn includes an explicit style choice, skip LLM and go straight to confirm UI
-      const lastUserTextEarly = (messages.slice().reverse().find((m) => m.role === "user")?.content || "");
-      const styleFromUserEarly = detectStyleFromUser(lastUserTextEarly);
-      const audioFromUserEarly = detectAudioFromUser(lastUserTextEarly);
-      const readyForConfirmEarly = !!styleFromUserEarly; // remove turn-count gating; style choice is sufficient
-
-      if (readyForConfirmEarly) {
-        const textContext = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
-        const styleKeyGuess = styleFromUserEarly!;
-        // Prefer explicit detection from last user; fall back to inference across text
-        const audioPreferenceGuess = audioFromUserEarly || inferStyleAndAudio(textContext).audioPreferenceGuess;
-        // Option-aware CTA classification (best effort using category-derived candidates)
-        const category = inferCategory(textContext);
-        const ctaCandidates = buildCtaCandidates(category);
-        const ctaGuess = classifyCta(lastUserTextEarly, ctaCandidates);
-        const summary = buildConfirmSummary(styleKeyGuess, audioPreferenceGuess);
-        const confirmLine = "Shall I go ahead and create the ad video now? You can hit Confirm, or tap the mic to add any extra details.";
-        // Stream only the confirm line to the client (no outline)
-        for (const p of (" " + confirmLine).match(/\S+\s*/g) ?? [confirmLine]) {
-          send({type: "token", text: p});
-          await new Promise((r) => setTimeout(r, 10));
-        }
-        send({type: "request_confirmation", summary, styleKey: styleKeyGuess, audioPreference: audioPreferenceGuess, cta: ctaGuess?.key, ctaScore: ctaGuess?.score});
-        fullText = confirmLine; // so optional TTS will speak the confirmation
-      } else {
-        // Build multimodal-capable message list for OpenAI
-        const mmMessages: any[] = [];
-        mmMessages.push(systemGuard);
-        if (lastUser) mmMessages.push(languageGuard);
-        for (const m of messages) {
-          mmMessages.push({role: m.role, content: m.content});
-        }
-        // If an image is provided, append a user message with multimodal parts
-        if (imageUrlToUse) {
-          mmMessages.push({
-            role: "user",
-            content: [
-              {type: "text", text: "Consider the attached product image while understanding my request."},
-              {type: "image_url", image_url: {url: imageUrlToUse}},
-            ],
-          });
-        }
-
-        // Stream the assistant reply token-by-token
-        const stream = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: mmMessages as any,
-          stream: true,
-          temperature: 0.7,
+      // Build multimodal-capable message list for OpenAI (open-ended flow)
+      const mmMessages: any[] = [];
+      mmMessages.push(systemGuard);
+      if (lastUser) mmMessages.push(languageGuard);
+      for (const m of messages) {
+        mmMessages.push({role: m.role, content: m.content});
+      }
+      // If an image is provided, append a user message with multimodal parts
+      if (imageUrlToUse) {
+        mmMessages.push({
+          role: "user",
+          content: [
+            {type: "text", text: "Consider the attached product image while understanding my request."},
+            {type: "image_url", image_url: {url: imageUrlToUse}},
+          ],
         });
+      }
+      // Stream the assistant reply token-by-token
+      const stream = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: mmMessages as any,
+        stream: true,
+        temperature: 0.7,
+      });
 
-        for await (const part of stream) {
-          const delta = part.choices?.[0]?.delta?.content ?? "";
-          if (delta) {
-            fullText += delta;
-            send({type: "token", text: delta});
-          }
-        }
-
-        // Post-stream confirm if we only reached Step 3 readiness after this turn
-        const lastUserText = (messages.slice().reverse().find((m) => m.role === "user")?.content || "");
-        const styleFromUser = detectStyleFromUser(lastUserText);
-        const audioFromUser = detectAudioFromUser(lastUserText);
-        const readyForConfirm = !!styleFromUser; // no turn-count gating
-
-        if (readyForConfirm) {
-          const textContext = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
-          const styleKeyGuess = styleFromUser!;
-          const audioPreferenceGuess = audioFromUser || inferStyleAndAudio(textContext).audioPreferenceGuess;
-          const category = inferCategory(textContext);
-          const ctaCandidates = buildCtaCandidates(category);
-          const ctaGuess = classifyCta(lastUserText, ctaCandidates);
-          const summary = buildConfirmSummary(styleKeyGuess, audioPreferenceGuess);
-          const confirmLine = "Shall I go ahead and create the ad video now? You can hit Confirm, or tap the mic to add any extra details.";
-          for (const p of (" " + confirmLine).match(/\S+\s*/g) ?? [confirmLine]) {
-            send({type: "token", text: p});
-            await new Promise((r) => setTimeout(r, 10));
-          }
-          send({type: "request_confirmation", summary, styleKey: styleKeyGuess, audioPreference: audioPreferenceGuess, cta: ctaGuess?.key, ctaScore: ctaGuess?.score});
+      for await (const part of stream) {
+        const delta = part.choices?.[0]?.delta?.content ?? "";
+        if (delta) {
+          fullText += delta;
+          send({type: "token", text: delta});
         }
       }
     }
@@ -347,7 +298,7 @@ export const voiceAssistant = onRequest({
           const errBody = await r.text();
           console.error("[voiceAssistant] elevenlabs error", r.status, errBody?.slice(0, 300));
           send({type: "tts_fallback", message: `elevenlabs ${r.status}`, detail: errBody?.slice(0, 300)});
-          // Do not block confirmation or flow if TTS fails due to quota
+          // Do not block flow if TTS fails
         } else {
           const contentType = r.headers.get("content-type") || "";
           const ab = await r.arrayBuffer();
@@ -368,6 +319,34 @@ export const voiceAssistant = onRequest({
       send({type: "tts_fallback"});
     }
 
+    // After the chat turn, infer format from the latest conversation so the client can confirm and generate
+    try {
+      const textContext = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
+      const lastUserText = (messages[messages.length - 1]?.content || "").toLowerCase();
+      const brief: AdBrief = {
+        productName: undefined,
+        category: /phone|laptop|mouse|headset|watch|camera|device|gadget/.test(textContext) ? "electronics" : undefined,
+        productTraits: [],
+        audience: undefined,
+        brandPersona: [],
+        desiredPerception: (textContext.match(/(cozy|calm|premium|luxurious|playful|bold|excited|trustworthy|modern|minimal)/gi) || []).map((v) => v.toLowerCase()),
+        proofMoment: undefined,
+        styleWords: [],
+        cta: null,
+        durationSeconds: null,
+        aspectRatio: /16\s*:\s*9/.test(textContext) ? "16:9" : "9:16",
+        brand: {},
+        assets: {},
+      } as AdBrief;
+      const {format, roomScore, prodScore} = inferFormatWithScores(brief);
+      console.log("[voiceAssistant] format_preview", {format, roomScore, prodScore, lastUser: lastUserText.slice(0, 120)});
+      send({type: "format_preview", format, roomScore, prodScore});
+      // Ask client to show the confirmation/generate affordance
+      send({type: "request_confirmation"});
+    } catch (e: any) {
+      console.error("[voiceAssistant] format_preview_error", e?.message);
+    }
+
     send({type: "done"});
     res.end();
     return;
@@ -379,161 +358,6 @@ export const voiceAssistant = onRequest({
 });
 
 // Helpers
-function inferStyleAndAudio(text: string): {styleKeyGuess: string; audioPreferenceGuess: "with_sound"|"no_sound"} {
-  const styleKeyGuess = /animation|creative animation/i.test(text) ? "creative_animation" : "cinematic";
-  const audioPreferenceGuess = /no sound|silent|without sound/i.test(text) ? "no_sound" : "with_sound";
-  return {styleKeyGuess, audioPreferenceGuess};
-}
-
-function buildConfirmSummary(styleKey: string, audioPref: "with_sound"|"no_sound"): string {
-  const stylePhrase = styleKey === "cinematic" ? "a cinematic video style" : "a playful creative animation";
-  const audioPhrase = audioPref === "no_sound" ? "without sound" : "with dialogue and sound effects";
-  return `We’ll create ${stylePhrase} ${audioPhrase}.`;
-}
-
-// Detect explicit style choice from the user's most recent message
-function detectStyleFromUser(text: string): "cinematic" | "creative_animation" | null {
-  const t = (text || "");
-  if (/\b(animation|creative animation)\b/i.test(t)) return "creative_animation";
-  if (/\b(cinematic)\b/i.test(t)) return "cinematic";
-  return null;
-}
-
-// Detect explicit audio preference if present
-function detectAudioFromUser(text: string): "with_sound" | "no_sound" | null {
-  const t = (text || "");
-  const lower = t.toLowerCase();
-  // Normalize basic punctuation
-  const tokens = lower.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
-
-  // Keyword sets
-  const noWords = ["no", "without", "silent", "silence", "mute", "muted", "quiet", "visual", "visuals"]; // "visual only" implies no sound
-  const noPhrases = ["no sound", "without sound", "visual only", "purely visual", "no audio"];
-  const withWords = ["with", "dialogue", "voice", "voiceover", "audio", "sound", "effects", "sfx", "music"];
-  const withPhrases = ["with sound", "sound effects", "with audio", "with dialogue", "dialogue and sound effects"];
-
-  const containsPhrase = (arr: string[]) => arr.some((p) => lower.includes(p));
-  const containsAny = (arr: string[]) => arr.some((w) => tokens.includes(w));
-
-  // Negation window check (simple): look for "not" before key fragments
-  const hasNot = tokens.includes("not");
-
-  const hasNoSignal = containsPhrase(noPhrases) || containsAny(noWords);
-  const hasWithSignal = containsPhrase(withPhrases) || containsAny(withWords);
-
-  if (hasNoSignal && !hasWithSignal) return "no_sound";
-  if (hasWithSignal && !hasNoSignal) return "with_sound";
-  // Resolve simple negations like "not silent" => with_sound; "not with sound" => no_sound
-  if (hasNot) {
-    if (lower.includes("not silent") || lower.includes("not without sound") || lower.includes("not no sound") || lower.includes("not mute")) return "with_sound";
-    if (lower.includes("not with sound") || lower.includes("not dialogue") || lower.includes("not sound effects")) return "no_sound";
-  }
-  return null;
-}
-
-// --- Option-aware CTA classifier ---
-type CtaCandidate = { key: string; synonyms: string[] };
-
-function buildCtaCandidates(category: string): CtaCandidate[] {
-  // Baseline CTA set; could be refined per category
-  const base: CtaCandidate[] = [
-    {key: "online_orders", synonyms: ["online", "order", "orders", "website", "buy online", "checkout", "purchase online"]},
-    {key: "in_store_purchase", synonyms: ["store", "in store", "in person", "shop", "retail", "go to the store", "purchase in store"]},
-    {key: "store_locator", synonyms: ["nearby", "find a store", "locator", "locations", "near me", "map"]},
-    {key: "reservations", synonyms: ["reserve", "reservation", "book", "booking", "table"]},
-    {key: "app_install", synonyms: ["install", "download", "app", "get the app"]},
-    {key: "coupon", synonyms: ["coupon", "promo", "promo code", "discount", "code"]},
-    {key: "add_to_cart", synonyms: ["add to cart", "add it to cart", "add to basket", "cart"]},
-  ];
-  // Simple category tailoring
-  if (category === "beverage_crave") {
-    return [base[0], base[1], base[2], base[5], base[6]]; // online, in-store, locator, coupon, add_to_cart
-  }
-  return base;
-}
-
-function tokenize(s: string): string[] {
-  return (s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").match(/\b[\w-]{2,}\b/g) || []);
-}
-
-function jaroWinkler(a: string, b: string): number {
-  // Minimal JW; good enough for short keywords
-  const s1 = a; const s2 = b;
-  const m = Math.floor(Math.max(s1.length, s2.length) / 2) - 1;
-  let matches = 0; let transpositions = 0;
-  const s1Matches = new Array(s1.length).fill(false);
-  const s2Matches = new Array(s2.length).fill(false);
-  for (let i = 0; i < s1.length; i++) {
-    const start = Math.max(0, i - m);
-    const end = Math.min(i + m + 1, s2.length);
-    for (let j = start; j < end; j++) {
-      if (s2Matches[j]) continue;
-      if (s1[i] !== s2[j]) continue;
-      s1Matches[i] = true; s2Matches[j] = true; matches++; break;
-    }
-  }
-  if (matches === 0) return 0;
-  let k = 0;
-  for (let i = 0; i < s1.length; i++) {
-    if (!s1Matches[i]) continue;
-    while (!s2Matches[k]) k++;
-    if (s1[i] !== s2[k]) transpositions++;
-    k++;
-  }
-  const jaro = (matches / s1.length + matches / s2.length + (matches - transpositions / 2) / matches) / 3;
-  // Small Winkler prefix boost
-  let prefix = 0;
-  for (let i = 0; i < Math.min(4, Math.min(s1.length, s2.length)); i++) {
-    if (s1[i] === s2[i]) prefix++; else break;
-  }
-  return jaro + prefix * 0.1 * (1 - jaro);
-}
-
-function classifyCta(userText: string, candidates: CtaCandidate[]): { key: string; score: number } | null {
-  const toks = tokenize(userText);
-  if (toks.length === 0) return null;
-  const joined = toks.join(" ");
-  const negWords = new Set(["no", "not", "without", "don't", "dont", "never"]);
-
-  function containsNegationNear(term: string): boolean {
-    const arr = toks;
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i] === term) {
-        for (let j = Math.max(0, i - 2); j <= Math.min(arr.length - 1, i + 2); j++) {
-          if (negWords.has(arr[j])) return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  let best: { key: string; score: number } | null = null;
-  for (const c of candidates) {
-    let score = 0;
-    for (const syn of c.synonyms) {
-      const s = syn.toLowerCase();
-      if (joined.includes(s)) score += 2; // phrase match
-      else {
-        // token-level fuzzy
-        for (const t of toks) {
-          const sim = jaroWinkler(t, s);
-          if (sim >= 0.92) {
-            score += 1.2; break;
-          }
-          if (sim >= 0.85) {
-            score += 0.6;
-          }
-        }
-      }
-      // penalize explicit negation near token
-      const synHead = s.split(" ")[0];
-      if (containsNegationNear(synHead)) score -= 2.5;
-    }
-    if (!best || score > best.score) best = {key: c.key, score};
-  }
-  if (best && best.score >= 1.2) return best; // require minimal confidence
-  return null;
-}
 function inferCategory(text: string): string {
   const t = (text || "").toLowerCase();
   if (/(coke|coca[- ]cola|soda|beverage|coffee|latte|espresso|beer|corona)/.test(t)) return "beverage_crave";
@@ -594,6 +418,103 @@ function deriveVoiceover(text: string): string | undefined {
   return "A short, punchy line that matches the reveal and ends with the CTA.";
 }
 
+// --- Option-aware CTA classifier helpers ---
+type CtaCandidate = { key: string; synonyms: string[] };
+
+function buildCtaCandidates(category: string): CtaCandidate[] {
+  const base: CtaCandidate[] = [
+    {key: "online_orders", synonyms: ["online", "order", "orders", "website", "buy online", "checkout", "purchase online"]},
+    {key: "in_store_purchase", synonyms: ["store", "in store", "in person", "shop", "retail", "go to the store", "purchase in store"]},
+    {key: "store_locator", synonyms: ["nearby", "find a store", "locator", "locations", "near me", "map"]},
+    {key: "reservations", synonyms: ["reserve", "reservation", "book", "booking", "table"]},
+    {key: "app_install", synonyms: ["install", "download", "app", "get the app"]},
+    {key: "coupon", synonyms: ["coupon", "promo", "promo code", "discount", "code"]},
+    {key: "add_to_cart", synonyms: ["add to cart", "add it to cart", "add to basket", "cart"]},
+  ];
+  if (category === "beverage_crave") {
+    return [base[0], base[1], base[2], base[5], base[6]]; // online, in-store, locator, coupon, add_to_cart
+  }
+  return base;
+}
+
+function tokenize(s: string): string[] {
+  return (s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").match(/\b[\w-]{2,}\b/g) || []);
+}
+
+function jaroWinkler(a: string, b: string): number {
+  const s1 = a; const s2 = b;
+  const m = Math.floor(Math.max(s1.length, s2.length) / 2) - 1;
+  let matches = 0; let transpositions = 0;
+  const s1Matches = new Array(s1.length).fill(false);
+  const s2Matches = new Array(s2.length).fill(false);
+  for (let i = 0; i < s1.length; i++) {
+    const start = Math.max(0, i - m);
+    const end = Math.min(i + m + 1, s2.length);
+    for (let j = start; j < end; j++) {
+      if (s2Matches[j]) continue;
+      if (s1[i] !== s2[j]) continue;
+      s1Matches[i] = true; s2Matches[j] = true; matches++; break;
+    }
+  }
+  if (matches === 0) return 0;
+  let k = 0;
+  for (let i = 0; i < s1.length; i++) {
+    if (!s1Matches[i]) continue;
+    while (!s2Matches[k]) k++;
+    if (s1[i] !== s2[k]) transpositions++;
+    k++;
+  }
+  const jaro = (matches / s1.length + matches / s2.length + (matches - transpositions / 2) / matches) / 3;
+  let prefix = 0;
+  for (let i = 0; i < Math.min(4, Math.min(s1.length, s2.length)); i++) {
+    if (s1[i] === s2[i]) prefix++; else break;
+  }
+  return jaro + prefix * 0.1 * (1 - jaro);
+}
+
+function classifyCta(userText: string, candidates: CtaCandidate[]): { key: string; score: number } | null {
+  const toks = tokenize(userText);
+  if (toks.length === 0) return null;
+  const joined = toks.join(" ");
+  const negWords = new Set(["no", "not", "without", "don't", "dont", "never"]);
+
+  function containsNegationNear(term: string): boolean {
+    const arr = toks;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i] === term) {
+        for (let j = Math.max(0, i - 2); j <= Math.min(arr.length - 1, i + 2); j++) {
+          if (negWords.has(arr[j])) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  let best: { key: string; score: number } | null = null;
+  for (const c of candidates) {
+    let score = 0;
+    for (const syn of c.synonyms) {
+      const s = syn.toLowerCase();
+      if (joined.includes(s)) score += 2; else {
+        for (const t of toks) {
+          const sim = jaroWinkler(t, s);
+          if (sim >= 0.92) {
+            score += 1.2; break;
+          }
+          if (sim >= 0.85) {
+            score += 0.6;
+          }
+        }
+      }
+      const synHead = s.split(" ")[0];
+      if (containsNegationNear(synHead)) score -= 2.5;
+    }
+    if (!best || score > best.score) best = {key: c.key, score};
+  }
+  if (best && best.score >= 1.2) return best;
+  return null;
+}
+
 function deriveCTA(text: string): { key: string; copy: string } {
   const category = inferCategory(text);
   const opts = buildCtaCandidates(category);
@@ -626,10 +547,6 @@ function deriveScenesFromCategory(creative: any, category: string) {
     scenes.push({id: "s1", duration_s: 4, beats: ["Logo ripple morph"], shots: [{camera: "slow drift", subject: "logo", action: "fluid glass ripple"}]});
     scenes.push({id: "s2", duration_s: 4, beats: ["Device forms"], shots: [{camera: "orbit micro", subject: "device", action: "light dances on glass and metal"}]});
     scenes.push({id: "s3", duration_s: 4, beats: ["Hero hold"], shots: [{camera: "low wide", subject: "device", action: "clean studio glow"}]});
-  } else if (category === "auto_crate") {
-    scenes.push({id: "s1", duration_s: 4, beats: ["Crate opens"], shots: [{camera: "fixed wide", subject: "crate", action: "symmetrical panels open"}]});
-    scenes.push({id: "s2", duration_s: 4, beats: ["Wireframe aligns"], shots: [{camera: "locked hero", subject: "wireframe", action: "descends and locks"}]});
-    scenes.push({id: "s3", duration_s: 4, beats: ["Reveal car"], shots: [{camera: "low hero", subject: "vehicle", action: "wireframe fades to real"}]});
   } else {
     scenes.push({id: "s1", duration_s: 4, beats: ["Magical reveal"], shots: [{camera: "centered", subject: "product", action: "tasteful transformation"}]});
     scenes.push({id: "s2", duration_s: 4, beats: ["Brand moment"], shots: [{camera: "macro detail", subject: "signature element", action: "light accent"}]});
