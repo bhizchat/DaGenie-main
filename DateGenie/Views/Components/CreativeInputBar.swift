@@ -25,7 +25,7 @@ struct CreativeInputBar: View {
         let placeholderH = 58.0 * scale
         // left: base 28×scale, shifted right by 10pt and plus icon + 20pt spacing
         let placeholderLeft = (28.0 * scale) + 10.0 + icon + 20.0
-        let placeholderTop = max(0.0, (innerHeight - placeholderH) / 2.0) + 5.0
+        let placeholderTop = max(0.0, (innerHeight - placeholderH) / 2.0) + 6.5
 
         HStack(spacing: 0) {
             // Input field sized exactly to Figma rect width (1141px)
@@ -62,13 +62,13 @@ struct CreativeInputBar: View {
                 }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: onSend) {
-                        Image("send_new")
+                        Image("send")
                             .renderingMode(.original)
                             .resizable()
                             .scaledToFit()
                             .frame(width: icon, height: icon)
                     }
-                    .padding(.trailing, 12)
+                    .padding(.trailing, 16)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .accessibilityLabel("Send")
                 }
@@ -119,8 +119,8 @@ struct GrowingTextView: UIViewRepresentable {
         tv.font = .systemFont(ofSize: 17)
         tv.textColor = .black
         tv.delegate = context.coordinator
-        // Move caret/content down by 2pt (increase top inset)
-        tv.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 6, right: 0)
+        // Move caret/content down by 3.5pt total (previous 2 + 1.5)
+        tv.textContainerInset = UIEdgeInsets(top: 9.5, left: 0, bottom: 6, right: 0)
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tv.tintColor = .black // cursor color
         return tv
