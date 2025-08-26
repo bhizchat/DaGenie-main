@@ -15,6 +15,7 @@ struct CreativeInputBar: View {
         HStack(spacing: 8) {
             Button(action: onAddTapped) {
                 Image("plus_new")
+                    .renderingMode(.original)
                     .resizable()
                     .scaledToFit()
                     .frame(width: 24, height: 24)
@@ -47,12 +48,13 @@ struct CreativeInputBar: View {
                     GrowingTextView(text: $text, contentHeight: $textHeight, maxHeight: maxHeight)
                         .frame(height: min(max(minHeight, textHeight), maxHeight))
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 10)
                         .background(RoundedRectangle(cornerRadius: 100).fill(Color.white))
                 }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: onSend) {
                         Image("send_new")
+                            .renderingMode(.original)
                             .resizable()
                             .scaledToFit()
                             .frame(width: 24, height: 24)
@@ -63,9 +65,10 @@ struct CreativeInputBar: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color.composerGray))
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 0)
+        .padding(.vertical, 8)
+        .background(Color.composerGray)
     }
 }
 
@@ -106,6 +109,7 @@ struct GrowingTextView: UIViewRepresentable {
         tv.delegate = context.coordinator
         tv.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tv.tintColor = .black // cursor color
         return tv
     }
 
@@ -142,14 +146,4 @@ struct GrowingTextView: UIViewRepresentable {
     }
 }
 
-// MARK: - Color helper
-private extension Color {
-    init(hex: UInt, alpha: Double = 1.0) {
-        let r = Double((hex >> 16) & 0xFF) / 255.0
-        let g = Double((hex >> 8) & 0xFF) / 255.0
-        let b = Double(hex & 0xFF) / 255.0
-        self = Color(red: r, green: g, blue: b).opacity(alpha)
-    }
-}
-
-
+ 
