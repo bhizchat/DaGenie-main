@@ -12,31 +12,28 @@ struct CreativeInputBar: View {
     private let maxHeight: CGFloat = 120
 
     var body: some View {
-        HStack(spacing: 8) {
+        // Figma-aware sizing based on canvas 1206x2622
+        let screenW = UIScreen.main.bounds.width
+        let scale = screenW / 1206.0
+        let side = 65.0 * scale // left/right margin in Figma
+        let inputHeight = 133.0 * scale
+        let corner = 100.0 * scale
+        let icon = max(20.0, min(32.0, 28.0 * scale))
+
+        HStack(spacing: 0) {
+            // Left margin area hosts the plus button centered
             Button(action: onAddTapped) {
                 Image("plus_new")
                     .renderingMode(.original)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 24, height: 24)
+                    .frame(width: icon, height: icon)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .accessibilityLabel("Add image")
+            .frame(width: side, height: inputHeight)
 
-            if !attachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(attachments) { att in
-                            AttachmentChip(attachment: att) {
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
-                                    attachments.removeAll { $0.id == att.id }
-                                }
-                            }
-                        }
-                    }
-                }
-                .frame(height: 70)
-            }
-
+            // Input field sized exactly to Figma rect width (1141px)
             ZStack(alignment: .trailing) {
                 ZStack(alignment: .topLeading) {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -49,7 +46,7 @@ struct CreativeInputBar: View {
                         .frame(height: min(max(minHeight, textHeight), maxHeight))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: 100).fill(Color.white))
+                        .background(RoundedRectangle(cornerRadius: corner).fill(Color.white))
                 }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: onSend) {
@@ -57,17 +54,19 @@ struct CreativeInputBar: View {
                             .renderingMode(.original)
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 24, height: 24)
+                            .frame(width: icon, height: icon)
                     }
-                    .padding(.trailing, 10)
+                    .padding(.trailing, 12)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .accessibilityLabel("Send")
                 }
             }
+            .frame(width: screenW - side * 2, height: inputHeight)
+
+            // Right margin keeps symmetry (and tap target space near edge)
+            Color.clear.frame(width: side, height: inputHeight)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 0)
-        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: inputHeight, maxHeight: inputHeight)
         .background(Color.composerGray)
     }
 }
