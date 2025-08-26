@@ -188,6 +188,8 @@ struct CustomCameraView: View {
 			)
 			.ignoresSafeArea(edges: .bottom)
 		}
+        .contentShape(Rectangle())
+        .onTapGesture { UIApplication.hideKeyboard() }
 	}
 
 	private func fetchAssemblyToken() async -> String? {
