@@ -21,7 +21,7 @@ struct CreativeInputBar: View {
         let barHeight = innerHeight + 30.0 // grey rectangle height plus 30pt
         let corner = 100.0 * scale
         let icon = max(20.0, min(32.0, 28.0 * scale))
-        let textMaxHeight = max(self.maxHeight, innerHeight * 1.8)
+        let textMaxHeight = self.maxHeight
         let placeholderW = 452.0 * scale
         let placeholderH = 58.0 * scale
         // left: base 28×scale, shifted right by 10pt and plus icon + 20pt spacing
@@ -49,8 +49,8 @@ struct CreativeInputBar: View {
                         .padding(.trailing, 12)
                         .padding(.vertical, 10)
                 }
-                // Plus icon inside the text box, bottom-left with ~20pt inset
-                .overlay(alignment: .bottomLeading) {
+                // Plus icon inside the text box at leading with ~20pt inset
+                .overlay(alignment: .leading) {
                     Button(action: onAddTapped) {
                         Image("plus_icon")
                             .renderingMode(.original)
@@ -58,27 +58,21 @@ struct CreativeInputBar: View {
                             .scaledToFit()
                             .frame(width: icon, height: icon)
                             .padding(.leading, 20)
-                            .padding(.bottom, 10)
                     }
                     .accessibilityLabel("Add image")
                 }
-                // Send icon appears at bottom-right when typing
-                .overlay(alignment: .bottomTrailing) {
-                    Group {
-                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button(action: onSend) {
-                                Image("send")
-                                    .renderingMode(.original)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: icon, height: icon)
-                            }
-                            .padding(.trailing, 16)
-                            .padding(.bottom, 10)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                            .accessibilityLabel("Send")
-                        }
+                // Send icon appears at trailing when typing
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(action: onSend) {
+                        Image("send")
+                            .renderingMode(.original)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: icon, height: icon)
                     }
+                    .padding(.trailing, 16)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .accessibilityLabel("Send")
                 }
             }
             .frame(width: screenW - side * 2, height: barHeight)
