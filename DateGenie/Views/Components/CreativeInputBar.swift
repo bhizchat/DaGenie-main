@@ -44,7 +44,7 @@ struct CreativeInputBar: View {
                             .padding(.leading, 14)
                             .padding(.top, 12)
                     }
-                    GrowingTextView(text: $text, contentHeight: $textHeight)
+                    GrowingTextView(text: $text, contentHeight: $textHeight, maxHeight: maxHeight)
                         .frame(height: min(max(minHeight, textHeight), maxHeight))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 12)
@@ -96,6 +96,7 @@ private struct AttachmentChip: View {
 struct GrowingTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var contentHeight: CGFloat
+    var maxHeight: CGFloat?
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -112,6 +113,13 @@ struct GrowingTextView: UIViewRepresentable {
         if uiView.text != text { uiView.text = text }
         DispatchQueue.main.async {
             self.contentHeight = uiView.contentSize.height
+            if let m = self.maxHeight {
+                let needsScroll = uiView.contentSize.height > m - 0.5
+                if uiView.isScrollEnabled != needsScroll {
+                    uiView.isScrollEnabled = needsScroll
+                    uiView.showsVerticalScrollIndicator = needsScroll
+                }
+            }
         }
     }
 
@@ -123,6 +131,13 @@ struct GrowingTextView: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text
             parent.contentHeight = textView.contentSize.height
+            if let m = parent.maxHeight {
+                let needsScroll = textView.contentSize.height > m - 0.5
+                if textView.isScrollEnabled != needsScroll {
+                    textView.isScrollEnabled = needsScroll
+                    textView.showsVerticalScrollIndicator = needsScroll
+                }
+            }
         }
     }
 }
