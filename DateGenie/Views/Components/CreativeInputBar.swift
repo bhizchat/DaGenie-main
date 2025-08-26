@@ -14,7 +14,7 @@ struct CreativeInputBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Button(action: onAddTapped) {
-                Image("plus_icon")
+                Image("plus_new")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 24, height: 24)
@@ -46,13 +46,13 @@ struct CreativeInputBar: View {
                     }
                     GrowingTextView(text: $text, contentHeight: $textHeight)
                         .frame(height: min(max(minHeight, textHeight), maxHeight))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 12)
                         .background(RoundedRectangle(cornerRadius: 100).fill(Color.white))
                 }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: onSend) {
-                        Image("icon_preview_share") // placeholder; replace with send_new
+                        Image("send_new")
                             .resizable()
                             .scaledToFit()
                             .frame(width: 24, height: 24)
@@ -65,7 +65,7 @@ struct CreativeInputBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color(hex: 0xD9D9D9)))
+        .background(RoundedRectangle(cornerRadius: 16).fill(Color.composerGray))
     }
 }
 
