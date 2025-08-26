@@ -16,7 +16,9 @@ struct CreativeInputBar: View {
         let screenW = UIScreen.main.bounds.width
         let scale = screenW / 1206.0
         let side = 65.0 * scale // left/right margin in Figma
-        let inputHeight = 133.0 * scale
+        let baseHeight = 133.0 * scale
+        let innerHeight = max(44.0, baseHeight - 5.0) // white text box height minus 5pt
+        let barHeight = innerHeight + 30.0 // grey rectangle height plus 30pt
         let corner = 100.0 * scale
         let icon = max(20.0, min(32.0, 28.0 * scale))
 
@@ -31,10 +33,14 @@ struct CreativeInputBar: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .accessibilityLabel("Add image")
-            .frame(width: side, height: inputHeight)
+            .frame(width: side, height: barHeight)
 
             // Input field sized exactly to Figma rect width (1141px)
             ZStack(alignment: .trailing) {
+                // Fixed white rounded rect matching innerHeight
+                RoundedRectangle(cornerRadius: corner)
+                    .fill(Color.white)
+                    .frame(height: innerHeight)
                 ZStack(alignment: .topLeading) {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text("Describe your idea…")
@@ -46,7 +52,6 @@ struct CreativeInputBar: View {
                         .frame(height: min(max(minHeight, textHeight), maxHeight))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: corner).fill(Color.white))
                 }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: onSend) {
@@ -61,12 +66,12 @@ struct CreativeInputBar: View {
                     .accessibilityLabel("Send")
                 }
             }
-            .frame(width: screenW - side * 2, height: inputHeight)
+            .frame(width: screenW - side * 2, height: barHeight)
 
             // Right margin keeps symmetry (and tap target space near edge)
-            Color.clear.frame(width: side, height: inputHeight)
+            Color.clear.frame(width: side, height: barHeight)
         }
-        .frame(maxWidth: .infinity, minHeight: inputHeight, maxHeight: inputHeight)
+        .frame(maxWidth: .infinity, minHeight: barHeight, maxHeight: barHeight)
         .background(Color.composerGray)
     }
 }
