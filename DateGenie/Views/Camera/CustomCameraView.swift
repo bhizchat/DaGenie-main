@@ -169,42 +169,25 @@ struct CustomCameraView: View {
 		}
 		// Visual style picker removed
 		.safeAreaInset(edge: .bottom) {
-			HStack(spacing: 10) {
-				Button(action: { presentPicker() }) {
-					Image("plus_icon").resizable().scaledToFit().frame(width: 28, height: 28)
+			CreativeInputBar(
+				text: $composerText,
+				attachments: Binding(get: {
+					if let img = voiceVM.attachedImage { return [ImageAttachment(image: img)] }
+					return []
+				}, set: { arr in
+					voiceVM.attachedImage = arr.first?.image
+				}),
+				onAddTapped: { presentPicker() },
+				onSend: {
+					let text = composerText
+					composerText = ""
+					voiceVM.submitText(text)
+					UIImpactFeedbackGenerator(style: .light).impactOccurred()
+					UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
 				}
-				ZStack(alignment: .trailing) {
-					ZStack(alignment: .topLeading) {
-						if composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-							Text("Describe the ad you want to create…")
-								.foregroundColor(.secondary)
-								.padding(.leading, 10)
-								.padding(.top, 12)
-						}
-						TextEditor(text: $composerText)
-							.frame(minHeight: 36, maxHeight: 96)
-							.scrollContentBackground(.hidden)
-							.padding(.horizontal, 6)
-							.padding(.vertical, 6)
-							.background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.15)))
-					}
-					if !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-						Button(action: {
-							let text = composerText
-							composerText = ""
-							voiceVM.submitText(text)
-							UIImpactFeedbackGenerator(style: .light).impactOccurred()
-							UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-						}) {
-							Image(systemName: "paperplane.fill").foregroundColor(.white)
-						}
-						.padding(.trailing, 12)
-					}
-				}
-			}
-			.padding(.horizontal, 14)
-			.padding(.vertical, 10)
+			)
 			.background(.ultraThinMaterial)
+			.padding(.horizontal, 8)
 		}
 	}
 

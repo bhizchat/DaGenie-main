@@ -20,4 +20,5 @@ public extension Color {
     // MARK: - Brand colours
     static let nodeTop    = Color(hex: 0xF26D64)
     static let nodeBottom = Color(hex: 0xC9554D)
+    static let composerGray = Color(hex: 0xD9D9D9)
 }
