@@ -15,7 +15,7 @@ struct CreativeInputBar: View {
         // Figma-aware sizing based on canvas 1206x2622
         let screenW = UIScreen.main.bounds.width
         let scale = screenW / 1206.0
-        let side = 65.0 * scale // left/right margin in Figma
+        let side = 20.0 * scale // outer horizontal padding for grey bar
         let baseHeight = 133.0 * scale
         let innerHeight = max(44.0, baseHeight - 5.0) // white text box height minus 5pt
         let barHeight = innerHeight + 30.0 // grey rectangle height plus 30pt
@@ -23,22 +23,11 @@ struct CreativeInputBar: View {
         let icon = max(20.0, min(32.0, 28.0 * scale))
         let placeholderW = 452.0 * scale
         let placeholderH = 58.0 * scale
-        let placeholderLeft = 28.0 * scale
-        let placeholderTop = max(0.0, (innerHeight - placeholderH) / 2.0)
+        // left: base 28×scale, shifted right by 10pt and plus icon + 20pt spacing
+        let placeholderLeft = (28.0 * scale) + 10.0 + icon + 20.0
+        let placeholderTop = max(0.0, (innerHeight - placeholderH) / 2.0) + 3.0
 
         HStack(spacing: 0) {
-            // Left margin area hosts the plus button centered
-            Button(action: onAddTapped) {
-                Image("plus_icon")
-                    .renderingMode(.original)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: icon, height: icon)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .accessibilityLabel("Add image")
-            .frame(width: side, height: barHeight)
-
             // Input field sized exactly to Figma rect width (1141px)
             ZStack(alignment: .trailing) {
                 // Fixed white rounded rect matching innerHeight
@@ -47,7 +36,7 @@ struct CreativeInputBar: View {
                     .frame(height: innerHeight)
                 ZStack(alignment: .topLeading) {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("Describe your idea…")
+                        Text("Describe your idea...")
                             .foregroundColor(Color(hex: 0x808080))
                             .frame(width: placeholderW, height: placeholderH, alignment: .leading)
                             .padding(.leading, placeholderLeft)
@@ -55,8 +44,21 @@ struct CreativeInputBar: View {
                     }
                     GrowingTextView(text: $text, contentHeight: $textHeight, maxHeight: maxHeight)
                         .frame(height: min(max(minHeight, textHeight), maxHeight))
-                        .padding(.horizontal, 12)
+                        .padding(.leading, 12 + icon + 20)
+                        .padding(.trailing, 12)
                         .padding(.vertical, 10)
+                }
+                // Plus icon inside the text box, inset by ~20pt
+                .overlay(alignment: .leading) {
+                    Button(action: onAddTapped) {
+                        Image("plus_icon")
+                            .renderingMode(.original)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: icon, height: icon)
+                            .padding(.leading, 20)
+                    }
+                    .accessibilityLabel("Add image")
                 }
                 if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(action: onSend) {
@@ -73,7 +75,7 @@ struct CreativeInputBar: View {
             }
             .frame(width: screenW - side * 2, height: barHeight)
 
-            // Right margin keeps symmetry (and tap target space near edge)
+            // Side padding inside grey bar
             Color.clear.frame(width: side, height: barHeight)
         }
         .frame(maxWidth: .infinity, minHeight: barHeight, maxHeight: barHeight)
