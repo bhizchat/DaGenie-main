@@ -21,11 +21,15 @@ struct CreativeInputBar: View {
         let barHeight = innerHeight + 30.0 // grey rectangle height plus 30pt
         let corner = 100.0 * scale
         let icon = max(20.0, min(32.0, 28.0 * scale))
+        let placeholderW = 452.0 * scale
+        let placeholderH = 58.0 * scale
+        let placeholderLeft = 28.0 * scale
+        let placeholderTop = max(0.0, (innerHeight - placeholderH) / 2.0)
 
         HStack(spacing: 0) {
             // Left margin area hosts the plus button centered
             Button(action: onAddTapped) {
-                Image("plus_new")
+                Image("plus_icon")
                     .renderingMode(.original)
                     .resizable()
                     .scaledToFit()
@@ -44,9 +48,10 @@ struct CreativeInputBar: View {
                 ZStack(alignment: .topLeading) {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text("Describe your idea…")
-                            .foregroundColor(.secondary)
-                            .padding(.leading, 14)
-                            .padding(.top, 12)
+                            .foregroundColor(Color(hex: 0x808080))
+                            .frame(width: placeholderW, height: placeholderH, alignment: .leading)
+                            .padding(.leading, placeholderLeft)
+                            .padding(.top, placeholderTop)
                     }
                     GrowingTextView(text: $text, contentHeight: $textHeight, maxHeight: maxHeight)
                         .frame(height: min(max(minHeight, textHeight), maxHeight))
