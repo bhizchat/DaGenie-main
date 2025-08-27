@@ -605,6 +605,13 @@ final class VoiceAssistantVM: ObservableObject {
 		if let gs = productImageGsPath { assets["productImageGsPath"] = gs }
 		if let https = attachedImageHttpsUrl { assets["productImageUrlHttps"] = https }
 		if !assets.isEmpty { inner["assets"] = assets }
+		// Inject brand fields from onboarding storage so backend can use slogan/name for dialogue
+		let name = UserDefaults.standard.string(forKey: "onboarding.businessName")?.trimmingCharacters(in: .whitespacesAndNewlines)
+		let slogan = UserDefaults.standard.string(forKey: "onboarding.businessSlogan")?.trimmingCharacters(in: .whitespacesAndNewlines)
+		var brand: [String: Any] = [:]
+		if let n = name, !n.isEmpty { brand["name"] = n }
+		if let s = slogan, !s.isEmpty { brand["slogan"] = s }
+		if !brand.isEmpty { inner["brand"] = brand }
 		let payload: [String: Any] = ["data": inner]
 		let json = try await callCallable(url: url, payload: payload)
 		let result = (json["result"] as? [String: Any]) ?? json

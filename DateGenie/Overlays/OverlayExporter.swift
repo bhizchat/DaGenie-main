@@ -131,10 +131,32 @@ enum VideoOverlayExporter {
             }
         }
 
-        // Compute render size respecting preferredTransform
+        // Compute oriented source size
         let t = track.preferredTransform
         let sizeApplied = track.naturalSize.applying(t)
-        let renderSize = CGSize(width: abs(sizeApplied.width), height: abs(sizeApplied.height))
+        let srcSize = CGSize(width: abs(sizeApplied.width), height: abs(sizeApplied.height))
+
+        // Determine 4:5 target render size using center-crop logic (no letterboxing)
+        let targetAR: CGFloat = 4.0/5.0
+        let srcAR: CGFloat = srcSize.width / max(srcSize.height, 1)
+        var renderSize: CGSize
+        var cropDx: CGFloat = 0
+        var cropDy: CGFloat = 0
+        if srcAR < targetAR {
+            // Source is taller/narrower than 4:5 → crop top/bottom, preserve width
+            let outWidth = srcSize.width
+            let outHeight = round(outWidth / targetAR)
+            renderSize = CGSize(width: outWidth, height: outHeight)
+            cropDy = round((srcSize.height - outHeight) / 2)
+        } else if srcAR > targetAR {
+            // Source is wider than 4:5 → crop sides, preserve height
+            let outHeight = srcSize.height
+            let outWidth = round(outHeight * targetAR)
+            renderSize = CGSize(width: outWidth, height: outHeight)
+            cropDx = round((srcSize.width - outWidth) / 2)
+        } else {
+            renderSize = srcSize
+        }
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
@@ -144,11 +166,15 @@ enum VideoOverlayExporter {
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
-        layerInstruction.setTransform(track.preferredTransform, at: .zero)
+        // Apply preferred orientation plus a translation to center-crop into 4:5
+        var cropTransform = CGAffineTransform.identity
+        if cropDx != 0 || cropDy != 0 { cropTransform = cropTransform.translatedBy(x: -cropDx, y: -cropDy) }
+        let finalTransform = track.preferredTransform.concatenating(cropTransform)
+        layerInstruction.setTransform(finalTransform, at: .zero)
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 
-        // Core Animation overlay stack
+        // Core Animation overlay stack (in 4:5 render space)
         let parentLayer = CALayer(); parentLayer.frame = CGRect(origin: .zero, size: renderSize)
         let videoLayer = CALayer(); videoLayer.frame = parentLayer.frame
         parentLayer.addSublayer(videoLayer)

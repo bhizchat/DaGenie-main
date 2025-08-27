@@ -29,6 +29,7 @@ export interface CreateFromConversationInput {
   assets?: {productImageGsPath?: string; productImageUrlHttps?: string; logoGsPath?: string; brandColors?: string[]};
   aspectRatio?: "9:16" | "16:9" | "1:1";
   model?: "veo-3.0-fast-generate-preview" | "veo-3.0-generate-preview";
+  brand?: { name?: string; slogan?: string };
 }
 
 export const createAdFromConversation = onCall({
@@ -96,6 +97,22 @@ export const createAdFromConversation = onCall({
   const vibes = firstUser.match(/(cozy|calm|premium|luxurious|playful|bold|excited|trustworthy|modern|minimal)/gi) || [];
   brief.desiredPerception = Array.from(new Set(vibes.map((v) => v.toLowerCase())));
 
+  // Extract simple business name/slogan heuristically from conversation
+  const nameMatch = firstUser.match(/(?:business|brand)\s*(?:name)?\s*[:=]\s*([\w\-\s&'.]{2,})/i);
+  const sloganMatch = firstUser.match(/(?:slogan|tagline)\s*[:=]\s*([\w\-\s&'.!,]{2,})/i);
+  const inferredName = (nameMatch?.[1] || undefined)?.trim();
+  const inferredSlogan = (sloganMatch?.[1] || undefined)?.trim();
+  const reqBrandName = (body.brand?.name || undefined)?.trim();
+  const reqBrandSlogan = (body.brand?.slogan || undefined)?.trim();
+  const businessName = reqBrandName || inferredName;
+  const businessSlogan = reqBrandSlogan || inferredSlogan;
+  if (businessName) {
+    (brief.brand as any).name = businessName;
+  }
+  if (businessSlogan) {
+    (brief.brand as any).slogan = businessSlogan;
+  }
+
   // Infer format and build prompt
   const {format, roomScore, prodScore} = inferFormatWithScores(brief);
   brief.inferredFormat = format;
@@ -107,6 +124,21 @@ export const createAdFromConversation = onCall({
   } else {
     prompt = buildProductPrompt(brief);
     promptV1 = fromProductPrompt(brief, prompt);
+  }
+
+  // Force dialogue to prefer slogan, fallback to business name where applicable
+  try {
+    const brand = (brief.brand as any) || {};
+    const preferredDialogue = (brand.slogan && String(brand.slogan).trim()) || (brand.name && `Introducing ${brand.name}`) || null;
+    if (preferredDialogue) {
+      if (Array.isArray((promptV1 as any)?.dialogue)) {
+        (promptV1 as any).dialogue = [String(preferredDialogue)];
+      } else if ((promptV1 as any)?.product) {
+        (promptV1 as any).dialogue = [String(preferredDialogue)];
+      }
+    }
+  } catch (e) {
+    console.debug("[createAdFromConversation] dialogue override skipped", (e as Error)?.message);
   }
 
   // Ensure imageGsPath is populated on promptV1 from assets if translation didn't set it
@@ -123,7 +155,9 @@ export const createAdFromConversation = onCall({
   try {
     const img = (safePromptV1 as any)?.product?.imageGsPath as string | undefined;
     console.log("[createAdFromConversation] image_path_present=", !!img, img ? String(img).slice(0, 16) : "");
-  } catch {}
+  } catch (e) {
+    console.debug("[createAdFromConversation] image log skipped", (e as Error)?.message);
+  }
 
   if (!hasImage) {
     // Fail fast: no image provided → mark job as error to avoid indefinite "generating"
@@ -164,6 +198,7 @@ export const createAdFromConversation = onCall({
     inputImagePath: (safePromptV1 as any)?.product?.imageGsPath || effectiveImageGs || null,
     inputImageUrl: body.assets?.productImageUrlHttps || null,
     updatedAt: Timestamp.now(),
+    debug: {preferredDialogue: (safeBrief as any)?.brand?.slogan || ((safeBrief as any)?.brand?.name ? `Introducing ${(safeBrief as any)?.brand?.name}` : null)},
   }, {merge: true});
 
   // Structured logs + analytics for format decision

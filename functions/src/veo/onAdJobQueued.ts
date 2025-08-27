@@ -42,7 +42,9 @@ export const onAdJobQueued = onDocumentWritten({
   const hasAnyImage = (typeof imageFromPrompt === "string" && imageFromPrompt.startsWith("gs://")) || (typeof imageFromLegacy === "string" && imageFromLegacy.startsWith("gs://"));
   try {
     console.log("[onAdJobQueued] readiness", {jobId, hasPromptV1, hasAnyImage, imageFromPromptPrefix: typeof imageFromPrompt === "string" ? String(imageFromPrompt).slice(0, 24) : undefined, imageFromLegacyPrefix: typeof imageFromLegacy === "string" ? String(imageFromLegacy).slice(0, 24) : undefined});
-  } catch {}
+  } catch (e) {
+    console.debug("[onAdJobQueued] readiness log skipped", (e as Error)?.message);
+  }
   if (!uid || !hasPromptV1 || !hasAnyImage) return;
 
   if (!becameQueued && !wasQueued) return;

@@ -204,6 +204,12 @@ export async function startVeoForJobCore(uid: string, jobId: string): Promise<{s
     brand: {},
   };
   const jsonPrompt = buildProductPrompt(brief as any);
+  // Inject preferred dialogue from job brief (slogan -> name) to ensure final prompt uses it
+  const brand = (job?.brief?.brand || {}) as any;
+  const preferredDialogue = (brand?.slogan && String(brand.slogan).trim()) || (brand?.name && `Introducing ${brand.name}`) || null;
+  if (preferredDialogue) {
+    (jsonPrompt as any).dialogue = [String(preferredDialogue)];
+  }
   const prompt = JSON.stringify(jsonPrompt);
   const templateId = categoryStr.includes("electronics") ? "electronics_json_v1" :
     (categoryStr.includes("food") || categoryStr.includes("beverages")) ? "food_beverage_json_v1" :
@@ -214,10 +220,11 @@ export async function startVeoForJobCore(uid: string, jobId: string): Promise<{s
   } catch (e) {
     console.debug("[startVeoForJob] optional category/template set failed", (e as Error)?.message);
   }
-  // Debug: persist and log a preview of the prompt so we can see it from client/devtools
+  // Debug: persist and log a preview of the prompt and dialogue so we can see it from client/devtools
   try {
     const preview = prompt.slice(0, 800);
-    await jobRef.set({debug: {promptPreview: preview}}, {merge: true});
+    const dialoguePreview = Array.isArray((jsonPrompt as any).dialogue) ? (jsonPrompt as any).dialogue.join(" | ") : null;
+    await jobRef.set({debug: {promptPreview: preview, dialoguePreview}}, {merge: true});
     console.log("[startVeoForJob] prompt_preview", {len: prompt.length, head: preview});
   } catch (e: any) {
     console.error("[startVeoForJob] prompt preview write failed", e?.message);
