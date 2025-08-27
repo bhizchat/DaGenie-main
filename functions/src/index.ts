@@ -30,3 +30,4 @@ export {startVeoForJob} from "./veo/startVeoForJob";
 export {validateReceipt} from "./validateReceipt";
 export {conversationToBrief} from "./veo/conversationToBrief";
 export {createAdFromConversation} from "./veo/createAdFromConversation";
+export {onAdJobQueued} from "./veo/onAdJobQueued";

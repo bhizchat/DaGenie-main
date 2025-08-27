@@ -1,4 +1,46 @@
 /* eslint-disable max-len, @typescript-eslint/no-explicit-any */
+
+export function buildStructuredPromptFromTemplate(category: string, productName?: string): { text: string; templateId: string } {
+  const name = (productName || "product").trim();
+  const cat = String(category || "").toLowerCase();
+  if (cat.includes("electronics")) {
+    const text = [
+      `Futuristic minimal photoreal showroom for: ${name}.`,
+      "Begin in softly lit void with reflective gradients; clean architecture phases in.",
+      "Energy ripple or crate moment that constructs a wireframe silhouette, then dissolves into the real device.",
+      "Macro glide highlights glass/metal curvature and sensors; volumetric beams across lens.",
+      "End on centered hero frame; no text.",
+    ].join(" ");
+    return {text, templateId: "electronics_showroom_struct_v1"};
+  }
+  if (cat.includes("food") || cat.includes("beverage")) {
+    const text = [
+      `Crave cinematic black void for: ${name}.`,
+      "Start with macro textures (fizz/steam/ice). A glowing wave reveals the product silhouette which fills with liquid.",
+      "Condensation and chill fog build; hold a centered hero on reflective surface.",
+      "No on-screen text.",
+    ].join(" ");
+    return {text, templateId: "food_crave_struct_v1"};
+  }
+  if (cat.includes("health") || cat.includes("beauty") || cat.includes("personal")) {
+    const text = [
+      `Luxury pastel cinematic for: ${name}.`,
+      "A floating bloom/silk cradle opens to reveal the product; silk ribbons lift gently.",
+      "Soft golden top-light; warm ambient fill; petals drift; end on soft hero hold.",
+      "No text.",
+    ].join(" ");
+    return {text, templateId: "beauty_pastel_struct_v1"};
+  }
+  // default apparel
+  const text = [
+    `Fashion minimalism for: ${name}.`,
+    "Fabric close-ups ripple; color swatches morph; garment rotates in clean void.",
+    "Camera: slow parallax orbit; Lighting: studio white; No text.",
+  ].join(" ");
+  return {text, templateId: "apparel_minimal_struct_v1"};
+}
+
+/* eslint-disable max-len, @typescript-eslint/no-explicit-any */
 import {AdBrief, withDefaults} from "./brief";
 
 export type ProductPromptSequence = {
