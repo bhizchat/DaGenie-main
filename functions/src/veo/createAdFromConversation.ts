@@ -7,7 +7,7 @@ import {inferFormatWithScores} from "./inferFormat";
 import {buildRoomPrompt} from "./buildRoomPrompt";
 import {buildProductPrompt} from "./buildProductPrompt";
 import {fromRoomPrompt, fromProductPrompt, VideoPromptV1} from "./translateToV1";
-import {startVeoForJobCore} from "./startVeoForJob";
+// import {startVeoForJobCore} from "./startVeoForJob"; // no longer used; background trigger kicks off generation
 
 if (!getApps().length) {
   initializeApp({credential: applicationDefault()});
@@ -26,7 +26,7 @@ function pruneUndefined<T>(obj: T): T {
 
 export interface CreateFromConversationInput {
   messages: Array<{role: "user"|"assistant"; content: string}>;
-  assets?: {productImageGsPath?: string; logoGsPath?: string; brandColors?: string[]};
+  assets?: {productImageGsPath?: string; productImageUrlHttps?: string; logoGsPath?: string; brandColors?: string[]};
   aspectRatio?: "9:16" | "16:9" | "1:1";
   model?: "veo-3.0-fast-generate-preview" | "veo-3.0-generate-preview";
 }
@@ -51,6 +51,28 @@ export const createAdFromConversation = onCall({
   // Convert conversation → brief via local heuristic prompt (reuse existing callable if preferred later)
   // Here, do a minimal extraction inline to avoid another round trip (client can also call conversationToBrief first).
   const firstUser = messages.find((m) => m.role === "user")?.content || "";
+  // Normalize incoming image paths
+  const normalizeHttpsToGs = (url?: string): string | undefined => {
+    if (!url || typeof url !== "string") return undefined;
+    const s = url.trim();
+    const m1 = s.match(/^https?:\/\/firebasestorage\.googleapis\.com\/v0\/b\/([^/]+)\/o\/([^?]+)(?:\?.*)?$/i);
+    if (m1) return `gs://${m1[1]}/${decodeURIComponent(m1[2])}`;
+    const m2 = s.match(/^https?:\/\/storage\.googleapis\.com\/([^/]+)\/(.+)$/i);
+    if (m2) return `gs://${m2[1]}/${m2[2]}`;
+    const m3 = s.match(/^https?:\/\/([^/.]+)\.firebasestorage\.app\/(?:v0\/)?o\/([^?]+)(?:\?.*)?$/i);
+    if (m3) return `gs://${m3[1]}.appspot.com/${decodeURIComponent(m3[2])}`;
+    return undefined;
+  };
+  const sanitizeGs = (gs?: string): string | undefined => {
+    if (!gs || typeof gs !== "string") return undefined;
+    let s = gs.trim();
+    if (!s.startsWith("gs://")) return undefined;
+    s = s.replace(/\.firebasestorage\.app\//, ".appspot.com/");
+    return s;
+  };
+  const incomingGs = sanitizeGs(req.data?.assets?.productImageGsPath);
+  const incomingHttpsGs = normalizeHttpsToGs(req.data?.assets?.productImageUrlHttps);
+  const effectiveImageGs = incomingGs || incomingHttpsGs;
   const brief: AdBrief = {
     productName: undefined,
     category: undefined,
@@ -63,12 +85,14 @@ export const createAdFromConversation = onCall({
     durationSeconds: null,
     aspectRatio: body.aspectRatio || "9:16",
     brand: {},
-    assets: {productImageGsPath: body.assets?.productImageGsPath},
+    assets: {productImageGsPath: effectiveImageGs || body.assets?.productImageGsPath},
   };
   // naive cues
   if (/candle|sofa|lamp|blanket|home|room/i.test(firstUser)) brief.category = "home decor";
   if (/phone|laptop|headset|watch|camera|device|gadget/i.test(firstUser)) brief.category = "electronics";
   // Perception words
+
+
   const vibes = firstUser.match(/(cozy|calm|premium|luxurious|playful|bold|excited|trustworthy|modern|minimal)/gi) || [];
   brief.desiredPerception = Array.from(new Set(vibes.map((v) => v.toLowerCase())));
 
@@ -85,11 +109,21 @@ export const createAdFromConversation = onCall({
     promptV1 = fromProductPrompt(brief, prompt);
   }
 
+  // Ensure imageGsPath is populated on promptV1 from assets if translation didn't set it
+  if (effectiveImageGs && !(promptV1 as any)?.product?.imageGsPath) {
+    (promptV1 as any).product = (promptV1 as any).product || {};
+    (promptV1 as any).product.imageGsPath = effectiveImageGs;
+  }
+
   const safeBrief = pruneUndefined(brief);
   const safePrompt = pruneUndefined(prompt);
   const safePromptV1 = pruneUndefined(promptV1);
 
   const hasImage = !!(safePromptV1 as any)?.product?.imageGsPath && typeof (safePromptV1 as any)?.product?.imageGsPath === "string";
+  try {
+    const img = (safePromptV1 as any)?.product?.imageGsPath as string | undefined;
+    console.log("[createAdFromConversation] image_path_present=", !!img, img ? String(img).slice(0, 16) : "");
+  } catch {}
 
   if (!hasImage) {
     // Fail fast: no image provided → mark job as error to avoid indefinite "generating"
@@ -120,12 +154,15 @@ export const createAdFromConversation = onCall({
   }
 
   await jobRef.set({
-    status: "generating",
+    status: "queued",
     brief: safeBrief,
     inferredFormat: format,
     veoPrompt: safePrompt,
     promptV1: safePromptV1,
     model: body.model || "veo-3.0-fast-generate-preview",
+    // Back-compat: also store inputImagePath so any legacy readers can find it
+    inputImagePath: (safePromptV1 as any)?.product?.imageGsPath || effectiveImageGs || null,
+    inputImageUrl: body.assets?.productImageUrlHttps || null,
     updatedAt: Timestamp.now(),
   }, {merge: true});
 
@@ -146,19 +183,12 @@ export const createAdFromConversation = onCall({
     console.error("[createAdFromConversation] format analytics error", (e as Error)?.message);
   }
 
-  // Kick off generation in the background (image presence already validated)
-  if (promptV1?.product?.imageGsPath) {
-    try {
-      console.log("[createAdFromConversation] auto_start=true", {format});
-      await db.collection("analyticsEvents").add({uid, event: "ad_job_structured", jobId: jobRef.id, format, createdAt: Date.now()});
-      await db.collection("analyticsEvents").add({uid, event: "ad_job_auto_start", jobId: jobRef.id, format, createdAt: Date.now()});
-      // fire-and-forget; client can also call startVeoForJob explicitly if preferred
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      startVeoForJobCore(uid, jobRef.id);
-    } catch (err) {
-      // Best-effort analytics; do not fail the callable for analytics issues
-      console.error("[createAdFromConversation] background start error", (err as Error)?.message);
-    }
+  // Enqueue: structured job created; trigger will pick it up
+  try {
+    console.log("[createAdFromConversation] enqueued", {jobId: jobRef.id, format});
+    await db.collection("analyticsEvents").add({uid, event: "ad_job_enqueued", jobId: jobRef.id, format, createdAt: Date.now()});
+  } catch (e) {
+    console.debug("[createAdFromConversation] optional enqueue analytics failed", (e as Error)?.message);
   }
 
   return {jobId: jobRef.id, brief, inferredFormat: format, veoPrompt: prompt, promptV1};

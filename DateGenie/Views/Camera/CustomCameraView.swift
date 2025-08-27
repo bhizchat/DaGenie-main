@@ -25,21 +25,7 @@ struct CustomCameraView: View {
 					.scaledToFit()
 					.frame(width: 120, height: 120)
 					.padding(.top, 28)
-				if let img = voiceVM.attachedImage {
-					ZStack(alignment: .topTrailing) {
-						Image(uiImage: img)
-							.resizable()
-							.scaledToFit()
-							.frame(maxWidth: 300, maxHeight: 320)
-							.cornerRadius(12)
-						Button(action: { withAnimation { voiceVM.attachedImage = nil } }) {
-							Image(systemName: "xmark.circle.fill")
-								.font(.system(size: 20, weight: .semibold))
-								.foregroundColor(.black.opacity(0.75))
-						}
-						.offset(x: 10, y: -10)
-					}
-				}
+				// Large attachment preview removed; chips are shown in the composer
 			}
 			.offset(y: -50)
 
@@ -101,7 +87,18 @@ struct CustomCameraView: View {
 		}
 		.onAppear { voiceVM.speakIntroOnFirstOpen() }
 		.onChange(of: pickedImage) { newValue in
-			if let img = newValue { voiceVM.attachedImage = img }
+			if let img = newValue {
+				voiceVM.clearAttachmentPaths()
+				voiceVM.attachedImage = img
+				Task { await voiceVM.uploadAttachmentIfNeeded() }
+			}
+		}
+		.onChange(of: voiceVM.attachedImage) { newVal in
+			// Clear any lingering "image required" banner once an image is attached
+			if newVal != nil {
+				voiceVM.assistantStreamingText = ""
+				voiceVM.showBanner = false
+			}
 		}
 		.onChange(of: voiceVM.uiState) { _ in }
 		// Top streaming banner overlay (kept fixed when keyboard appears)
@@ -137,7 +134,11 @@ struct CustomCameraView: View {
 			ProfileView().environmentObject(AuthViewModel()).environmentObject(userRepo)
 		}
 		.sheet(isPresented: $showImagePicker, onDismiss: {
-			if let img = pickedImage { voiceVM.attachedImage = img }
+			if let img = pickedImage {
+				voiceVM.clearAttachmentPaths()
+				voiceVM.attachedImage = img
+				Task { await voiceVM.uploadAttachmentIfNeeded() }
+			}
 		}) {
 			ImagePicker(image: $pickedImage, sourceType: .photoLibrary)
 		}
@@ -184,11 +185,13 @@ struct CustomCameraView: View {
 					voiceVM.submitText(text)
 					UIImpactFeedbackGenerator(style: .light).impactOccurred()
 					UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-				}
+				},
+				isUploading: voiceVM.isUploadingAttachment
 			)
-			.background(.ultraThinMaterial)
-			.padding(.horizontal, 8)
+			.ignoresSafeArea(edges: .bottom)
 		}
+        .contentShape(Rectangle())
+        .onTapGesture { UIApplication.hideKeyboard() }
 	}
 
 	private func fetchAssemblyToken() async -> String? {

@@ -49,7 +49,7 @@ export const createAdJob = onCall({
   const jobRef = db.collection("adJobs").doc();
   await jobRef.set({
     uid,
-    status: "generating",
+    status: "queued",
     inputImagePath: body.inputImagePath || null,
     conversationTranscript: transcript,
     promptStructured: null,
@@ -64,7 +64,7 @@ export const createAdJob = onCall({
     updatedAt: Timestamp.now(),
   }, {merge: true});
 
-  // TODO: trigger prompt build + Veo start via Firestore trigger or direct call (added in Phase 2).
+  // Enqueued; background trigger will start processing when promptV1 is available
 
   return {jobId: jobRef.id};
 });

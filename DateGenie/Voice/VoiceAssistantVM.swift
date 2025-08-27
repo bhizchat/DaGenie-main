@@ -28,6 +28,10 @@ final class VoiceAssistantVM: ObservableObject {
 	@Published var showBanner: Bool = false
 	@Published var listenProgress: Double = 0.0 // 0.0..1.0 progress for UI ring
 	@Published var attachedImage: UIImage? = nil
+	// Resolved upload references for the currently attached image
+	@Published var attachedImageGsPath: String? = nil
+	@Published var attachedImageHttpsUrl: String? = nil
+	@Published var isUploadingAttachment: Bool = false
 	// New: style picker state
 	struct StyleOption: Identifiable, Equatable {
 		let id = UUID()
@@ -286,7 +290,7 @@ final class VoiceAssistantVM: ObservableObject {
 		}
 		if sendToLLM {
 			print("[VoiceAssistantVM] manual stop textLen=\(finalText.count)")
-			startSSE(with: finalText)
+			Task { await self.startSSEEnsuringImage(text: finalText) }
 			uiState = .thinking
 		} else {
 			uiState = .idle
@@ -430,7 +434,14 @@ final class VoiceAssistantVM: ObservableObject {
 			"voice": ttsVoiceId,
 			"tts": "eleven"
 		]
-		if let dataUrl = attachedImageDataURL() { body["imageDataUrl"] = dataUrl }
+		// Prefer lightweight HTTPS URL (already uploaded); fallback to inline data URL
+		if let url = attachedImageHttpsUrl {
+			body["imageUrl"] = url
+		} else if let dataUrl = attachedImageDataURL() {
+			body["imageDataUrl"] = dataUrl
+		}
+		if let gs = attachedImageGsPath { body["imageGsPath"] = gs }
+		print("[VoiceAssistantVM] SSE payload history=\(historyToSend.count) hasUrl=\(body["imageUrl"] != nil) hasData=\(body["imageDataUrl"] != nil) hasGs=\(body["imageGsPath"] != nil)")
 		req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
 		sseTask = Task { [weak self] in
@@ -590,7 +601,10 @@ final class VoiceAssistantVM: ObservableObject {
 	private func createAdFromConversationCallable(messages: [[String:String]], productImageGsPath: String?) async throws -> (String?, [String: Any]) {
 		let url = URL(string: "https://us-central1-\(Self.projectId()).cloudfunctions.net/createAdFromConversation")!
 		var inner: [String: Any] = ["messages": messages]
-		if let gs = productImageGsPath { inner["assets"] = ["productImageGsPath": gs] }
+		var assets: [String: Any] = [:]
+		if let gs = productImageGsPath { assets["productImageGsPath"] = gs }
+		if let https = attachedImageHttpsUrl { assets["productImageUrlHttps"] = https }
+		if !assets.isEmpty { inner["assets"] = assets }
 		let payload: [String: Any] = ["data": inner]
 		let json = try await callCallable(url: url, payload: payload)
 		let result = (json["result"] as? [String: Any]) ?? json
@@ -848,8 +862,12 @@ final class VoiceAssistantVM: ObservableObject {
 			}
 			// New flow: call createAdFromConversation with history + asset gs path. It will auto-start if image is present.
 			// 1) Ensure image is uploaded and resolve gs path
-			var gsPath: String? = nil
-			if let _ = attachedImage { gsPath = try await uploadAttachedImage(jobId: UUID().uuidString) /* temp id only for path; server stores real job */ }
+			var gsPath: String? = attachedImageGsPath
+			if gsPath == nil, let _ = attachedImage {
+				// Fallback: upload now if not already uploaded
+				gsPath = try await uploadAttachedImage(jobId: UUID().uuidString)
+				await MainActor.run { self.attachedImageGsPath = gsPath }
+			}
 			// 2) Build messages with only the first user input to enforce one-shot generation
 			let messages: [[String: String]] = [["role": "user", "content": lastUser]]
 			// 3) Call server
@@ -1011,11 +1029,13 @@ final class VoiceAssistantVM: ObservableObject {
 		req.httpMethod = "POST"
 		req.addValue("text/event-stream", forHTTPHeaderField: "Accept")
 		req.addValue("application/json", forHTTPHeaderField: "Content-Type")
-		let body: [String: Any] = [
+		var body: [String: Any] = [
 			"speakText": text,
 			"voice": ttsVoiceId,
 			"tts": "eleven"
 		]
+		// Include image reference if already uploaded so meta reports image=true during intro
+		if let url = attachedImageHttpsUrl { body["imageUrl"] = url }
 		req.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
 		// Optional fast-start: if no audio arrives by the deadline, cancel SSE and speak locally
@@ -1060,6 +1080,59 @@ final class VoiceAssistantVM: ObservableObject {
 	}
 
 	// MARK: - Image helpers
+	// Ensure upload ready before starting SSE
+	func startSSEEnsuringImage(text: String) async {
+		if attachedImage != nil && attachedImageHttpsUrl == nil && !isUploadingAttachment {
+			await uploadAttachmentIfNeeded()
+		}
+		// Wait up to 10s for upload to complete if an image is attached
+		await waitForAttachmentUpload(timeout: 10)
+		startSSE(with: text)
+	}
+
+	private func waitForAttachmentUpload(timeout: TimeInterval) async {
+		let deadline = Date().addingTimeInterval(timeout)
+		while attachedImage != nil && attachedImageHttpsUrl == nil && Date() < deadline {
+			try? await Task.sleep(nanoseconds: 200_000_000)
+		}
+	}
+	// Public: upload current attachment once and cache its gs:// and https URLs
+	func uploadAttachmentIfNeeded() async {
+		guard attachedImageGsPath == nil, let img = attachedImage else { return }
+		guard let uid = Auth.auth().currentUser?.uid else { return }
+		let storage = Storage.storage()
+		let sessionId = UUID().uuidString
+		let objectPath = "user_uploads/\(uid)/\(sessionId)/input.jpg"
+		guard let data = img.jpegData(compressionQuality: 0.9) else { return }
+		let ref = storage.reference(withPath: objectPath)
+		let metadata = StorageMetadata(); metadata.contentType = "image/jpeg"
+		do {
+			await MainActor.run { self.isUploadingAttachment = true }
+			_ = try await ref.putDataAsync(data, metadata: metadata)
+			let url = try? await ref.downloadURL()
+			// Prefer canonical bucket from Firebase options and normalize host
+			let optBucket = FirebaseApp.app()?.options.storageBucket
+			var bucket = optBucket ?? storage.reference().bucket
+			if bucket.hasSuffix(".firebasestorage.app") {
+				bucket = bucket.replacingOccurrences(of: ".firebasestorage.app", with: ".appspot.com")
+			}
+			let gs = "gs://\(bucket)/\(objectPath)"
+			await MainActor.run {
+				self.attachedImageGsPath = gs
+				self.attachedImageHttpsUrl = url?.absoluteString
+				print("[VoiceAssistantVM] uploaded attachment gs=\(gs.prefix(50))… https=", (url?.absoluteString.prefix(60) ?? "nil"))
+			}
+		} catch {
+			print("[VoiceAssistantVM] uploadAttachmentIfNeeded error: \(error.localizedDescription)")
+		}
+		await MainActor.run { self.isUploadingAttachment = false }
+	}
+
+	func clearAttachmentPaths() {
+		attachedImageGsPath = nil
+		attachedImageHttpsUrl = nil
+	}
+
 	private func attachedImageDataURL() -> String? {
 		guard let img = attachedImage else { return nil }
 		guard let data = img.jpegData(compressionQuality: 0.85) else { return nil }

@@ -189,19 +189,24 @@ export const voiceAssistant = onRequest({
       return;
     }
 
-    const {history, voice, tts, speakText, imageDataUrl, imageUrl} = req.body ?? {} as {
+    const {history, voice, tts, speakText, imageDataUrl, imageUrl, imageGsPath} = req.body ?? {} as {
       history: ChatMessage[];
       voice?: string;
       tts?: "eleven" | "apple";
       speakText?: string;
       imageDataUrl?: string; // data URL like data:image/jpeg;base64,xxx
       imageUrl?: string; // remote URL (https)
+      imageGsPath?: string; // gs://bucket/object (for meta/logging only)
     };
 
     const messages: ChatMessage[] = (history && Array.isArray(history)) ? history : [];
-    const imageUrlToUse = (typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:")) ? imageDataUrl : (typeof imageUrl === "string" ? imageUrl : undefined);
+    const imageUrlToUse = (typeof imageUrl === "string" && imageUrl.length > 0) ?
+      imageUrl :
+      ((typeof imageDataUrl === "string" && imageDataUrl.startsWith("data:")) ? imageDataUrl : undefined);
     // Emit a meta event so the client can log that we saw the image and text
-    send({type: "meta", image: !!imageUrlToUse, lastUserLen: (messages[messages.length - 1]?.content?.length) || 0});
+    const imagePresent = !!(imageUrlToUse || (typeof imageGsPath === "string" && imageGsPath.startsWith("gs://")));
+    send({type: "meta", image: imagePresent, lastUserLen: (messages[messages.length - 1]?.content?.length) || 0});
+    console.log("[voiceAssistant] image_present=", imagePresent, imageUrlToUse ? String(imageUrlToUse).slice(0, 32) : (imageGsPath ? String(imageGsPath).slice(0, 32) : ""));
 
     // Determine last user message content to guide language
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
