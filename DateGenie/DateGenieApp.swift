@@ -81,8 +81,8 @@ struct DateGenieApp: App {
                 if !hasSeenOnboarding {
                     OnboardingCoordinatorView()
                 } else if authVM.user != nil {
-                    // Open straight to the camera with built-in preview after capture
-                    QuickCameraHostView()
+                    // New root flow: Projects + Profile tabs
+                    ProjectsRootTab()
                         .task { await userRepo.loadProfile() }
                 } else {
                     SignInView()

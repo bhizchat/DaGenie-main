@@ -19,6 +19,8 @@
 	<string>We use the microphone to record audio when you capture videos in DaGenie.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Save highlight reels to your Photos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Allow access to your photo library to import videos into the editor.</string>
 	<key>ITSAppUsesNonExemptEncryption </key>
 	<false/>
 </dict>

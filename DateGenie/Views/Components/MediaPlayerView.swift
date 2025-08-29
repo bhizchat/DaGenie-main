@@ -120,15 +120,9 @@ struct VideoOverlayPreview: View {
     var body: some View {
         ZStack {
             GeometryReader { g in
-                // Compute a 4:5 container rect inside available space
-                let box = aspectFitRect(contentSize: CGSize(width: 4, height: 5),
-                                         in: g.frame(in: .local))
                 ZStack {
-                    // Use an AVPlayerLayer-backed view with aspect-fill so preview fills the 4:5 box
+                    // Use an AVPlayerLayer-backed view with aspect-fill so preview fills the screen
                     FillVideoPlayer(player: player)
-                        .frame(width: box.width, height: box.height)
-                        .clipped()
-                        .position(x: box.midX, y: box.midY)
                         .onAppear {
                             // Seamless loop using AVPlayerLooper
                             let item = AVPlayerItem(url: url)
@@ -137,9 +131,9 @@ struct VideoOverlayPreview: View {
                             player.play()
                         }
                         .onDisappear { player.pause(); playerLooper = nil }
-
-                    // Advertise the 4:5 canvas rect to overlay layer so coordinates match export
-                    Color.clear.preference(key: VideoCanvasRectKey.self, value: box)
+                    Color.clear.preference(key: VideoCanvasRectKey.self,
+                                            value: aspectFitRect(contentSize: renderSize == .zero ? g.size : renderSize,
+                                                                 in: g.frame(in: .local)))
 
                     if canvasRect.width > 1 && canvasRect.height > 1 {
                         ForEach($overlayState.texts) { $item in

@@ -182,7 +182,7 @@ struct MissionFlowView: View {
         }
         .sheet(isPresented: $showingPlayer, onDismiss: { playerMedia = nil }) {
             if let media = playerMedia {
-                MediaPlayerView(media: media)
+                CapcutEditorView(url: media.localURL)
             }
         }
         .fullScreenCover(isPresented: $showPhotoEditor, onDismiss: { pendingMedia = nil }) {

@@ -166,7 +166,9 @@ struct CustomCameraView: View {
 		// Present immediate preview when a final video URL arrives
 		.onChange(of: voiceVM.generatedVideoURL) { url in
 			guard let url else { return }
-			VideoPreviewPresenter.shared.show(root: ReelPreviewView(url: url))
+			let host = UIHostingController(rootView: CapcutEditorView(url: url))
+			host.modalPresentationStyle = .overFullScreen
+			UIApplication.shared.topMostViewController()?.present(host, animated: true)
 		}
 		// Visual style picker removed
 		.safeAreaInset(edge: .bottom) {

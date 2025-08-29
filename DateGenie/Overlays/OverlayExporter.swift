@@ -104,10 +104,12 @@ enum OverlayExporter {
 
 // MARK: - Video Exporter
 enum VideoOverlayExporter {
+    /// Backward-compatible export.
     static func export(assetURL: URL,
                         texts: [TextOverlay],
                         caption: CaptionModel,
                         canvasRect: CGRect,
+                        logo: UIImage? = nil,
                         completion: @escaping (URL?) -> Void) {
         let asset = AVAsset(url: assetURL)
         guard let track = asset.tracks(withMediaType: .video).first else { completion(nil); return }
@@ -228,6 +230,36 @@ enum VideoOverlayExporter {
             parentLayer.addSublayer(captionLayer)
         }
 
+        // Optional brand logo fade-in at the bottom-center for the last 3 seconds
+        if let logo = logo?.cgImage {
+            let logoLayer = CALayer()
+            let maxWidth = renderSize.width * 0.35
+            let aspect = CGFloat(logo.width) / CGFloat(max(logo.height, 1))
+            let width = min(maxWidth, CGFloat(logo.width))
+            let height = width / max(aspect, 0.001)
+            logoLayer.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+            logoLayer.contents = logo
+            logoLayer.contentsScale = UIScreen.main.scale
+            // Bottom-center placement, slightly above the bottom edge
+            let bottomY = renderSize.height - height/2 - (renderSize.height * 0.06)
+            logoLayer.position = CGPoint(x: renderSize.width/2, y: bottomY)
+            logoLayer.opacity = 0.0
+
+            // Fade-in animation during the last 3 seconds of the video
+            let threeSeconds = min(CMTimeGetSeconds(asset.duration), 3.0)
+            let total = CMTimeGetSeconds(asset.duration)
+            let start = max(total - threeSeconds, 0)
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0.0
+            fade.toValue = 1.0
+            fade.beginTime = CFTimeInterval(start)
+            fade.duration = CFTimeInterval(threeSeconds)
+            fade.fillMode = .forwards
+            fade.isRemovedOnCompletion = false
+            logoLayer.add(fade, forKey: "fadeIn")
+            parentLayer.addSublayer(logoLayer)
+        }
+
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
 
         let outURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dg_video_\(UUID().uuidString).mp4")
@@ -238,6 +270,152 @@ enum VideoOverlayExporter {
         exporter.exportAsynchronously {
             completion(exporter.status == .completed ? outURL : nil)
         }
+    }
+
+    /// New overload supporting aspect ratio and timed items.
+    static func export(assetURL: URL,
+                        timedTexts: [TimedTextOverlay],
+                        timedCaptions: [TimedCaption],
+                        renderConfig: VideoRenderConfig,
+                        audioTracks: [AudioTrack],
+                        canvasRect: CGRect,
+                        completion: @escaping (URL?) -> Void) {
+        let asset = AVAsset(url: assetURL)
+        guard let track = asset.tracks(withMediaType: .video).first else { completion(nil); return }
+        let composition = AVMutableComposition()
+        guard let compTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { completion(nil); return }
+        do {
+            try compTrack.insertTimeRange(CMTimeRange(start: .zero, duration: asset.duration), of: track, at: .zero)
+        } catch { completion(nil); return }
+
+        // Include original audio tracks
+        for src in asset.tracks(withMediaType: .audio) {
+            if let dst = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                do {
+                    try dst.insertTimeRange(CMTimeRange(start: .zero, duration: asset.duration), of: src, at: .zero)
+                } catch { /* ignore */ }
+            }
+        }
+
+        // Add extra audio tracks
+        var mixParams: [AVMutableAudioMixInputParameters] = []
+        for t in audioTracks {
+            let aAsset = AVURLAsset(url: t.url)
+            if let aSrc = aAsset.tracks(withMediaType: .audio).first,
+               let aDst = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                do {
+                    try aDst.insertTimeRange(CMTimeRange(start: .zero, duration: min(aAsset.duration, asset.duration)), of: aSrc, at: t.start)
+                    let p = AVMutableAudioMixInputParameters(track: aDst)
+                    p.setVolume(t.volume, at: .zero)
+                    mixParams.append(p)
+                } catch { /* ignore */ }
+            }
+        }
+
+        // Render size and transform
+        let oriented = track.naturalSize.applying(track.preferredTransform)
+        let srcSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
+        let size = renderConfig.renderSize(for: srcSize)
+
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = size
+        let fps: Int32 = Int32(round(track.nominalFrameRate).clamped(to: 1...60))
+        videoComposition.frameDuration = CMTime(value: 1, timescale: fps)
+
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
+        layerInstruction.setTransform(renderConfig.transformForCrop(track: track, renderSize: size), at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        videoComposition.instructions = [instruction]
+
+        // Overlay layers
+        let parentLayer = CALayer(); parentLayer.frame = CGRect(origin: .zero, size: size)
+        let videoLayer = CALayer(); videoLayer.frame = parentLayer.frame
+        parentLayer.addSublayer(videoLayer)
+
+        let exportScale = size.width / max(canvasRect.width, 1)
+
+        func addTimedOpacityAnimations(layer: CALayer, start: CMTime, duration: CMTime) {
+            let begin = CMTimeGetSeconds(start)
+            let end = CMTimeGetSeconds(start + duration)
+            let fadeIn = CABasicAnimation(keyPath: "opacity")
+            fadeIn.fromValue = 0.0
+            fadeIn.toValue = 1.0
+            fadeIn.beginTime = begin
+            fadeIn.duration = 0.1
+            fadeIn.fillMode = .forwards
+            fadeIn.isRemovedOnCompletion = false
+            let fadeOut = CABasicAnimation(keyPath: "opacity")
+            fadeOut.fromValue = 1.0
+            fadeOut.toValue = 0.0
+            fadeOut.beginTime = end
+            fadeOut.duration = 0.1
+            fadeOut.fillMode = .forwards
+            fadeOut.isRemovedOnCompletion = false
+            layer.add(fadeIn, forKey: "fadeIn")
+            layer.add(fadeOut, forKey: "fadeOut")
+        }
+
+        for tOverlay in timedTexts.sorted(by: { $0.base.zIndex < $1.base.zIndex }) {
+            let base = tOverlay.base
+            let font = UIFont.boldSystemFont(ofSize: 42)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: base.color.uiColor]
+            let ns = NSString(string: base.string.isEmpty ? " " : base.string)
+            let bounds = ns.size(withAttributes: attrs)
+
+            let textLayer = CATextLayer()
+            textLayer.contentsScale = UIScreen.main.scale
+            textLayer.alignmentMode = .center
+            textLayer.foregroundColor = base.color.uiColor.cgColor
+            textLayer.backgroundColor = UIColor.clear.cgColor
+            textLayer.string = ns
+            textLayer.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+
+            let px = base.position.x * exportScale
+            let py = base.position.y * exportScale
+            var transform = CATransform3DIdentity
+            transform = CATransform3DTranslate(transform, px, py, 0)
+            transform = CATransform3DRotate(transform, base.rotation, 0, 0, 1)
+            transform = CATransform3DScale(transform, base.scale * exportScale, base.scale * exportScale, 1)
+            textLayer.position = CGPoint(x: 0, y: 0)
+            textLayer.transform = transform
+
+            addTimedOpacityAnimations(layer: textLayer, start: tOverlay.start, duration: tOverlay.duration)
+            parentLayer.addSublayer(textLayer)
+        }
+
+        for cap in timedCaptions {
+            guard cap.base.isVisible else { continue }
+            let text = cap.base.text
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let captionLayer = CATextLayer()
+            captionLayer.contentsScale = UIScreen.main.scale
+            captionLayer.alignmentMode = .center
+            captionLayer.foregroundColor = cap.base.textColor.uiColor.cgColor
+            let font = UIFont.systemFont(ofSize: cap.base.fontSize * exportScale, weight: .semibold)
+            let attr = [NSAttributedString.Key.font: font,
+                        NSAttributedString.Key.foregroundColor: cap.base.textColor.uiColor]
+            let ns = NSString(string: text)
+            let width = size.width - 64 * exportScale
+            let rect = ns.boundingRect(with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attr, context: nil)
+            captionLayer.string = text
+            captionLayer.bounds = CGRect(x: 0, y: 0, width: width, height: rect.height)
+            let y = (canvasRect.minY + cap.base.verticalOffsetNormalized * canvasRect.height) * exportScale
+            captionLayer.position = CGPoint(x: size.width/2, y: y)
+            addTimedOpacityAnimations(layer: captionLayer, start: cap.start, duration: cap.duration)
+            parentLayer.addSublayer(captionLayer)
+        }
+
+        videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dg_video_\(UUID().uuidString).mp4")
+        guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else { completion(nil); return }
+        exporter.videoComposition = videoComposition
+        if !mixParams.isEmpty { let mix = AVMutableAudioMix(); mix.inputParameters = mixParams; exporter.audioMix = mix }
+        exporter.outputURL = outURL
+        exporter.outputFileType = .mp4
+        exporter.exportAsynchronously { completion(exporter.status == .completed ? outURL : nil) }
     }
 }
 

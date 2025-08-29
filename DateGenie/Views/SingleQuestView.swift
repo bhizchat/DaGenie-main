@@ -104,7 +104,7 @@ struct SingleQuestView: View {
         }
         .sheet(isPresented: $showingPlayer, onDismiss: { /* no-op */ }) {
             if let media = captured {
-                MediaPlayerView(media: media)
+                CapcutEditorView(url: media.localURL)
             }
         }
         .fullScreenCover(isPresented: $showPhotoEditor, onDismiss: { pendingMedia = nil }) {

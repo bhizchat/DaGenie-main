@@ -33,13 +33,21 @@ final class OnboardingViewModel: ObservableObject {
     }
 
     func setLogoImage(_ image: UIImage) {
-        logoImage = image
-        if let path = Self.saveImageToDocuments(image: image) { storedLogoPath = path }
+        // Run background removal async, then persist the transparent PNG
+        BackgroundRemoval.removeBackground(from: image) { [weak self] cutout in
+            guard let self = self else { return }
+            let final = cutout ?? image
+            self.logoImage = final
+            if let path = Self.saveImageToDocuments(image: final) { self.storedLogoPath = path }
+        }
     }
 
     func completeOnboarding() {
         guard canGetStarted else { return }
         hasSeenOnboarding = true
+        // Do not present a new root manually here; the app's main scene
+        // observes hasSeenOnboarding and shows ProjectsRootTab with
+        // environment objects already attached.
     }
 
     private static func saveImageToDocuments(image: UIImage) -> String? {

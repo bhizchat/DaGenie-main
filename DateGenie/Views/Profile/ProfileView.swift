@@ -20,7 +20,7 @@ struct ProfileView: View {
                     .overlay(
                         VStack(spacing: 8) {
                             ZStack {
-                                Circle().fill(Color(white: 0.9)).frame(width: 160, height: 160)
+                                Circle().fill(Color(white: 0.9)).frame(width: 180, height: 180)
                                 // Profile image or placeholder
                                 if let urlStr = userRepo.profile.photoURL, let url = URL(string: urlStr) {
                                     AsyncImage(url: url) { phase in
@@ -43,13 +43,13 @@ struct ProfileView: View {
                                                 .onAppear { print("ProfileView AsyncImage – unknown url=", urlStr) }
                                         }
                                     }
-                                    .frame(width: 148, height: 148)
+                                    .frame(width: 168, height: 168)
                                     .clipShape(Circle())
                                 } else {
                                     Image(systemName: "circle")
                                         .resizable()
                                         .scaledToFit()
-                                        .frame(width: 120, height: 120)
+                                        .frame(width: 140, height: 140)
                                         .foregroundColor(.black.opacity(0.7))
                                         .onAppear { print("ProfileView – photoURL = nil") }
                                 }
@@ -67,7 +67,7 @@ struct ProfileView: View {
                                             .background(Circle().fill(Color.white))
                                     }
                                 }
-                                .offset(x: 60, y: 60)
+                                .offset(x: 76, y: 76)
                             }
                             // Show first + last name if available; fall back to display name or email prefix
                             Group {
@@ -100,6 +100,7 @@ struct ProfileView: View {
                                         .font(.title2)
                                         .foregroundColor(.black)
                                         .padding(.trailing, 16)
+                                        .offset(y: -5)
                                 }
                             }
                         }

@@ -56,20 +56,12 @@ struct SavedDatesView: View {
                 duration = Int(CMTimeGetSeconds(asset.duration).rounded())
             }
 
-            // Present immediate preview for share/download
-            if media.type == .video {
-                let preview = UIHostingController(rootView: ReelPreviewView(url: media.localURL))
-                preview.modalPresentationStyle = .overFullScreen
-                preview.isModalInPresentation = true
-                preview.view.backgroundColor = .black
-                UIApplication.shared.topMostViewController()?.present(preview, animated: true)
-            } else {
-                let preview = UIHostingController(rootView: PhotoPreviewView(url: media.localURL))
-                preview.modalPresentationStyle = .overFullScreen
-                preview.isModalInPresentation = true
-                preview.view.backgroundColor = .black
-                UIApplication.shared.topMostViewController()?.present(preview, animated: true)
-            }
+            // Present new editor for both types
+            let preview = UIHostingController(rootView: CapcutEditorView(url: media.localURL))
+            preview.modalPresentationStyle = .overFullScreen
+            preview.isModalInPresentation = true
+            preview.view.backgroundColor = .black
+            UIApplication.shared.topMostViewController()?.present(preview, animated: true)
 
             // Persist into mission timeline as before
             _ = MediaUploadManager.shared.upload(media: media, step: stepKey, progress: { _ in }, completion: { result in

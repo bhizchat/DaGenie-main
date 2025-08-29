@@ -95,6 +95,35 @@ struct CaptionModel: Codable, Equatable {
             isVisible: false
         )
     }
+}// MARK: - Timed Overlays (non-breaking wrappers)
+/// Timed wrapper for text overlays without changing existing `TextOverlay` Codable.
+struct TimedTextOverlay: Identifiable, Equatable {
+    var id: UUID { base.id }
+    var base: TextOverlay
+    var start: CMTime
+    var duration: CMTime
+
+    init(base: TextOverlay, start: CMTime, duration: CMTime) {
+        self.base = base
+        self.start = start
+        self.duration = duration
+    }
+}
+
+/// Timed wrapper for captions based on existing `CaptionModel`.
+struct TimedCaption: Identifiable, Equatable {
+    let id: UUID = UUID()
+    var base: CaptionModel
+    var start: CMTime
+    var duration: CMTime
+}
+
+/// Simple representation of an added background audio track.
+struct AudioTrack: Identifiable, Equatable {
+    let id: UUID = UUID()
+    var url: URL
+    var start: CMTime
+    var volume: Float
 }
 
 

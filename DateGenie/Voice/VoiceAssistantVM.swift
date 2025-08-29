@@ -118,72 +118,16 @@ final class VoiceAssistantVM: ObservableObject {
 		// Proactively stop any ongoing playback/TTS and allow brief settle before recording
 		// Give the audio route a brief moment to settle before activating record
 		usleep(150_000)
-		AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
+		AVAudioSession.sharedInstance().requestRecordPermission { [weak self] _ in
 			Task { @MainActor in
 				guard let self else { return }
-				if !granted {
-					print("[VoiceAssistantVM] mic permission denied")
-					self.uiState = .idle
-					self.assistantStreamingText = ""
-					self.showBanner = true
-					self.partialTranscript = "Microphone permission needed. Enable in Settings."
-					return
-				}
-				// Update dynamic word boost from recent context before opening mic
-				if self.sttFlags.enableLegacyWordBoost {
-					let boost = self.buildContextWordBoost()
-					self.assembly.updateWordBoost(boost)
-				}
-				// Build turn-specific keyterms and set language code
-				if self.sttFlags.useKeytermsStreaming {
-					let keyterms = self.buildContextKeyterms()
-					self.assembly.updateKeyterms(keyterms)
-				}
-				self.assembly.setLanguageCode(self.sttFlags.forceEnglish ? "en" : nil)
-				self.assembly.setBriefFormattingStartWindow(ms: self.sttFlags.enableBriefFormatWindow ? self.sttFlags.keytermsAtStartWindowMs : 0)
-				// Apply Phase 3 runtime flags
-				self.assembly.applyRuntimeFlags(targetChunkMs: self.sttFlags.targetChunkMs, endpointProfile: self.sttFlags.endpointProfile)
-				self.uiState = .listening
-				self.partialTranscript = ""
+				// In text-only mode we do not request or require mic permissions; abort quietly
+				self.uiState = .idle
 				self.assistantStreamingText = ""
-				self.showBanner = true
-				self.streamingStarted = false
-				self.minSessionTimer?.invalidate(); self.minSessionTimer = nil
-				print("[VoiceAssistantVM] opening realtime with token len=\(token.count)")
-				self.assembly.start(withToken: token, onBegin: { [weak self] in
-					Task { @MainActor in
-						self?.streamingStarted = true
-						print("[VoiceAssistantVM] session begin")
-						// 30s window with smooth progress updates every 50 ms
-						self?.listenStartAt = Date()
-						self?.listenProgress = 0.0
-						self?.minSessionTimer?.invalidate();
-						self?.minSessionTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-							Task { @MainActor in
-								guard let self else { return }
-								guard self.uiState == .listening, let start = self.listenStartAt else { return }
-								let elapsed = Date().timeIntervalSince(start)
-								self.listenProgress = min(1.0, max(0.0, elapsed / self.maxListenSeconds))
-								if elapsed >= self.maxListenSeconds {
-									print("[VoiceAssistantVM] auto stop after 30s")
-									self.stopListening(sendToLLM: true)
-								}
-							}
-						}
-					}
-				}, onText: { [weak self] text in
-					Task { @MainActor in self?.partialTranscript = text; print("[VM partial] \(text)") }
-				}, onFinalText: { [weak self] text in
-					Task { @MainActor in
-						self?.handleFinalTranscript(text)
-						print("[VM final] \(text)")
-						// Capture per-turn ASR metrics snapshot and log
-						let m = self?.assembly.metricsSnapshotAndReset() ?? [:]
-						if !m.isEmpty {
-							AnalyticsManager.shared.logEvent("asr_metrics", parameters: m)
-						}
-					}
-				})
+				self.showBanner = false
+				self.partialTranscript = ""
+				return
+				// In text-only mode we skip opening the realtime mic entirely
 			}
 		}
 	}
@@ -270,22 +214,12 @@ final class VoiceAssistantVM: ObservableObject {
 		sseTask?.cancel();
 		var finalText = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
 		if finalText.isEmpty {
-			// If we didn't capture a final, try prompting the user politely instead of failing silently
+			// Text-only mode: exit silently without asking for mic/repeat
 			AnalyticsManager.shared.logEvent("voice_empty_final", parameters: ["reason": "manual_stop_empty"]) 
-			// If we are in a style or generating prompt flow, stay silent to avoid confusion
-			if awaitingStylePrompt || {
-				if case .generating = overlayState { return true } else { return false }
-			}() {
-				uiState = .idle
-				showBanner = false
-				return
-			}
 			uiState = .idle
-			showBanner = true
-			assistantStreamingText = "I didn’t catch that — please say it again."
-			awaitingRepeat = true
-			// ElevenLabs voice; mic will reopen when TTS completes
-			startIntroSSE(text: assistantStreamingText)
+			showBanner = false
+			awaitingRepeat = false
+			assistantStreamingText = ""
 			return
 		}
 		if sendToLLM {
@@ -458,49 +392,23 @@ final class VoiceAssistantVM: ObservableObject {
 				}
 			} catch {
 				print("[VoiceAssistantVM] SSE error: \(error.localizedDescription)")
-				// Suppress any fallback while style selection prompt is active or confirmation/generating overlays
-				let isOverlayBlocking: Bool = {
-					if case .confirming = self.overlayState { return true }
-					if case .generating = self.overlayState { return true }
-					return false
-				}()
-				if self.awaitingStylePrompt || isOverlayBlocking {
-					await MainActor.run {
-						self.uiState = .idle
-						self.showBanner = false
-						self.assistantStreamingText = ""
-					}
-					return
-				}
-				// Otherwise, route fallback via ElevenLabs and enable repeat mode
+				// Text-only mode: do not present repeat prompts or mic suggestions
 				await MainActor.run {
 					self.uiState = .idle
-					self.showBanner = true
-					self.assistantStreamingText = "I didn’t catch that — please type your idea again using short, clear phrases."
-					self.awaitingRepeat = true
+					self.showBanner = false
+					self.assistantStreamingText = ""
+					self.awaitingRepeat = false
 				}
-				self.startIntroSSE(text: "I didn’t catch that — please type your idea again using short, clear phrases.")
 			}
 		}
 	}
 
 	// MARK: - Wake phrase utilities
 	private func reopenMicForRepeat() async {
+		// Text-only mode: no mic reopen
 		await MainActor.run {
+			self.awaitingRepeat = false
 			self.uiState = .idle
-		}
-		// Fetch token via the same path the UI uses
-		let projectId = FirebaseApp.app()?.options.projectID ?? Self.projectId()
-		guard let url = URL(string: "https://us-central1-\(projectId).cloudfunctions.net/getAssemblyToken") else { return }
-		var req = URLRequest(url: url); req.httpMethod = "GET"
-		do {
-			let (data, _) = try await URLSession.shared.data(for: req)
-			if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let token = obj["token"] as? String {
-				await MainActor.run { self.awaitingRepeat = false }
-				self.startListening(withToken: token)
-			}
-		} catch {
-			print("[VoiceAssistantVM] reopenMicForRepeat token error: \(error.localizedDescription)")
 		}
 	}
 	private func stripWakePhraseIfPresent(_ text: String) -> (stripped: String, found: Bool) {
