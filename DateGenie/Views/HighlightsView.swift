@@ -55,10 +55,7 @@ struct HighlightsView: View {
         .onAppear { Task { await repo.refresh() } }
         .background(Color.black.ignoresSafeArea())
         .sheet(item: $previewItem) { item in
-            switch item.kind {
-            case .video: ReelPreviewView(url: item.url)
-            case .photo: PhotoPreviewView(url: item.url)
-            }
+            CapcutEditorView(url: item.url)
         }
         .toast(message: $toast)
         .alert("Rename Highlight", isPresented: $showRename, actions: {

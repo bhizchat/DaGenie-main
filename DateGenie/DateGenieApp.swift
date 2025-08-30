@@ -78,9 +78,11 @@ struct DateGenieApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if authVM.user != nil {
-                    // Open straight to the camera with built-in preview after capture
-                    QuickCameraHostView()
+                if !hasSeenOnboarding {
+                    OnboardingCoordinatorView()
+                } else if authVM.user != nil {
+                    // New root flow: Projects + Profile tabs
+                    ProjectsRootTab()
                         .task { await userRepo.loadProfile() }
                 } else {
                     SignInView()

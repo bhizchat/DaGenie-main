@@ -23,6 +23,34 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
+    // Per-user projects (owner-only access with basic validation)
+    match /users/{uid}/projects/{projectId} {
+      function isOwner() { return request.auth != null && request.auth.uid == uid }
+
+      // Enforce allowed keys and types on create
+      allow create: if isOwner() &&
+        request.resource.data.keys().hasOnly(["name", "createdAt", "videoURL", "thumbURL"]) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        request.resource.data.createdAt == request.time &&
+        ( !("videoURL" in request.resource.data) || request.resource.data.videoURL is string ) &&
+        ( !("thumbURL" in request.resource.data) || request.resource.data.thumbURL is string );
+
+      // Allow owner to read their own projects
+      allow read: if isOwner();
+
+      // Updates: only allow name, videoURL, thumbURL to change; keep createdAt immutable
+      allow update: if isOwner() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "videoURL", "thumbURL"]) &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        resource.data.createdAt == request.resource.data.createdAt &&
+        ( !("videoURL" in request.resource.data) || request.resource.data.videoURL is string ) &&
+        ( !("thumbURL" in request.resource.data) || request.resource.data.thumbURL is string );
+
+      // Deletes allowed for owner
+      allow delete: if isOwner();
+    }
+
     // Helper: does ownerId appear in caller’s deviceIds array?
     function legacyDeviceMatch(uid, ownerId) {
       return ownerId in get(/databases/$(database)/documents/users/$(uid)).data.deviceIds;

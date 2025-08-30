@@ -83,8 +83,7 @@ struct RecordHeaderBar: View {
         .sheet(isPresented: $showPlayer, onDismiss: { selectedItem = nil; selectedNodeId = nil }) {
             if let item = selectedItem {
                 VStack(spacing: 0) {
-                    let media = CapturedMedia(localURL: item.remoteURL, type: item.type, caption: nil, remoteURL: item.remoteURL, uploadProgress: 1.0)
-                    MediaPlayerView(media: media)
+                    CapcutEditorView(url: item.remoteURL)
                         .overlay(alignment: .bottomTrailing) {
                             Button(action: deleteSelected) {
                                 Image(systemName: "trash.circle.fill")
@@ -133,7 +132,7 @@ struct RecordHeaderBar: View {
                 DispatchQueue.main.async {
                     // Dismiss overlay first, then present preview to avoid presenting over a disappearing VC
                     LoadingOverlay.hide {
-                        let previewVC = UIHostingController(rootView: ReelPreviewView(url: exportURL))
+                        let previewVC = UIHostingController(rootView: CapcutEditorView(url: exportURL))
                         previewVC.modalPresentationStyle = .overFullScreen
                         previewVC.isModalInPresentation = true
                         previewVC.view.backgroundColor = .black

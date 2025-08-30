@@ -48,6 +48,7 @@ export type ProductPromptSequence = {
   style: string;
   sequence: Array<Record<string, string>>;
   audio?: { soundtrack?: string; sfx?: string[] };
+  dialogue?: string[];
   ending?: string;
   format?: string;
   text_overlay?: string | "none";
@@ -64,6 +65,7 @@ export type ProductPromptSetPiece = {
   motion: string;
   ending: string;
   audio?: { music?: string; sfx?: string[] };
+  dialogue?: string[];
   text_overlay?: string | "none";
   format?: string;
   keywords?: string[];
@@ -98,6 +100,10 @@ export function buildProductPrompt(input: AdBrief): ProductPrompt {
         {ending: `Pull back to centered hero frame on ${product}.`},
       ],
       audio: {soundtrack: brandWords ? `${brandWords} minimal ambience` : "minimal ambience", sfx: ["subtle ripple", "soft chimes"]},
+      dialogue: [
+        `Narrator (soft): "Introducing ${product}, crafted with precision."`,
+        "Narrator: \"Watch as it comes to life — seamless, elegant, powerful.\"",
+      ],
       ending: `Clean hero frame; ${b.cta ? `implied CTA vibe: ${b.cta}` : "no text"}.`,
       text_overlay: b.cta ? b.cta : "none",
       format: b.aspectRatio || "9:16",
@@ -120,6 +126,10 @@ export function buildProductPrompt(input: AdBrief): ProductPrompt {
     motion: `energy cues cohere into outline; ${product} takes solid form; atmosphere settles`,
     ending: `fully formed ${product} centered and glowing softly; ${b.cta ? `CTA vibe: ${b.cta}` : "no text"}`,
     audio: {music: brandWords ? `${brandWords} ambient pulse` : "ambient pulse", sfx: ["subtle texture fizz"]},
+    dialogue: [
+      `Narrator: "${product}, made to be remembered."`,
+      "Narrator (whisper): \"Focus on the details.\"",
+    ],
     text_overlay: b.cta ? b.cta : "none",
     format: b.aspectRatio || "9:16",
     keywords: [b.aspectRatio || "9:16", "product focus", "photorealistic", ...(brandWords ? [brandWords] : [])],

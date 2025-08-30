@@ -12,9 +12,10 @@ struct QuickCameraHostView: View {
         .sheet(isPresented: Binding(get: { captured != nil }, set: { if !$0 { captured = nil } })) {
             if let media = captured {
                 if media.type == .photo {
-                    PhotoPreviewView(url: media.localURL)
+                    // Route photos to the new editor as well or replace with a photo editor if desired
+                    CapcutEditorView(url: media.localURL)
                 } else {
-                    ReelPreviewView(url: media.localURL)
+                    CapcutEditorView(url: media.localURL)
                 }
             } else {
                 EmptyView()

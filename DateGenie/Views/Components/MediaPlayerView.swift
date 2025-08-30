@@ -121,7 +121,8 @@ struct VideoOverlayPreview: View {
         ZStack {
             GeometryReader { g in
                 ZStack {
-                    VideoPlayer(player: player)
+                    // Use an AVPlayerLayer-backed view with aspect-fill so preview fills the screen
+                    FillVideoPlayer(player: player)
                         .onAppear {
                             // Seamless loop using AVPlayerLooper
                             let item = AVPlayerItem(url: url)
@@ -287,6 +288,29 @@ struct VideoOverlayPreview: View {
 private struct VideoCanvasRectKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+// AVPlayerLayer-backed SwiftUI view that renders with aspect-fill (cropped/zoomed)
+private struct FillVideoPlayer: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> PlayerView { PlayerView() }
+    func updateUIView(_ uiView: PlayerView, context: Context) { uiView.player = player }
+
+    final class PlayerView: UIView {
+        override static var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        var player: AVPlayer? {
+            get { playerLayer.player }
+            set { playerLayer.player = newValue }
+        }
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            playerLayer.videoGravity = .resizeAspectFill
+            backgroundColor = .black
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    }
 }
 
 private func rectApproximatelyEqual(_ a: CGRect, _ b: CGRect, epsilon: CGFloat) -> Bool {
