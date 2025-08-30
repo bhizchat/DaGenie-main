@@ -38,8 +38,10 @@ struct TimelineContainer: View {
                     // Filmstrip scroll area (multi-clip)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 0) {
-                            // Leading inset so 0s aligns flush with the fixed playhead line
-                            let leadingInset = max(0, (geo.size.width / 2) - 2) // nudge left ~2pt so thumbnails touch playhead
+                            // Leading inset so 0s aligns near the fixed playhead line.
+                            // Move an additional 20pt left: previous -28pt -> -48pt
+                            let leftGap: CGFloat = -48
+                            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
                             Color.clear.frame(width: leadingInset, height: stripHeight)
                             // Render each clip as a contiguous strip of its thumbnails
                             ForEach(Array(state.clips.enumerated()), id: \.element.id) { _, clip in
@@ -65,8 +67,8 @@ struct TimelineContainer: View {
                     .frame(height: stripHeight)
                     .contentOffset(x: contentOffsetX + dragDX) // via extension below
                     .gesture(dragGesture(geo: geo))
-                    // Move filmstrip into the top lane, flush with the playhead line
-                    .offset(y: -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10)
+                    // Move filmstrip into the top lane, flush with the playhead line, plus an extra 50pt upwards as requested
+                    .offset(y: -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50)
                     .zIndex(0)
 
                 }
@@ -104,7 +106,8 @@ struct TimelineContainer: View {
                 let pillWidth: CGFloat = max(110, state.pixelsPerSecond * 2 - 8)
                 let totalSeconds = max(0, CMTimeGetSeconds(state.totalDuration))
                 // Align to end of filmstrip accounting for the leading inset (center-playhead)
-                let leadingInset = max(0, (geo.size.width / 2) - 2)
+                let leftGap: CGFloat = -28
+                let leadingInset = max(0, (geo.size.width / 2) + leftGap)
                 let pillX = leadingInset + (state.pixelsPerSecond * CGFloat(totalSeconds)) - contentOffsetX + (pillWidth / 2)
                 Button(action: { onAddEnding?() }) {
                     RoundedRectangle(cornerRadius: 8)
