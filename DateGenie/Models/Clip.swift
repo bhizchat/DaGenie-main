@@ -12,6 +12,8 @@ struct Clip: Identifiable, Equatable {
     // Filmstrip visuals for this clip
     var thumbnails: [UIImage] = []
     var thumbnailTimes: [CMTime] = []
+    // Pixels-per-second used when generating thumbnails (for caching/regen decisions)
+    var thumbnailPPS: CGFloat = 0
 
     // Audio visualization and control
     var hasOriginalAudio: Bool = true
