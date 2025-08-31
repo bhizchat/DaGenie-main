@@ -17,9 +17,16 @@ struct ScrollViewBridge: UIViewRepresentable {
                 scrollView.delegate = context.coordinator
                 context.coordinator.scrollView = scrollView
             }
+            // Ensure content insets keep a fixed playhead at center
+            let center = scrollView.bounds.width / 2
+            let inset = pxRound(center, scale: scrollView.window?.windowScene?.screen.scale ?? UIScreen.main.scale)
+            let currentInsets = scrollView.contentInset
+            if currentInsets.left != inset || currentInsets.right != inset {
+                scrollView.contentInset = UIEdgeInsets(top: 0, left: inset, bottom: 0, right: inset)
+            }
             if let x = targetX {
                 if !(scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) {
-                    let maxX = max(0, scrollView.contentSize.width - scrollView.bounds.width)
+                    let maxX = max(-scrollView.contentInset.left, scrollView.contentSize.width - scrollView.bounds.width + scrollView.contentInset.right)
                     let clamped = max(0, min(x, maxX))
                     if scrollView.contentOffset.x != clamped {
                         scrollView.setContentOffset(CGPoint(x: clamped, y: 0), animated: false)
@@ -55,6 +62,10 @@ struct ScrollViewBridge: UIViewRepresentable {
         }
         return nil
     }
+}
+
+private func pxRound(_ x: CGFloat, scale: CGFloat) -> CGFloat {
+    (x * scale).rounded(.toNearestOrAwayFromZero) / scale
 }
 
 

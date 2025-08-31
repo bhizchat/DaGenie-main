@@ -28,7 +28,7 @@ struct TimelineContainer: View {
     private let minPPS: CGFloat = 20
     private let maxPPS: CGFloat = 300
     // Horizontal fine-tune so the first thumbnail sits relative to the playhead
-    private let leftGap: CGFloat = -53.0
+    private let leftGap: CGFloat = 0.0
     // Horizontal nudge for empty-lane placeholders ("+ Add audio/text") to move the entire strip
     private let lanePlaceholderShiftX: CGFloat = 50
 
@@ -308,6 +308,7 @@ struct TimelineContainer: View {
                                     observedOffsetX = x
                                     let center = geo.size.width / 2
                                     let leadingInset = max(0, center + leftGap)
+                                    // Keep time under the playhead (center) equal to x mapped through leading inset
                                     let t = (x - leadingInset + center) / max(1, state.pixelsPerSecond)
                                     state.seek(to: CMTime(seconds: Double(t), preferredTimescale: 600), precise: true)
                                 }
@@ -481,8 +482,9 @@ struct TimelineContainer: View {
                 guard !state.isScrubbing else { return }
                 let center = geo.size.width / 2
                 let leadingInset = max(0, center + leftGap)
+                // Ensure start frame (time 0) aligns exactly under the playhead for the first clip when currentTime == 0
                 let target = leadingInset + CGFloat(seconds(state.currentTime)) * state.pixelsPerSecond - center
-                contentOffsetX = max(0, target)
+                contentOffsetX = target
             }
             .onAppear {
                 state.pixelsPerSecond = max(minPPS, min(maxPPS, state.pixelsPerSecond))
