@@ -128,9 +128,10 @@ struct TimelineContainer: View {
             Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.audioTracks.isEmpty {
+                // Make placeholder span the full timeline length so edits reflect exact duration
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.gray.opacity(0.18))
-                    .frame(width: max(max(200, totalWidth), geo.size.width - leadingInset - 24), height: TimelineStyle.laneRowHeight)
+                    .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
                     .overlay(
                         HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
                             .padding(.horizontal, 12)
@@ -180,9 +181,10 @@ struct TimelineContainer: View {
             Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.textOverlays.isEmpty {
+                // Make placeholder span the full timeline length so edits reflect exact duration
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.gray.opacity(0.18))
-                    .frame(width: max(max(200, totalWidth), geo.size.width - leadingInset - 24), height: TimelineStyle.laneRowHeight)
+                    .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
                     .overlay(
                         HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
                             .padding(.horizontal, 12)
