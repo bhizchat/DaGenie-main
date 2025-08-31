@@ -23,5 +23,13 @@
 	<string>Allow access to your photo library to import videos into the editor.</string>
 	<key>ITSAppUsesNonExemptEncryption </key>
 	<false/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
 </dict>
 </plist>

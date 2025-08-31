@@ -30,6 +30,12 @@ struct TimelineContainer: View {
     // Horizontal nudge for empty-lane placeholders ("+ Add audio/text") to move the entire strip
     private let lanePlaceholderShiftX: CGFloat = 50
 
+    // Selection styling (CapCut-like)
+    private let selectionPadH: CGFloat = 8
+    private let selectionPadV: CGFloat = 6
+    private let selectionHandleWidth: CGFloat = 35
+    private let selectionHandleCorner: CGFloat = 0
+
     private var headerOffsetY: CGFloat {
         -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
     }
@@ -64,14 +70,23 @@ struct TimelineContainer: View {
             let trailingInset = max(0, (geo.size.width / 2) - leftGap) // mirror so end can center under playhead
             Color.clear.frame(width: leadingInset, height: TimelineStyle.videoRowHeight)
             ForEach(Array(state.clips.enumerated()), id: \.element.id) { _, clip in
-                let clipWidth = CGFloat(max(0, CMTimeGetSeconds(clip.duration))) * state.pixelsPerSecond
+                // Use trimmed duration if available
+                let rawSeconds = max(0, CMTimeGetSeconds(clip.duration))
+                let trimmedEnd = CMTimeGetSeconds(clip.trimEnd ?? clip.duration)
+                let trimmedStart = CMTimeGetSeconds(clip.trimStart)
+                let effectiveSeconds = max(0, min(rawSeconds, trimmedEnd) - max(0, trimmedStart))
+                let clipWidth = CGFloat(effectiveSeconds) * state.pixelsPerSecond
                 ZStack(alignment: .leading) {
-                    // CapCut-style selection cell behind the entire clip
+                    // Selection card behind content aligned to exact clip start/end with clear white surround
                     if state.selectedClipId == clip.id {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.white)
-                            .frame(width: clipWidth + 16, height: TimelineStyle.videoRowHeight + 12)
-                            .offset(x: -8, y: -6)
+                            .stroke(Color.white, lineWidth: 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.white)
+                            )
+                            .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
+                            .offset(x: 0, y: 0)
                             .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
                             .zIndex(-1)
                     }
@@ -102,6 +117,9 @@ struct TimelineContainer: View {
                             .offset(y: (TimelineStyle.videoRowHeight / 2) - 1)
                     }
                 }
+                // Per-clip handle overlays removed; handled by global overlay for accurate placement
+                .contentShape(Rectangle())
+                .zIndex(state.selectedClipId == clip.id ? 100 : 0)
                 .contentShape(Rectangle())
                 .highPriorityGesture(
                     TapGesture().onEnded {
@@ -128,14 +146,28 @@ struct TimelineContainer: View {
             Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.audioTracks.isEmpty {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.gray.opacity(0.18))
-                    .frame(width: max(max(200, totalWidth), geo.size.width - leadingInset - 24), height: TimelineStyle.laneRowHeight)
-                    .overlay(
-                        HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                            .padding(.horizontal, 12)
-                            .padding(.leading, 0)
-                    )
+                if let s = state.selectedClipStartSeconds, let d = state.selectedClipDurationSeconds {
+                    let startX = CGFloat(s) * state.pixelsPerSecond
+                    let width  = CGFloat(d) * state.pixelsPerSecond
+                    // push to selected clip start
+                    Color.clear.frame(width: startX)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.18))
+                        .frame(width: width, height: TimelineStyle.laneRowHeight)
+                        .overlay(
+                            HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                                .padding(.horizontal, 12)
+                        )
+                } else {
+                    // Fallback when no selection: span the whole timeline
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.18))
+                        .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
+                        .overlay(
+                            HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                                .padding(.horizontal, 12)
+                        )
+                }
             } else {
                 // Hide the "+ Add audio" placeholder; show user-added audio items only
                 ForEach(Array(state.audioTracks.enumerated()), id: \.element.id) { _, t in
@@ -180,14 +212,26 @@ struct TimelineContainer: View {
             Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.textOverlays.isEmpty {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.gray.opacity(0.18))
-                    .frame(width: max(max(200, totalWidth), geo.size.width - leadingInset - 24), height: TimelineStyle.laneRowHeight)
-                    .overlay(
-                        HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                            .padding(.horizontal, 12)
-                            .padding(.leading, 0)
-                    )
+                if let s = state.selectedClipStartSeconds, let d = state.selectedClipDurationSeconds {
+                    let startX = CGFloat(s) * state.pixelsPerSecond
+                    let width  = CGFloat(d) * state.pixelsPerSecond
+                    Color.clear.frame(width: startX)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.18))
+                        .frame(width: width, height: TimelineStyle.laneRowHeight)
+                        .overlay(
+                            HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                                .padding(.horizontal, 12)
+                        )
+                } else {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.18))
+                        .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
+                        .overlay(
+                            HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                                .padding(.horizontal, 12)
+                        )
+                }
             } else {
                 ForEach(state.textOverlays, id: \.id) { t in
                     let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
@@ -260,6 +304,56 @@ struct TimelineContainer: View {
                     .fill(Color.white)
                     .frame(width: 2, height: playheadHeight)
 
+                // Global selection overlay (frame + handles) positioned in timeline coordinates
+                if let s = state.selectedClipStartSeconds,
+                   let e = state.selectedClipEndSeconds,
+                   e > s {
+                    let pps = state.pixelsPerSecond
+                    let center = geo.size.width / 2
+                    let startX = center + CGFloat(s) * pps - (contentOffsetX + dragDX)
+                    let endX   = center + CGFloat(e) * pps - (contentOffsetX + dragDX)
+                    let selW   = endX - startX
+
+                    // Selection frame drawn above thumbnails
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white, lineWidth: 3)
+                        .frame(width: selW, height: TimelineStyle.videoRowHeight)
+                        .position(x: startX + selW / 2,
+                                  y: filmstripCenterY)
+                        .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+
+                    // Left handle (outside, flush with frame edge)
+                    ZStack {
+                        RoundedRectangle(cornerRadius: selectionHandleCorner)
+                            .fill(Color.white)
+                            .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.black.opacity(0.9))
+                                    .frame(width: selectionHandleWidth * 0.35,
+                                           height: max(8, TimelineStyle.videoRowHeight - 12))
+                            )
+                    }
+                    .position(x: startX - selectionHandleWidth / 2,
+                              y: filmstripCenterY)
+                    .zIndex(200)
+
+                    // Right handle
+                    ZStack {
+                        RoundedRectangle(cornerRadius: selectionHandleCorner)
+                            .fill(Color.white)
+                            .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.black.opacity(0.9))
+                                    .frame(width: selectionHandleWidth * 0.35,
+                                           height: max(8, TimelineStyle.videoRowHeight - 12))
+                            )
+                    }
+                    .position(x: endX + selectionHandleWidth / 2,
+                              y: filmstripCenterY)
+                    .zIndex(200)
+                }
                 // Timecode HUD during scrubbing
                 if state.isScrubbing {
                     VStack(spacing: 4) {
@@ -302,6 +396,7 @@ struct TimelineContainer: View {
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
                         .frame(width: 34, height: 34)
                         .overlay(
+                            
                             Image("letter-t")
                                 .resizable()
                                 .scaledToFit()
@@ -313,10 +408,8 @@ struct TimelineContainer: View {
                 .zIndex(3)
                 }
             }
-            // Plus button aligned with filmstrip lane center; scrolls with timeline
-            .overlay(alignment: .center) {
-                // In a center-aligned overlay, 0 is the screen center. Offset by seconds*pixelsPerSecond, minus current scroll.
-                let plusX: CGFloat = (state.pixelsPerSecond * 3) - (contentOffsetX + dragDX)
+            // Plus button fixed to the trailing edge; does not move with scroll/zoom
+            .overlay(alignment: .trailing) {
                 // Vertically center on the video (filmstrip) row; when there is no clip, nudge the plus 20pt lower
                 let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
                 let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20)
@@ -332,7 +425,8 @@ struct TimelineContainer: View {
                                 .foregroundColor(.black)
                         )
                 }
-                .offset(x: plusX, y: plusY)
+                .padding(.trailing, 12)
+                .offset(y: plusY)
                 .zIndex(1)
             }
             // Fixed left time counter (mm:ss / mm:ss) drawn last to sit above everything
