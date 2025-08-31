@@ -123,6 +123,7 @@ struct AudioTrack: Identifiable, Equatable {
     let id: UUID = UUID()
     var url: URL
     var start: CMTime
+    var duration: CMTime
     var volume: Float
 }
 

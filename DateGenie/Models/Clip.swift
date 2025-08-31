@@ -12,6 +12,10 @@ struct Clip: Identifiable, Equatable {
     // Filmstrip visuals for this clip
     var thumbnails: [UIImage] = []
     var thumbnailTimes: [CMTime] = []
+
+    // Audio visualization and control
+    var hasOriginalAudio: Bool = true
+    var waveformSamples: [Float] = []
 }
 
 

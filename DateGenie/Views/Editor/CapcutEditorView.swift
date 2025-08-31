@@ -10,6 +10,7 @@ struct CapcutEditorView: View {
     @State private var showTextPanel: Bool = false
     @State private var showCaptionPanel: Bool = false
     @State private var showAspectSheet: Bool = false
+    @State private var showEditBar: Bool = false
 
     init(url: URL) {
         self.url = url
@@ -84,14 +85,20 @@ struct CapcutEditorView: View {
                 VStack(spacing: 0) {
                     TimelineContainer(state: state)
                         .frame(height: 72 + 8 + 32 + 80)
-                    EditorBottomToolbar(
-                        onEdit: {},
-                        onAudio: {},
-                        onText: { showTextPanel = true },
-                        onOverlay: {},
-                        onAspect: { showAspectSheet = true },
-                        onCaptions: { showCaptionPanel = true }
-                    )
+                    if showEditBar {
+                        EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false } })
+                            .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        EditorBottomToolbar(
+                            onEdit: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true } },
+                            onAudio: {},
+                            onText: { showTextPanel = true },
+                            onOverlay: {},
+                            onAspect: { showAspectSheet = true },
+                            onEffects: {}
+                        )
+                            .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
             }
         }
@@ -181,6 +188,7 @@ final class EditorState: ObservableObject {
     @Published var thumbnailTimes: [CMTime] = []
     @Published var pixelsPerSecond: CGFloat = 60
     @Published var isScrubbing: Bool = false
+    @Published var selectedClipId: UUID? = nil
 
     private var timeObserver: Any?
 
@@ -232,6 +240,15 @@ final class EditorState: ObservableObject {
         await rebuildComposition()
         let index = clips.count - 1
         await generateThumbnails(forClipAt: index)
+        // Generate waveform and detect original audio availability
+        let hasAudio = asset.tracks(withMediaType: .audio).first != nil
+        if clips.indices.contains(index) {
+            clips[index].hasOriginalAudio = hasAudio
+        }
+        if hasAudio {
+            let samples = await WaveformGenerator.loadOrGenerate(for: asset)
+            await MainActor.run { if self.clips.indices.contains(index) { self.clips[index].waveformSamples = samples } }
+        }
     }
 
     // Build a single AVMutableComposition that concatenates all clips
@@ -253,7 +270,7 @@ final class EditorState: ObservableObject {
             if let v = clip.asset.tracks(withMediaType: .video).first {
                 try? videoTrack?.insertTimeRange(CMTimeRange(start: .zero, duration: clip.duration), of: v, at: cursor)
             }
-            if let a = clip.asset.tracks(withMediaType: .audio).first {
+            if clip.hasOriginalAudio, let a = clip.asset.tracks(withMediaType: .audio).first {
                 try? audioTrack?.insertTimeRange(CMTimeRange(start: .zero, duration: clip.duration), of: a, at: cursor)
             }
             cursor = cursor + clip.duration
@@ -316,6 +333,15 @@ final class EditorState: ObservableObject {
 
     // Legacy generateThumbnails retained by name; not used in multi-clip flow
     private func generateThumbnails() { }
+
+    // Convenience for adding an external audio track (duration probed automatically)
+    @MainActor
+    func addAudio(url: URL, at start: CMTime, volume: Float = 1.0) async {
+        let aAsset = AVURLAsset(url: url)
+        let dur = aAsset.duration
+        let track = AudioTrack(url: url, start: start, duration: dur, volume: volume)
+        audioTracks.append(track)
+    }
 }
 
 // MARK: - UI helpers
