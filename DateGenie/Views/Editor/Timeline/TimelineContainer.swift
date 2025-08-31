@@ -28,7 +28,7 @@ struct TimelineContainer: View {
     private let minPPS: CGFloat = 20
     private let maxPPS: CGFloat = 300
     // Horizontal fine-tune so the first thumbnail sits relative to the playhead
-    private let leftGap: CGFloat = -53.0
+    private let leftGap: CGFloat = -73.0
     // Horizontal nudge for empty-lane placeholders ("+ Add audio/text") to move the entire strip
     private let lanePlaceholderShiftX: CGFloat = 50
 
