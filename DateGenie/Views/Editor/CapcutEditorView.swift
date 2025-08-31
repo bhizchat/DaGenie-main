@@ -107,6 +107,7 @@ struct CapcutEditorView: View {
             AnalyticsManager.shared.logEvent("capcut_editor_opened", parameters: [
                 "url_last_path": url.lastPathComponent
             ])
+            configureAudioSessionForPreview()
             state.preparePlayer()
         }
         .sheet(isPresented: $showTextPanel) { TextToolPanel(state: state, canvasRect: canvasRect) }
@@ -118,6 +119,10 @@ struct CapcutEditorView: View {
                 .default(Text("1:1")) { state.renderConfig.aspect = .oneByOne },
                 .cancel()
             ])
+        }
+        .onDisappear {
+            // Deactivate playback session if it was activated for preview
+            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         }
     }
 
@@ -164,6 +169,17 @@ struct CapcutEditorView: View {
             UIApplication.shared.topMostViewController()?.present(av, animated: true)
         }
     }
+
+    // MARK: - Audio session for preview
+    private func configureAudioSessionForPreview() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .moviePlayback, options: [])
+            try session.setActive(true)
+        } catch {
+            print("[Editor] Audio session error: \(error)")
+        }
+    }
 }
 
 // EditorTrackArea is defined in Views/Editor/Tracks/EditorTrackArea.swift
@@ -173,6 +189,9 @@ final class EditorState: ObservableObject {
     let asset: AVAsset
     let player: AVPlayer = AVPlayer()
     private var composition: AVMutableComposition = AVMutableComposition()
+    // Progressive thumbnail generation state
+    private var imageGenerators: [UUID: AVAssetImageGenerator] = [:]
+    private var thumbnailGenTokens: [UUID: UUID] = [:]
 
     @Published var duration: CMTime = .zero
     @Published var currentTime: CMTime = .zero
@@ -282,38 +301,63 @@ final class EditorState: ObservableObject {
         duration = totalDuration
     }
 
-    // Generate filmstrip thumbnails for a single clip
+    // Generate filmstrip thumbnails for a single clip (progressive & cancellable)
     private func generateThumbnails(forClipAt index: Int) async {
         guard clips.indices.contains(index) else { return }
         let clip = clips[index]
         let total = CMTimeGetSeconds(clip.duration)
         guard total.isFinite && total > 0 else { return }
-        // Derive density from current pixelsPerSecond; cap for perf
-        let density = max(4, min(80, Int(ceil(self.pixelsPerSecond / 12))))
-        let count = max(4, min(18 * density / 5, Int(ceil(total)) * density))
+        // Determine number of tiles needed to span the clip's on-screen width at current zoom
+        let tileWidth = max(24, self.pixelsPerSecond)
+        let clipWidthPoints = CGFloat(total) * self.pixelsPerSecond
+        let count = max(1, Int(ceil(clipWidthPoints / tileWidth)))
         let times: [CMTime] = (0..<count).map { i in
-            let t = Double(i) / Double(max(count-1, 1)) * total
+            let t = Double(i) / Double(max(count - 1, 1)) * total
             return CMTime(seconds: t, preferredTimescale: 600)
         }
+
+        // Cancel any in-flight generation for this clip
+        if let existing = imageGenerators[clip.id] {
+            existing.cancelAllCGImageGeneration()
+        }
+
+        // Create a new generator configured for filmstrip speed (non-zero tolerances)
         let gen = AVAssetImageGenerator(asset: clip.asset)
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 240, height: 240)
-        // Generate frame-accurate thumbnails (costs extra CPU but improves alignment)
-        gen.requestedTimeToleranceBefore = .zero
-        gen.requestedTimeToleranceAfter  = .zero
+        let tol = CMTime(value: 1, timescale: 30) // ~33ms tolerance for speed
+        gen.requestedTimeToleranceBefore = tol
+        gen.requestedTimeToleranceAfter  = tol
+        imageGenerators[clip.id] = gen
+        let token = UUID()
+        thumbnailGenTokens[clip.id] = token
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            var images: [UIImage] = []
-            for t in times {
-                if let cg = try? gen.copyCGImage(at: t, actualTime: nil) {
-                    images.append(UIImage(cgImage: cg))
-                }
+        // Pre-size thumbnails so the UI renders full strip immediately
+        await MainActor.run {
+            if self.clips.indices.contains(index) {
+                self.clips[index].thumbnails = Array(repeating: UIImage(), count: count)
+                self.clips[index].thumbnailTimes = times
+                self.clips[index].thumbnailPPS = self.pixelsPerSecond
             }
+        }
+
+        // Map requested time to index for stable placement
+        var timeIndex: [Double: Int] = [:]
+        for (i, t) in times.enumerated() { timeIndex[CMTimeGetSeconds(t)] = i }
+        let nsTimes: [NSValue] = times.map { NSValue(time: $0) }
+
+        gen.generateCGImagesAsynchronously(forTimes: nsTimes) { [weak self] requestedTime, cgImage, _, result, _ in
+            guard let self = self else { return }
+            // Ensure result is for the latest request
+            guard self.thumbnailGenTokens[clip.id] == token else { return }
+            guard result == .succeeded, let cg = cgImage else { return }
+            let key = CMTimeGetSeconds(requestedTime)
+            guard let i = timeIndex[key] else { return }
+            let ui = UIImage(cgImage: cg)
             DispatchQueue.main.async {
-                if self.clips.indices.contains(index) {
-                    self.clips[index].thumbnails = images
-                    self.clips[index].thumbnailTimes = times
-                    self.clips[index].thumbnailPPS = self.pixelsPerSecond
+                guard self.clips.indices.contains(index) else { return }
+                if i < self.clips[index].thumbnails.count {
+                    self.clips[index].thumbnails[i] = ui
                 }
             }
         }
@@ -321,7 +365,7 @@ final class EditorState: ObservableObject {
 
     private func installTimeObserver() {
         removeTimeObserver()
-        let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
+        let interval = CMTime(seconds: 0.1, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self = self else { return }
             self.currentTime = time

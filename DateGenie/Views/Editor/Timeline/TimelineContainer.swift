@@ -160,8 +160,8 @@ struct TimelineContainer: View {
         HStack(spacing: 0) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
             let trailingInset = max(0, (geo.size.width / 2) - leftGap)
-            // Nudge start and shift entire lane ~400pt left (affects placeholder and items)
-            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
+            // Align lane start to the same inset as the filmstrip (no extra nudges)
+            Color.clear.frame(width: leadingInset, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.audioTracks.isEmpty {
                 if let s = state.selectedClipStartSeconds, let d = state.selectedClipDurationSeconds {
@@ -174,7 +174,8 @@ struct TimelineContainer: View {
                         .frame(width: width, height: TimelineStyle.laneRowHeight)
                         .overlay(
                             HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.horizontal, 12)
+                                .padding(.leading, 56)
+                            , alignment: .leading
                         )
                 } else {
                     // Fallback when no selection: span the whole timeline
@@ -183,7 +184,8 @@ struct TimelineContainer: View {
                         .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
                         .overlay(
                             HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.horizontal, 12)
+                                .padding(.leading, 56)
+                            , alignment: .leading
                         )
                 }
             } else {
@@ -201,7 +203,6 @@ struct TimelineContainer: View {
             Color.clear.frame(width: trailingInset, height: TimelineStyle.laneRowHeight)
         }
         .frame(height: TimelineStyle.laneRowHeight)
-        .offset(x: -200)
         .overlay(alignment: .topLeading) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
             Button(action: { onAddAudio?() }) {
@@ -216,8 +217,8 @@ struct TimelineContainer: View {
                             .foregroundColor(.black)
                     )
             }
-            // Move an additional ~100pt left from previous placement (total ~400pt)
-            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 460, y: (TimelineStyle.laneRowHeight - 34) / 2)
+            // Position near the playhead using the same inset as the filmstrip
+            .offset(x: leadingInset + 2, y: (TimelineStyle.laneRowHeight - 34) / 2)
             .zIndex(3)
         }
     }
@@ -226,8 +227,8 @@ struct TimelineContainer: View {
         HStack(spacing: 0) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
             let trailingInset = max(0, (geo.size.width / 2) - leftGap)
-            // Nudge start and shift entire lane ~400pt left (affects placeholder and items)
-            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
+            // Align lane start to the same inset as the filmstrip (no extra nudges)
+            Color.clear.frame(width: leadingInset, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.textOverlays.isEmpty {
                 if let s = state.selectedClipStartSeconds, let d = state.selectedClipDurationSeconds {
@@ -239,7 +240,8 @@ struct TimelineContainer: View {
                         .frame(width: width, height: TimelineStyle.laneRowHeight)
                         .overlay(
                             HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.horizontal, 12)
+                                .padding(.leading, 56)
+                            , alignment: .leading
                         )
                 } else {
                     RoundedRectangle(cornerRadius: 4)
@@ -247,7 +249,8 @@ struct TimelineContainer: View {
                         .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
                         .overlay(
                             HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.horizontal, 12)
+                                .padding(.leading, 56)
+                            , alignment: .leading
                         )
                 }
             } else {
@@ -263,7 +266,6 @@ struct TimelineContainer: View {
             Color.clear.frame(width: trailingInset, height: TimelineStyle.laneRowHeight)
         }
         .frame(height: TimelineStyle.laneRowHeight)
-        .offset(x: -200)
         .overlay(alignment: .topLeading) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
             Button(action: { onAddText?() }) {
@@ -278,8 +280,8 @@ struct TimelineContainer: View {
                             .foregroundColor(.black)
                     )
             }
-            // Move an additional ~100pt left from previous placement (total ~400pt)
-            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 460, y: (TimelineStyle.laneRowHeight - 34) / 2)
+            // Position near the playhead using the same inset as the filmstrip
+            .offset(x: leadingInset + 2, y: (TimelineStyle.laneRowHeight - 34) / 2)
             .zIndex(3)
         }
     }
@@ -308,9 +310,13 @@ struct TimelineContainer: View {
                                     observedOffsetX = x
                                     let center = geo.size.width / 2
                                     let leadingInset = max(0, center + leftGap)
-                                    // Keep time under the playhead (center) equal to x mapped through leading inset
-                                    let t = (x - leadingInset + center) / max(1, state.pixelsPerSecond)
-                                    state.seek(to: CMTime(seconds: Double(t), preferredTimescale: 600), precise: true)
+                                    // Map scroll -> time only when the user is interacting
+                                    if (isTracking || isDragging || isDecel) {
+                                        let raw = (x - leadingInset + center) / max(1, state.pixelsPerSecond)
+                                        let dur = max(0.0, CMTimeGetSeconds(state.totalDuration))
+                                        let t = max(0.0, min(Double(raw), dur))
+                                        state.seek(to: CMTime(seconds: t, preferredTimescale: 600), precise: false)
+                                    }
                                 }
                             )
                         }
