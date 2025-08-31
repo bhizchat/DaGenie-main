@@ -294,8 +294,10 @@ struct TimelineContainer: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
-                    .padding(.top, 6)
-                    .zIndex(100)
+                    .padding(.top, 0)
+                    .offset(y: -10)
+                    .zIndex(1000)
+                    .allowsHitTesting(false)
             }
             .onChange(of: selectedVideoItem) { _ in
                 Task { await handlePickedVideo() }
