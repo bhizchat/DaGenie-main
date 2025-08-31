@@ -16,7 +16,7 @@ struct TimelineContainer: View {
     @GestureState private var dragDX: CGFloat = 0
     @GestureState private var pinchScale: CGFloat = 1.0
     @State private var didTapClip: Bool = false
-    // Observed native ScrollView horizontal offset (SwiftUI preference-based)
+    // Observed native ScrollView horizontal offset (PreferenceKey-based)
     @State private var observedOffsetX: CGFloat = 0
     // Timeline dimensions
     private let stripHeight: CGFloat = 72       // filmstrip height
@@ -300,26 +300,22 @@ struct TimelineContainer: View {
                                     textRow(geo)
                                 }
                             }
-                            // Observe native content offset via named coordinate space
                             .background(
-                                GeometryReader { proxy in
-                                    let x = -proxy.frame(in: .named("timelineScroll")).minX
-                                    Color.clear.preference(key: TimelineScrollOffsetKey.self, value: x)
+                                ScrollViewBridge(targetX: contentOffsetX) { x, isTracking, isDragging, isDecel in
+                                    observedOffsetX = x
+                                    let center = geo.size.width / 2
+                                    let t = (x + center) / max(1, state.pixelsPerSecond)
+                                    state.seek(to: CMTime(seconds: Double(t), preferredTimescale: 600), precise: true)
                                 }
                             )
                         }
                         .coordinateSpace(name: "timelineScroll")
-                        .contentOffset(x: contentOffsetX + dragDX)
-                        .gesture(dragGesture(geo: geo))
                         .simultaneousGesture(
                             TapGesture().onEnded {
                                 if !didTapClip { state.selectedClipId = nil }
                                 didTapClip = false
                             }
                         )
-                        .onPreferenceChange(TimelineScrollOffsetKey.self) { val in
-                            observedOffsetX = val
-                        }
 
                         // Selection overlay (frame + handles) positioned in the SAME coordinate space as rows
                         if let s = state.selectedClipStartSeconds,
@@ -327,48 +323,53 @@ struct TimelineContainer: View {
                            e > s {
                             let pps = state.pixelsPerSecond
                             let center = geo.size.width / 2
+                            // Use the observed ScrollView offset so overlay matches actual content movement
                             let startX = center + CGFloat(s) * pps - observedOffsetX
                             let endX   = center + CGFloat(e) * pps - observedOffsetX
                             let selW   = endX - startX
 
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Color.white, lineWidth: 3)
-                                .frame(width: selW, height: TimelineStyle.videoRowHeight)
-                                .position(x: startX + selW / 2,
+                            Group {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white, lineWidth: 3)
+                                    .frame(width: selW, height: TimelineStyle.videoRowHeight)
+                                    .position(x: startX + selW / 2,
+                                              y: TimelineStyle.videoRowHeight / 2)
+                                    .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+
+                                // Left handle
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: selectionHandleCorner)
+                                        .fill(Color.white)
+                                        .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(Color.black.opacity(0.9))
+                                                .frame(width: selectionHandleWidth * 0.35,
+                                                       height: max(8, TimelineStyle.videoRowHeight - 12))
+                                        )
+                                }
+                                .position(x: startX - selectionHandleWidth / 2,
                                           y: TimelineStyle.videoRowHeight / 2)
-                                .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+                                .zIndex(200)
 
-                            // Left handle
-                            ZStack {
-                                RoundedRectangle(cornerRadius: selectionHandleCorner)
-                                    .fill(Color.white)
-                                    .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.black.opacity(0.9))
-                                            .frame(width: selectionHandleWidth * 0.35,
-                                                   height: max(8, TimelineStyle.videoRowHeight - 12))
-                                    )
+                                // Right handle
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: selectionHandleCorner)
+                                        .fill(Color.white)
+                                        .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(Color.black.opacity(0.9))
+                                                .frame(width: selectionHandleWidth * 0.35,
+                                                       height: max(8, TimelineStyle.videoRowHeight - 12))
+                                        )
+                                }
+                                .position(x: endX + selectionHandleWidth / 2,
+                                          y: TimelineStyle.videoRowHeight / 2)
+                                .zIndex(200)
                             }
-                            .position(x: startX - selectionHandleWidth / 2,
-                                      y: TimelineStyle.videoRowHeight / 2)
-                            .zIndex(200)
-
-                            // Right handle
-                            ZStack {
-                                RoundedRectangle(cornerRadius: selectionHandleCorner)
-                                    .fill(Color.white)
-                                    .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.black.opacity(0.9))
-                                            .frame(width: selectionHandleWidth * 0.35,
-                                                   height: max(8, TimelineStyle.videoRowHeight - 12))
-                                    )
-                            }
-                            .position(x: endX + selectionHandleWidth / 2,
-                                      y: TimelineStyle.videoRowHeight / 2)
-                            .zIndex(200)
+                            // Ensure overlay does not intercept timeline gestures
+                            .allowsHitTesting(false)
                         }
                     }
                     // Align stacked rows (and overlay) with playhead like before
@@ -474,11 +475,8 @@ struct TimelineContainer: View {
             .onChange(of: state.currentTime) { _ in
                 guard !state.isScrubbing else { return }
                 let center = geo.size.width / 2
-                // Keep filmstrip centered on the playhead using the same mapping as drag
                 let target = CGFloat(seconds(state.currentTime)) * state.pixelsPerSecond - center
-                withAnimation(.linear(duration: 0.08)) {
-                    contentOffsetX = max(0, target)
-                }
+                contentOffsetX = max(0, target)
             }
             .onAppear {
                 state.pixelsPerSecond = max(minPPS, min(maxPPS, state.pixelsPerSecond))
@@ -524,21 +522,10 @@ struct TimelineContainer: View {
     // (Track row helpers removed during revert)
 
     private func dragGesture(geo: GeometryProxy) -> some Gesture {
+        // Deprecated: let UIScrollView own horizontal pan; we keep function to avoid breaking calls
         DragGesture(minimumDistance: 1)
-            .updating($dragDX) { value, stateDX, _ in
-                state.isScrubbing = true
-                stateDX = -value.translation.width // negative to move content as finger moves
-                let deltaSeconds = (value.translation.width / state.pixelsPerSecond)
-                let newS = seconds(state.currentTime) + Double(deltaSeconds)
-                let clamped = max(0.0, min(seconds(state.duration), newS))
-                state.seek(to: CMTime(seconds: clamped, preferredTimescale: 600), precise: true)
-            }
-            .onEnded { value in
-                let center = geo.size.width / 2
-                let target = CGFloat(seconds(state.currentTime)) * state.pixelsPerSecond - center
-                contentOffsetX = max(0, target)
-                state.isScrubbing = false
-            }
+            .onChanged { _ in }
+            .onEnded { _ in }
     }
 
     private func magnifyGesture(geo: GeometryProxy) -> some Gesture {
@@ -559,8 +546,8 @@ struct TimelineContainer: View {
 
     private func rulerOverlay(width: CGFloat, center: CGFloat) -> some View {
         let step: Double = 1.0
-        let visibleStart = max(0.0, (contentOffsetX / state.pixelsPerSecond))
-        let visibleEnd = max(visibleStart, (contentOffsetX + width) / state.pixelsPerSecond)
+        let visibleStart = max(0.0, (observedOffsetX / state.pixelsPerSecond))
+        let visibleEnd = max(visibleStart, (observedOffsetX + width) / state.pixelsPerSecond)
         let start = Int(floor(visibleStart / step))
         let end = Int(ceil(visibleEnd / step))
         let majorTickHeight: CGFloat = 12
@@ -568,7 +555,7 @@ struct TimelineContainer: View {
         return ZStack(alignment: .topLeading) {
             ForEach(start...end, id: \.self) { idx in
                 let sec = Double(idx) * step
-                let x = center + CGFloat(sec) * state.pixelsPerSecond - contentOffsetX
+                let x = center + CGFloat(sec) * state.pixelsPerSecond - observedOffsetX
                 if idx % 2 == 0 {
                     // Even seconds: full label (no tick)
                     Text(mmss(sec))
@@ -646,9 +633,7 @@ private extension UIView {
 // PreferenceKey for observing timeline ScrollView horizontal offset
 private struct TimelineScrollOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 
