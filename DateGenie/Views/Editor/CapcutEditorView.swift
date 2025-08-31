@@ -298,6 +298,9 @@ final class EditorState: ObservableObject {
         let gen = AVAssetImageGenerator(asset: clip.asset)
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 240, height: 240)
+        // Generate frame-accurate thumbnails (costs extra CPU but improves alignment)
+        gen.requestedTimeToleranceBefore = .zero
+        gen.requestedTimeToleranceAfter  = .zero
 
         DispatchQueue.global(qos: .userInitiated).async {
             var images: [UIImage] = []
@@ -351,6 +354,44 @@ final class EditorState: ObservableObject {
         let dur = aAsset.duration
         let track = AudioTrack(url: url, start: start, duration: dur, volume: volume)
         audioTracks.append(track)
+    }
+}
+
+// MARK: - Selection and clip timing helpers
+extension EditorState {
+    /// Absolute start time (in seconds) of a clip in the concatenated timeline,
+    /// accounting for previous clips' TRIMMED durations and this clip's trimStart.
+    func startSeconds(for clipId: UUID) -> Double? {
+        var acc: Double = 0
+        for c in clips {
+            if c.id == clipId {
+                acc += max(0, CMTimeGetSeconds(c.trimStart))
+                return acc
+            }
+            acc += max(0, CMTimeGetSeconds(c.trimmedDuration))
+        }
+        return nil
+    }
+
+    var selectedClip: Clip? { clips.first { $0.id == selectedClipId } }
+
+    /// Trim-aware absolute start seconds for the selected clip
+    var selectedClipStartSeconds: Double? {
+        guard let clip = selectedClip else { return nil }
+        return startSeconds(for: clip.id)
+    }
+
+    /// Trim-aware duration seconds for the selected clip
+    var selectedClipDurationSeconds: Double? {
+        guard let clip = selectedClip else { return nil }
+        return max(0, CMTimeGetSeconds(clip.trimmedDuration))
+    }
+
+    /// Trim-aware absolute end seconds for the selected clip
+    var selectedClipEndSeconds: Double? {
+        guard let s = selectedClipStartSeconds,
+              let d = selectedClipDurationSeconds else { return nil }
+        return s + d
     }
 }
 
