@@ -107,6 +107,7 @@ struct CapcutEditorView: View {
             AnalyticsManager.shared.logEvent("capcut_editor_opened", parameters: [
                 "url_last_path": url.lastPathComponent
             ])
+            configureAudioSessionForPreview()
             state.preparePlayer()
         }
         .sheet(isPresented: $showTextPanel) { TextToolPanel(state: state, canvasRect: canvasRect) }
@@ -118,6 +119,10 @@ struct CapcutEditorView: View {
                 .default(Text("1:1")) { state.renderConfig.aspect = .oneByOne },
                 .cancel()
             ])
+        }
+        .onDisappear {
+            // Deactivate playback session if it was activated for preview
+            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         }
     }
 
@@ -162,6 +167,17 @@ struct CapcutEditorView: View {
             }
             let av = UIActivityViewController(activityItems: [out], applicationActivities: nil)
             UIApplication.shared.topMostViewController()?.present(av, animated: true)
+        }
+    }
+
+    // MARK: - Audio session for preview
+    private func configureAudioSessionForPreview() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .moviePlayback, options: [])
+            try session.setActive(true)
+        } catch {
+            print("[Editor] Audio session error: \(error)")
         }
     }
 }
