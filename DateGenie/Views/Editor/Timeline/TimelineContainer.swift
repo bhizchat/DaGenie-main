@@ -124,6 +124,8 @@ struct TimelineContainer: View {
                                 .clipped()
                         }
                     }
+                    .frame(width: clipWidth, height: TimelineStyle.videoRowHeight, alignment: .leading)
+                    .clipped()
                     // Blue bottom bar to match CapCut visual
                     if state.selectedClipId == clip.id {
                         Rectangle()
@@ -132,6 +134,7 @@ struct TimelineContainer: View {
                             .offset(y: (TimelineStyle.videoRowHeight / 2) - 1)
                     }
                 }
+                .frame(width: clipWidth, height: TimelineStyle.videoRowHeight, alignment: .leading)
                 // Per-clip handle overlays removed; handled by global overlay for accurate placement
                 .contentShape(Rectangle())
                 .zIndex(state.selectedClipId == clip.id ? 100 : 0)
@@ -304,7 +307,8 @@ struct TimelineContainer: View {
                                 ScrollViewBridge(targetX: contentOffsetX) { x, isTracking, isDragging, isDecel in
                                     observedOffsetX = x
                                     let center = geo.size.width / 2
-                                    let t = (x + center) / max(1, state.pixelsPerSecond)
+                                    let leadingInset = max(0, center + leftGap)
+                                    let t = (x - leadingInset + center) / max(1, state.pixelsPerSecond)
                                     state.seek(to: CMTime(seconds: Double(t), preferredTimescale: 600), precise: true)
                                 }
                             )
@@ -323,9 +327,10 @@ struct TimelineContainer: View {
                            e > s {
                             let pps = state.pixelsPerSecond
                             let center = geo.size.width / 2
-                            // Use the observed ScrollView offset so overlay matches actual content movement
-                            let startX = center + CGFloat(s) * pps - observedOffsetX
-                            let endX   = center + CGFloat(e) * pps - observedOffsetX
+                            let leadingInset = max(0, center + leftGap)
+                            // Use the observed ScrollView offset and include leading inset used by rows
+                            let startX = leadingInset + CGFloat(s) * pps - observedOffsetX
+                            let endX   = leadingInset + CGFloat(e) * pps - observedOffsetX
                             let selW   = endX - startX
 
                             Group {
@@ -475,7 +480,8 @@ struct TimelineContainer: View {
             .onChange(of: state.currentTime) { _ in
                 guard !state.isScrubbing else { return }
                 let center = geo.size.width / 2
-                let target = CGFloat(seconds(state.currentTime)) * state.pixelsPerSecond - center
+                let leadingInset = max(0, center + leftGap)
+                let target = leadingInset + CGFloat(seconds(state.currentTime)) * state.pixelsPerSecond - center
                 contentOffsetX = max(0, target)
             }
             .onAppear {
@@ -546,8 +552,9 @@ struct TimelineContainer: View {
 
     private func rulerOverlay(width: CGFloat, center: CGFloat) -> some View {
         let step: Double = 1.0
-        let visibleStart = max(0.0, (observedOffsetX / state.pixelsPerSecond))
-        let visibleEnd = max(visibleStart, (observedOffsetX + width) / state.pixelsPerSecond)
+        let leadingInset = max(0, center + leftGap)
+        let visibleStart = max(0.0, ((observedOffsetX - leadingInset) / state.pixelsPerSecond))
+        let visibleEnd = max(visibleStart, ((observedOffsetX - leadingInset + width) / state.pixelsPerSecond))
         let start = Int(floor(visibleStart / step))
         let end = Int(ceil(visibleEnd / step))
         let majorTickHeight: CGFloat = 12
@@ -555,7 +562,7 @@ struct TimelineContainer: View {
         return ZStack(alignment: .topLeading) {
             ForEach(start...end, id: \.self) { idx in
                 let sec = Double(idx) * step
-                let x = center + CGFloat(sec) * state.pixelsPerSecond - observedOffsetX
+                let x = leadingInset + CGFloat(sec) * state.pixelsPerSecond - observedOffsetX
                 if idx % 2 == 0 {
                     // Even seconds: full label (no tick)
                     Text(mmss(sec))
