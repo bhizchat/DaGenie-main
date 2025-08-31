@@ -24,10 +24,14 @@ struct ScrollViewBridge: UIViewRepresentable {
             if currentInsets.left != inset || currentInsets.right != inset {
                 scrollView.contentInset = UIEdgeInsets(top: 0, left: inset, bottom: 0, right: inset)
             }
+            // Configure scroll physics to reduce edge friction and avoid auto insets
+            scrollView.contentInsetAdjustmentBehavior = .never
+            scrollView.decelerationRate = .fast
             if let x = targetX {
                 if !(scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) {
-                    let maxX = max(-scrollView.contentInset.left, scrollView.contentSize.width - scrollView.bounds.width + scrollView.contentInset.right)
-                    let clamped = max(0, min(x, maxX))
+                    let minX = -scrollView.contentInset.left
+                    let maxX = scrollView.contentSize.width - scrollView.bounds.width + scrollView.contentInset.right
+                    let clamped = min(max(x, minX), maxX)
                     if scrollView.contentOffset.x != clamped {
                         scrollView.setContentOffset(CGPoint(x: clamped, y: 0), animated: false)
                     }

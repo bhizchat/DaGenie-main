@@ -308,9 +308,13 @@ struct TimelineContainer: View {
                                     observedOffsetX = x
                                     let center = geo.size.width / 2
                                     let leadingInset = max(0, center + leftGap)
-                                    // Keep time under the playhead (center) equal to x mapped through leading inset
-                                    let t = (x - leadingInset + center) / max(1, state.pixelsPerSecond)
-                                    state.seek(to: CMTime(seconds: Double(t), preferredTimescale: 600), precise: true)
+                                    // Map scroll -> time only when the user is interacting
+                                    if (isTracking || isDragging || isDecel) {
+                                        let raw = (x - leadingInset + center) / max(1, state.pixelsPerSecond)
+                                        let dur = max(0.0, CMTimeGetSeconds(state.totalDuration))
+                                        let t = max(0.0, min(Double(raw), dur))
+                                        state.seek(to: CMTime(seconds: t, preferredTimescale: 600), precise: false)
+                                    }
                                 }
                             )
                         }
