@@ -304,7 +304,9 @@ enum VideoOverlayExporter {
             if let aSrc = aAsset.tracks(withMediaType: .audio).first,
                let aDst = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 do {
-                    try aDst.insertTimeRange(CMTimeRange(start: .zero, duration: min(aAsset.duration, asset.duration)), of: aSrc, at: t.start)
+                    let maxDur = max(.zero, asset.duration - t.start)
+                    let dur = min(aAsset.duration, t.duration, maxDur)
+                    try aDst.insertTimeRange(CMTimeRange(start: .zero, duration: dur), of: aSrc, at: t.start)
                     let p = AVMutableAudioMixInputParameters(track: aDst)
                     p.setVolume(t.volume, at: .zero)
                     mixParams.append(p)

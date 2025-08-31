@@ -24,50 +24,186 @@ struct TimelineContainer: View {
     // Config
     private let minPPS: CGFloat = 20
     private let maxPPS: CGFloat = 300
+    // Horizontal fine-tune so the first thumbnail sits relative to the playhead
+    private let leftGap: CGFloat = -53.0
+    // Horizontal nudge for empty-lane placeholders ("+ Add audio/text") to move the entire strip
+    private let lanePlaceholderShiftX: CGFloat = 50
 
+    private var headerOffsetY: CGFloat {
+        -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
+    }
+
+    // Extend playhead to span video + all timeline lanes below
+    private var playheadHeight: CGFloat {
+        let lanesCount: CGFloat = hasClip ? 2 : 0 // extra audio, text visible only when clips exist
+        let stackedRows = TimelineStyle.videoRowHeight
+            + lanesCount * TimelineStyle.laneRowHeight
+            + lanesCount * TimelineStyle.rowSpacing
+        return rulerHeight + spacingAboveStrip + stackedRows + extraPlayheadExtension
+    }
+
+    private var hasClip: Bool {
+        !state.clips.isEmpty && CMTimeGetSeconds(state.totalDuration) > 0
+    }
+
+    // Centralized vertical anchors so both states (no-clip/has-clip) align consistently
+    private var rowsBaseY: CGFloat { -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 }
+    private var filmstripCenterY: CGFloat { rowsBaseY + (TimelineStyle.videoRowHeight / 2) }
+    private var noClipButtonDelta: CGFloat { hasClip ? 0 : 120 }
+    private var clipButtonDelta: CGFloat { hasClip ? 80 : 0 }
+    private var audioButtonCenterY: CGFloat { (filmstripCenterY - 26) + noClipButtonDelta + clipButtonDelta - 15 }
+    private var textButtonCenterY: CGFloat { (filmstripCenterY + 26) + noClipButtonDelta + clipButtonDelta - 15 }
+
+    // MARK: - Rows (split out for compiler)
+    @ViewBuilder private func videoRow(_ geo: GeometryProxy) -> some View {
+        HStack(spacing: 0) {
+            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+            Color.clear.frame(width: leadingInset, height: TimelineStyle.videoRowHeight)
+            ForEach(Array(state.clips.enumerated()), id: \.element.id) { _, clip in
+                let clipWidth = CGFloat(max(0, CMTimeGetSeconds(clip.duration))) * state.pixelsPerSecond
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.gray.opacity(0.15))
+                        .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(state.selectedClipId == clip.id ? Color.accentColor : Color.clear, lineWidth: 2)
+                        )
+                    HStack(spacing: 0) {
+                        let count = max(1, clip.thumbnails.count)
+                        ForEach(0..<count, id: \.self) { i in
+                            let img = i < clip.thumbnails.count ? clip.thumbnails[i] : UIImage()
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: max(24, state.pixelsPerSecond), height: TimelineStyle.videoRowHeight)
+                                .clipped()
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { state.selectedClipId = clip.id }
+            }
+        }
+        .frame(height: TimelineStyle.videoRowHeight)
+    }
+
+    // Removed: originalAudioRow — original audio should not display as a waveform lane.
+
+    @ViewBuilder private func extraAudioRow(_ geo: GeometryProxy) -> some View {
+        HStack(spacing: 0) {
+            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+            // Nudge start to align exactly with the playhead line, then shift placeholder strip right
+            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX, height: TimelineStyle.laneRowHeight)
+            let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
+            if state.audioTracks.isEmpty {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.18))
+                    .frame(width: max(max(200, totalWidth), geo.size.width - leadingInset - 24), height: TimelineStyle.laneRowHeight)
+                    .overlay(
+                        HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                            .padding(.horizontal, 12)
+                            .padding(.leading, 0)
+                    )
+            } else {
+                // Hide the "+ Add audio" placeholder; show user-added audio items only
+                ForEach(Array(state.audioTracks.enumerated()), id: \.element.id) { _, t in
+                    let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
+                    let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
+                    Color.clear.frame(width: startX)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.green.opacity(0.25))
+                        .frame(width: width, height: TimelineStyle.laneRowHeight)
+                }
+            }
+        }
+        .frame(height: TimelineStyle.laneRowHeight)
+        .overlay(alignment: .topLeading) {
+            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+            Button(action: { onAddAudio?() }) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image("quaver")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 16, height: 16)
+                            .foregroundColor(.black)
+                    )
+            }
+            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 60, y: (TimelineStyle.laneRowHeight - 34) / 2)
+            .zIndex(3)
+        }
+    }
+
+    @ViewBuilder private func textRow(_ geo: GeometryProxy) -> some View {
+        HStack(spacing: 0) {
+            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+            // Nudge start to align exactly with the playhead line, then shift placeholder strip right
+            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX, height: TimelineStyle.laneRowHeight)
+            let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
+            if state.textOverlays.isEmpty {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.gray.opacity(0.18))
+                    .frame(width: max(max(200, totalWidth), geo.size.width - leadingInset - 24), height: TimelineStyle.laneRowHeight)
+                    .overlay(
+                        HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                            .padding(.horizontal, 12)
+                            .padding(.leading, 0)
+                    )
+            } else {
+                ForEach(state.textOverlays, id: \.id) { t in
+                    let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.blue.opacity(0.2))
+                        .overlay(Text(t.base.string).font(.system(size: 11, weight: .semibold)).foregroundColor(.white).padding(4), alignment: .leading)
+                        .frame(width: width, height: TimelineStyle.laneRowHeight)
+                }
+            }
+        }
+        .frame(height: TimelineStyle.laneRowHeight)
+        .overlay(alignment: .topLeading) {
+            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+            Button(action: { onAddText?() }) {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image("letter-t")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 15, height: 15)
+                            .foregroundColor(.black)
+                    )
+            }
+            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 60, y: (TimelineStyle.laneRowHeight - 34) / 2)
+            .zIndex(3)
+        }
+    }
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottom) {
-                // Stack ruler above filmstrip with a small gap
+                // Stack ruler above lanes with a small gap
                 VStack(spacing: spacingAboveStrip) {
                     // Ruler overlay (seconds ticks) in header
                     rulerOverlay(width: geo.size.width, center: geo.size.width / 2)
                         .frame(height: rulerHeight)
                         .offset(y: -105) // raise ruler vertically by ~105pt total
 
-                    // Filmstrip scroll area (multi-clip)
+                    // Shared horizontal scroller containing stacked rows. Keep header/ruler in original position (no extra offset here)
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 0) {
-                            // Leading inset so 0s aligns near the fixed playhead line.
-                            // Move an additional 20pt left: previous -28pt -> -48pt
-                            let leftGap: CGFloat = -48
-                            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-                            Color.clear.frame(width: leadingInset, height: stripHeight)
-                            // Render each clip as a contiguous strip of its thumbnails
-                            ForEach(Array(state.clips.enumerated()), id: \.element.id) { _, clip in
-                                let clipWidth = CGFloat(max(0, CMTimeGetSeconds(clip.duration))) * state.pixelsPerSecond
-                                ZStack(alignment: .leading) {
-                                    Rectangle().fill(Color.gray.opacity(0.15))
-                                        .frame(width: clipWidth, height: stripHeight)
-                                    HStack(spacing: 0) {
-                                        let count = max(1, clip.thumbnails.count)
-                                        ForEach(0..<count, id: \.self) { i in
-                                            let img = i < clip.thumbnails.count ? clip.thumbnails[i] : UIImage()
-                                            Image(uiImage: img)
-                                                .resizable()
-                                                .scaledToFill()
-                                                .frame(width: max(24, state.pixelsPerSecond), height: stripHeight)
-                                                .clipped()
-                                        }
-                                    }
-                                }
+                        VStack(spacing: TimelineStyle.rowSpacing) {
+                            videoRow(geo)
+                            if hasClip {
+                                extraAudioRow(geo)
+                                textRow(geo)
                             }
                         }
                     }
-                    .frame(height: stripHeight)
-                    .contentOffset(x: contentOffsetX + dragDX) // via extension below
+                    .contentOffset(x: contentOffsetX + dragDX)
                     .gesture(dragGesture(geo: geo))
-                    // Move filmstrip into the top lane, flush with the playhead line, plus an extra 50pt upwards as requested
+                    // Align stacked rows with playhead like before. Keep same vertical offset as previous single-row timeline
                     .offset(y: -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50)
                     .zIndex(0)
 
@@ -76,7 +212,7 @@ struct TimelineContainer: View {
                 // Centered playhead line spanning ruler + gap + strip
                 Rectangle()
                     .fill(Color.white)
-                    .frame(width: 2, height: stripHeight + spacingAboveStrip + rulerHeight + extraPlayheadExtension)
+                    .frame(width: 2, height: playheadHeight)
 
                 // Timecode HUD during scrubbing
                 if state.isScrubbing {
@@ -92,69 +228,51 @@ struct TimelineContainer: View {
                     .transition(.opacity)
                 }
             }
-            // Fixed left time counter (mm:ss / mm:ss) anchored to top-left of the timeline container
-            .overlay(alignment: .topLeading) {
-                Text("\(mmss(seconds(state.currentTime))) / \(mmss(seconds(state.duration)))")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.9))
-                    .padding(.leading, 12)
-                    .padding(.top, 6)
-            }
-            // "+ Add ending" pill positioned immediately after the end of the thumbnails
+            // Audio quick button (aligned by centralized anchors)
             .overlay(alignment: .center) {
-                // Width tied to ~2 seconds of timeline so it ends around ~2s when empty
-                let pillWidth: CGFloat = max(110, state.pixelsPerSecond * 2 - 8)
-                let totalSeconds = max(0, CMTimeGetSeconds(state.totalDuration))
-                // Align to end of filmstrip accounting for the leading inset (center-playhead)
-                let leftGap: CGFloat = -28
-                let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-                let pillX = leadingInset + (state.pixelsPerSecond * CGFloat(totalSeconds)) - contentOffsetX + (pillWidth / 2)
-                Button(action: { onAddEnding?() }) {
+                if !hasClip {
+                Button(action: { onAddAudio?() }) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
-                        .frame(width: pillWidth, height: 48)
+                        .frame(width: 34, height: 34)
                         .overlay(
-                            Text("+ Add ending")
-                                .font(.system(size: 14, weight: .semibold))
+                            Image("quaver")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 16, height: 16)
                                 .foregroundColor(.black)
                         )
                 }
-                // Horizontally placed at the end of the filmstrip; vertically in the top lane
-                .offset(x: pillX, y: -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10)
-            }
-            // Audio/Text stacked buttons to the left of playhead
-            .overlay(alignment: .center) {
-                VStack(spacing: 10) {
-                    Button(action: { onAddAudio?() }) {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
-                            .frame(width: 34, height: 34)
-                            .overlay(
-                                Image("quaver")
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 16, height: 16)
-                                    .foregroundColor(.black)
-                            )
-                    }
-                    Button(action: { onAddText?() }) {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
-                            .frame(width: 34, height: 34)
-                            .overlay(
-                                Image("letter-t")
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 15, height: 15)
-                                    .foregroundColor(.black)
-                            )
-                    }
+                .offset(x: -60 - (contentOffsetX + dragDX), y: audioButtonCenterY)
+                .zIndex(3)
                 }
-                .offset(x: -70, y: -((stripHeight + spacingAboveStrip + rulerHeight)/2) + 60)
             }
-            // Plus button under 00:03 tick (scrolls with timeline)
+            // Text quick button (aligned by centralized anchors)
             .overlay(alignment: .center) {
+                if !hasClip {
+                Button(action: { onAddText?() }) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
+                        .frame(width: 34, height: 34)
+                        .overlay(
+                            Image("letter-t")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 15, height: 15)
+                                .foregroundColor(.black)
+                        )
+                }
+                .offset(x: -60 - (contentOffsetX + dragDX), y: textButtonCenterY)
+                .zIndex(3)
+                }
+            }
+            // Plus button aligned with filmstrip lane center; scrolls with timeline
+            .overlay(alignment: .center) {
+                // In a center-aligned overlay, 0 is the screen center. Offset by seconds*pixelsPerSecond, minus current scroll.
                 let plusX: CGFloat = (state.pixelsPerSecond * 3) - contentOffsetX
+                // Vertically center on the video (filmstrip) row; when there is no clip, nudge the plus 20pt lower
+                let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
+                let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20)
                 PhotosPicker(selection: $selectedVideoItem, matching: .videos, photoLibrary: .shared()) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
@@ -167,8 +285,17 @@ struct TimelineContainer: View {
                                 .foregroundColor(.black)
                         )
                 }
-                .offset(x: plusX, y: -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10)
+                .offset(x: plusX, y: plusY)
                 .zIndex(1)
+            }
+            // Fixed left time counter (mm:ss / mm:ss) drawn last to sit above everything
+            .overlay(alignment: .topLeading) {
+                Text("\(mmss(seconds(state.currentTime))) / \(mmss(seconds(state.duration)))")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                    .padding(.leading, 12)
+                    .padding(.top, 6)
+                    .zIndex(100)
             }
             .onChange(of: selectedVideoItem) { _ in
                 Task { await handlePickedVideo() }
@@ -176,8 +303,9 @@ struct TimelineContainer: View {
             .onChange(of: state.currentTime) { _ in
                 guard !state.isScrubbing else { return }
                 let center = geo.size.width / 2
+                // Keep filmstrip centered on the playhead using the same mapping as drag
                 let target = CGFloat(seconds(state.currentTime)) * state.pixelsPerSecond - center
-                withAnimation(.linear(duration: 0.1)) {
+                withAnimation(.linear(duration: 0.08)) {
                     contentOffsetX = max(0, target)
                 }
             }
