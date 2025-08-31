@@ -288,7 +288,9 @@ final class EditorState: ObservableObject {
         let clip = clips[index]
         let total = CMTimeGetSeconds(clip.duration)
         guard total.isFinite && total > 0 else { return }
-        let count = max(4, min(18, Int(ceil(total))))
+        // Derive density from current pixelsPerSecond; cap for perf
+        let density = max(4, min(80, Int(ceil(self.pixelsPerSecond / 12))))
+        let count = max(4, min(18 * density / 5, Int(ceil(total)) * density))
         let times: [CMTime] = (0..<count).map { i in
             let t = Double(i) / Double(max(count-1, 1)) * total
             return CMTime(seconds: t, preferredTimescale: 600)
@@ -308,6 +310,7 @@ final class EditorState: ObservableObject {
                 if self.clips.indices.contains(index) {
                     self.clips[index].thumbnails = images
                     self.clips[index].thumbnailTimes = times
+                    self.clips[index].thumbnailPPS = self.pixelsPerSecond
                 }
             }
         }
@@ -319,6 +322,13 @@ final class EditorState: ObservableObject {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self = self else { return }
             self.currentTime = time
+            // If zoom level changed significantly, regenerate thumbnails for fidelity
+            for idx in self.clips.indices {
+                let prev = self.clips[idx].thumbnailPPS
+                if abs(prev - self.pixelsPerSecond) > 12 {
+                    Task { await self.generateThumbnails(forClipAt: idx) }
+                }
+            }
         }
     }
 

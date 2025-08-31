@@ -15,6 +15,7 @@ struct TimelineContainer: View {
     @State private var contentOffsetX: CGFloat = 0
     @GestureState private var dragDX: CGFloat = 0
     @GestureState private var pinchScale: CGFloat = 1.0
+    @State private var didTapClip: Bool = false
     // Timeline dimensions
     private let stripHeight: CGFloat = 72       // filmstrip height
     private let rulerHeight: CGFloat = 32       // header/ruler height above filmstrip
@@ -54,20 +55,33 @@ struct TimelineContainer: View {
     private var audioButtonCenterY: CGFloat { (filmstripCenterY - 26) + noClipButtonDelta + clipButtonDelta - 15 }
     private var textButtonCenterY: CGFloat { (filmstripCenterY + 26) + noClipButtonDelta + clipButtonDelta - 15 }
 
+    
+
     // MARK: - Rows (split out for compiler)
     @ViewBuilder private func videoRow(_ geo: GeometryProxy) -> some View {
         HStack(spacing: 0) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+            let trailingInset = max(0, (geo.size.width / 2) - leftGap) // mirror so end can center under playhead
             Color.clear.frame(width: leadingInset, height: TimelineStyle.videoRowHeight)
             ForEach(Array(state.clips.enumerated()), id: \.element.id) { _, clip in
                 let clipWidth = CGFloat(max(0, CMTimeGetSeconds(clip.duration))) * state.pixelsPerSecond
                 ZStack(alignment: .leading) {
+                    // CapCut-style selection cell behind the entire clip
+                    if state.selectedClipId == clip.id {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white)
+                            .frame(width: clipWidth + 16, height: TimelineStyle.videoRowHeight + 12)
+                            .offset(x: -8, y: -6)
+                            .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+                            .zIndex(-1)
+                    }
                     Rectangle()
                         .fill(Color.gray.opacity(0.15))
                         .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 2)
-                                .stroke(state.selectedClipId == clip.id ? Color.accentColor : Color.clear, lineWidth: 2)
+                            // Keep stroke off; selection is represented by the white cell + bottom bar
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.clear, lineWidth: 0)
                         )
                     HStack(spacing: 0) {
                         let count = max(1, clip.thumbnails.count)
@@ -80,10 +94,26 @@ struct TimelineContainer: View {
                                 .clipped()
                         }
                     }
+                    // Blue bottom bar to match CapCut visual
+                    if state.selectedClipId == clip.id {
+                        Rectangle()
+                            .fill(Color.blue)
+                            .frame(width: clipWidth, height: 2)
+                            .offset(y: (TimelineStyle.videoRowHeight / 2) - 1)
+                    }
                 }
                 .contentShape(Rectangle())
-                .onTapGesture { state.selectedClipId = clip.id }
+                .highPriorityGesture(
+                    TapGesture().onEnded {
+                        let wasSelected = (state.selectedClipId == clip.id)
+                        state.selectedClipId = wasSelected ? nil : clip.id
+                        didTapClip = true
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
+                )
             }
+            // trailing spacer so the last frame can scroll until centered on the playhead
+            Color.clear.frame(width: trailingInset, height: TimelineStyle.videoRowHeight)
         }
         .frame(height: TimelineStyle.videoRowHeight)
     }
@@ -93,8 +123,9 @@ struct TimelineContainer: View {
     @ViewBuilder private func extraAudioRow(_ geo: GeometryProxy) -> some View {
         HStack(spacing: 0) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-            // Nudge start to align exactly with the playhead line, then shift placeholder strip right
-            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX, height: TimelineStyle.laneRowHeight)
+            let trailingInset = max(0, (geo.size.width / 2) - leftGap)
+            // Nudge start and shift entire lane ~400pt left (affects placeholder and items)
+            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.audioTracks.isEmpty {
                 RoundedRectangle(cornerRadius: 4)
@@ -116,8 +147,11 @@ struct TimelineContainer: View {
                         .frame(width: width, height: TimelineStyle.laneRowHeight)
                 }
             }
+            // trailing inset so the last lane content can center under the playhead
+            Color.clear.frame(width: trailingInset, height: TimelineStyle.laneRowHeight)
         }
         .frame(height: TimelineStyle.laneRowHeight)
+        .offset(x: -200)
         .overlay(alignment: .topLeading) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
             Button(action: { onAddAudio?() }) {
@@ -132,7 +166,8 @@ struct TimelineContainer: View {
                             .foregroundColor(.black)
                     )
             }
-            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 60, y: (TimelineStyle.laneRowHeight - 34) / 2)
+            // Move an additional ~100pt left from previous placement (total ~400pt)
+            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 460, y: (TimelineStyle.laneRowHeight - 34) / 2)
             .zIndex(3)
         }
     }
@@ -140,8 +175,9 @@ struct TimelineContainer: View {
     @ViewBuilder private func textRow(_ geo: GeometryProxy) -> some View {
         HStack(spacing: 0) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-            // Nudge start to align exactly with the playhead line, then shift placeholder strip right
-            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX, height: TimelineStyle.laneRowHeight)
+            let trailingInset = max(0, (geo.size.width / 2) - leftGap)
+            // Nudge start and shift entire lane ~400pt left (affects placeholder and items)
+            Color.clear.frame(width: leadingInset + 2 + lanePlaceholderShiftX - 400, height: TimelineStyle.laneRowHeight)
             let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
             if state.textOverlays.isEmpty {
                 RoundedRectangle(cornerRadius: 4)
@@ -161,8 +197,11 @@ struct TimelineContainer: View {
                         .frame(width: width, height: TimelineStyle.laneRowHeight)
                 }
             }
+            // trailing inset so the last lane content can center under the playhead
+            Color.clear.frame(width: trailingInset, height: TimelineStyle.laneRowHeight)
         }
         .frame(height: TimelineStyle.laneRowHeight)
+        .offset(x: -200)
         .overlay(alignment: .topLeading) {
             let leadingInset = max(0, (geo.size.width / 2) + leftGap)
             Button(action: { onAddText?() }) {
@@ -177,7 +216,8 @@ struct TimelineContainer: View {
                             .foregroundColor(.black)
                     )
             }
-            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 60, y: (TimelineStyle.laneRowHeight - 34) / 2)
+            // Move an additional ~100pt left from previous placement (total ~400pt)
+            .offset(x: leadingInset + 2 + lanePlaceholderShiftX - 460, y: (TimelineStyle.laneRowHeight - 34) / 2)
             .zIndex(3)
         }
     }
@@ -203,6 +243,12 @@ struct TimelineContainer: View {
                     }
                     .contentOffset(x: contentOffsetX + dragDX)
                     .gesture(dragGesture(geo: geo))
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            if !didTapClip { state.selectedClipId = nil }
+                            didTapClip = false
+                        }
+                    )
                     // Align stacked rows with playhead like before. Keep same vertical offset as previous single-row timeline
                     .offset(y: -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50)
                     .zIndex(0)
@@ -228,6 +274,7 @@ struct TimelineContainer: View {
                     .transition(.opacity)
                 }
             }
+            
             // Audio quick button (aligned by centralized anchors)
             .overlay(alignment: .center) {
                 if !hasClip {
@@ -243,7 +290,7 @@ struct TimelineContainer: View {
                                 .foregroundColor(.black)
                         )
                 }
-                .offset(x: -60 - (contentOffsetX + dragDX), y: audioButtonCenterY)
+                .offset(x: -60, y: audioButtonCenterY)
                 .zIndex(3)
                 }
             }
@@ -262,14 +309,14 @@ struct TimelineContainer: View {
                                 .foregroundColor(.black)
                         )
                 }
-                .offset(x: -60 - (contentOffsetX + dragDX), y: textButtonCenterY)
+                .offset(x: -60, y: textButtonCenterY)
                 .zIndex(3)
                 }
             }
             // Plus button aligned with filmstrip lane center; scrolls with timeline
             .overlay(alignment: .center) {
                 // In a center-aligned overlay, 0 is the screen center. Offset by seconds*pixelsPerSecond, minus current scroll.
-                let plusX: CGFloat = (state.pixelsPerSecond * 3) - contentOffsetX
+                let plusX: CGFloat = (state.pixelsPerSecond * 3) - (contentOffsetX + dragDX)
                 // Vertically center on the video (filmstrip) row; when there is no clip, nudge the plus 20pt lower
                 let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
                 let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20)
