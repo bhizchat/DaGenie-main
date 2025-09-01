@@ -116,6 +116,10 @@ struct CapcutEditorView: View {
             configureAudioSessionForPreview()
             state.preparePlayer()
         }
+        // Open Edit toolbar if any selection event requests it (e.g., selecting a text strip)
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenEditToolbarForSelection"))) { _ in
+            withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+        }
         // Device audio file importer
         .fileImporter(isPresented: $showAudioImporter,
                       allowedContentTypes: [.audio],
@@ -127,19 +131,25 @@ struct CapcutEditorView: View {
                 print("[AudioImport] error: \(err.localizedDescription)")
             }
         }
-        // Auto-open Edit toolbar when a video clip is selected
+        // Auto-open/close Edit toolbar when selections change
         .onChange(of: state.selectedClipId) { newValue in
             if newValue != nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
-            } else if state.selectedAudioId == nil {
+            } else if state.selectedAudioId == nil && state.selectedTextId == nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
             }
         }
-        // Auto-open Edit toolbar when an audio strip is selected
         .onChange(of: state.selectedAudioId) { newValue in
             if newValue != nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
-            } else if state.selectedClipId == nil {
+            } else if state.selectedClipId == nil && state.selectedTextId == nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+            }
+        }
+        .onChange(of: state.selectedTextId) { newValue in
+            if newValue != nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+            } else if state.selectedClipId == nil && state.selectedAudioId == nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
             }
         }

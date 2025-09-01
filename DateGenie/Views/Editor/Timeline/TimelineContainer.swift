@@ -163,7 +163,10 @@ struct TimelineContainer: View {
                     TapGesture().onEnded {
                         let wasSelected = (state.selectedClipId == clip.id)
                         state.selectedClipId = wasSelected ? nil : clip.id
-                        if !wasSelected { state.selectedAudioId = nil }
+                        if !wasSelected {
+                            state.selectedAudioId = nil
+                            state.selectedTextId = nil
+                        }
                         didTapClip = true
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     }
@@ -239,7 +242,10 @@ struct TimelineContainer: View {
                                 TapGesture().onEnded {
                                     let was = (state.selectedAudioId == t.id)
                                     state.selectedAudioId = was ? nil : t.id
-                                    if !was { state.selectedClipId = nil }
+                                    if !was {
+                                        state.selectedClipId = nil
+                                        state.selectedTextId = nil
+                                    }
                                     didTapClip = true
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 }
@@ -329,7 +335,50 @@ struct TimelineContainer: View {
                                 .fill(Color.blue.opacity(0.2))
                                 .overlay(Text(t.base.string).font(.system(size: 11, weight: .semibold)).foregroundColor(.white).padding(4), alignment: .leading)
                                 .frame(width: width, height: TimelineStyle.laneRowHeight)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(state.selectedTextId == t.id ? Color.white : Color.clear, lineWidth: 2)
+                                )
                                 .offset(x: startX)
+                                .contentShape(Rectangle())
+                                .highPriorityGesture(
+                                    TapGesture().onEnded {
+                                        let was = (state.selectedTextId == t.id)
+                                        state.selectedTextId = was ? nil : t.id
+                                        if !was {
+                                            state.selectedClipId = nil
+                                            state.selectedAudioId = nil
+                                        }
+                                        didTapClip = true
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                        // Open Edit toolbar when selecting a text strip
+                                        DispatchQueue.main.async {
+                                            NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
+                                        }
+                                    }
+                                )
+                                .gesture(
+                                    LongPressGesture(minimumDuration: 0.25)
+                                        .sequenced(before: DragGesture(minimumDistance: 1))
+                                        .onChanged { value in
+                                            switch value {
+                                            case .first(true):
+                                                // no-op; keep consistent with audio strip UX
+                                                break
+                                            case .second(true, let drag?):
+                                                let delta = Double(drag.translation.width / max(1, state.pixelsPerSecond))
+                                                let newStart = max(0, CMTimeGetSeconds(t.start) + delta)
+                                                if let idx = state.textOverlays.firstIndex(where: { $0.id == t.id }) {
+                                                    let durS = max(0, CMTimeGetSeconds(state.textOverlays[idx].duration))
+                                                    let totalS = max(0, CMTimeGetSeconds(state.totalDuration))
+                                                    let clamped = min(max(0, newStart), max(0, totalS - durS))
+                                                    state.textOverlays[idx].start = CMTime(seconds: clamped, preferredTimescale: 600)
+                                                }
+                                            default:
+                                                break
+                                            }
+                                        }
+                                )
                         }
                     }
                 }
@@ -399,6 +448,7 @@ struct TimelineContainer: View {
                                 if !didTapClip {
                                     state.selectedClipId = nil
                                     state.selectedAudioId = nil
+                                    state.selectedTextId = nil
                                 }
                                 didTapClip = false
                             }

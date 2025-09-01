@@ -4,6 +4,7 @@ struct EditToolsBarItem: View {
     let assetName: String
     let title: String
     let action: () -> Void
+    var isEnabled: Bool = true
 
     var body: some View {
         Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); action() }) {
@@ -30,6 +31,8 @@ struct EditToolsBarItem: View {
             .padding(.horizontal, 2)
         }
         .buttonStyle(.plain)
+        .opacity(isEnabled ? 1.0 : 0.35)
+        .disabled(!isEnabled)
     }
 }
 
