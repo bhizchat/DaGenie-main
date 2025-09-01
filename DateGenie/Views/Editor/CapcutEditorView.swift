@@ -171,7 +171,8 @@ struct CapcutEditorView: View {
             do {
                 if FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.removeItem(at: dest) }
                 try FileManager.default.copyItem(at: src, to: dest)
-                await state.addAudio(url: dest, at: start, volume: 1.0)
+                let displayLabel = preferredDisplayNameForAudio(at: src)
+                await state.addAudio(url: dest, at: start, volume: 1.0, displayName: displayLabel)
                 // Rebuild composition to include newly added audio for preview
                 await state.rebuildCompositionForPreview()
             } catch {
@@ -192,6 +193,25 @@ struct CapcutEditorView: View {
             return String(format: "%02d:%02d", m, s)
         }
         return fmt(t) + " / " + fmt(duration)
+    }
+
+    // Preferred label for an audio source: AV metadata Title -> Files name -> basename
+    private func preferredDisplayNameForAudio(at src: URL) -> String {
+        let asset = AVURLAsset(url: src)
+        if let titleItem = AVMetadataItem.metadataItems(
+            from: asset.commonMetadata,
+            withKey: AVMetadataKey.commonKeyTitle,
+            keySpace: .common
+        ).first,
+           let title = titleItem.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        if let values = try? src.resourceValues(forKeys: [.localizedNameKey, .nameKey]),
+           let name = (values.localizedName ?? values.name), !name.isEmpty {
+            return (name as NSString).deletingPathExtension
+        }
+        return src.deletingPathExtension().lastPathComponent
     }
 
     private func safeTopInset() -> CGFloat {
@@ -467,10 +487,14 @@ final class EditorState: ObservableObject {
 
     // Convenience for adding an external audio track (duration probed automatically)
     @MainActor
-    func addAudio(url: URL, at start: CMTime, volume: Float = 1.0) async {
+    func addAudio(url: URL, at start: CMTime, volume: Float = 1.0, displayName: String? = nil) async {
         let aAsset = AVURLAsset(url: url)
         let dur = aAsset.duration
-        let track = AudioTrack(url: url, start: start, duration: dur, volume: volume)
+        // Load or generate waveform samples off-main; then update model on main
+        let samples = await WaveformGenerator.loadOrGenerate(for: aAsset)
+        var track = AudioTrack(url: url, start: start, duration: dur, volume: volume)
+        track.waveformSamples = samples
+        track.titleOverride = displayName
         audioTracks.append(track)
     }
 

@@ -208,48 +208,65 @@ struct TimelineContainer: View {
                             let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
                             let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
 
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.purple.opacity(0.30))
-                                .frame(width: width, height: TimelineStyle.laneRowHeight)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(state.selectedAudioId == t.id ? Color.white : Color.clear, lineWidth: 2)
-                                )
-                                .offset(x: startX)
-                                .contentShape(Rectangle())
-                                .highPriorityGesture(
-                                    TapGesture().onEnded {
-                                        let was = (state.selectedAudioId == t.id)
-                                        state.selectedAudioId = was ? nil : t.id
-                                        if !was { state.selectedClipId = nil }
-                                        didTapClip = true
-                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    }
-                                )
-                                .gesture(
-                                    LongPressGesture(minimumDuration: 0.25)
-                                        .sequenced(before: DragGesture(minimumDistance: 1))
-                                        .onChanged { value in
-                                            switch value {
-                                            case .first(true):
-                                                // long-press started, set initial drag state
-                                                if draggingAudioId != t.id {
-                                                    draggingAudioId = t.id
-                                                    audioDragStartSeconds = max(0, CMTimeGetSeconds(t.start))
-                                                }
-                                            case .second(true, let drag?):
-                                                let delta = Double(drag.translation.width / max(1, state.pixelsPerSecond))
-                                                let newStart = audioDragStartSeconds + delta
-                                                state.moveAudio(id: t.id, toStartSeconds: newStart)
-                                            default:
-                                                break
+                            ZStack(alignment: .topLeading) {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(red: 0xE3/255.0, green: 0x9F/255.0, blue: 0xF6/255.0, opacity: 0.85))
+
+                                // Waveform inside the pill
+                                WaveformView(samples: t.waveformSamples, color: Color(red: 0.94, green: 0.90, blue: 1.00))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 6)
+                                    .allowsHitTesting(false)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                                // File name at top-left
+                                Text(t.displayName)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                                    .padding(.top, 4)
+                                    .padding(.leading, 6)
+                                    .allowsHitTesting(false)
+                            }
+                            .frame(width: width, height: TimelineStyle.laneRowHeight)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(state.selectedAudioId == t.id ? Color.white : Color.clear, lineWidth: 2)
+                            )
+                            .offset(x: startX)
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(
+                                TapGesture().onEnded {
+                                    let was = (state.selectedAudioId == t.id)
+                                    state.selectedAudioId = was ? nil : t.id
+                                    if !was { state.selectedClipId = nil }
+                                    didTapClip = true
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                }
+                            )
+                            .gesture(
+                                LongPressGesture(minimumDuration: 0.25)
+                                    .sequenced(before: DragGesture(minimumDistance: 1))
+                                    .onChanged { value in
+                                        switch value {
+                                        case .first(true):
+                                            if draggingAudioId != t.id {
+                                                draggingAudioId = t.id
+                                                audioDragStartSeconds = max(0, CMTimeGetSeconds(t.start))
                                             }
+                                        case .second(true, let drag?):
+                                            let delta = Double(drag.translation.width / max(1, state.pixelsPerSecond))
+                                            let newStart = audioDragStartSeconds + delta
+                                            state.moveAudio(id: t.id, toStartSeconds: newStart)
+                                        default:
+                                            break
                                         }
-                                        .onEnded { _ in
-                                            draggingAudioId = nil
-                                            Task { await state.rebuildCompositionForPreview() }
-                                        }
-                                )
+                                    }
+                                    .onEnded { _ in
+                                        draggingAudioId = nil
+                                        Task { await state.rebuildCompositionForPreview() }
+                                    }
+                            )
                         }
                     }
                 }
