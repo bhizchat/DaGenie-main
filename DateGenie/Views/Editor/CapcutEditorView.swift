@@ -135,7 +135,7 @@ struct CapcutEditorView: View {
                                    onDone: { isTyping = false; dockFocused = false })
                             .focused($dockFocused)
                             .padding(.horizontal, 12)
-                            .padding(.bottom, max(0, keyboard.height - 5))
+                            .padding(.bottom, max(0, keyboard.height))
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }

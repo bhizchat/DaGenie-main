@@ -12,6 +12,32 @@ struct TextOverlayView: View {
     @State private var didBeginDrag: Bool = false
     @State private var currentScale: CGFloat = 1
     @State private var currentRotation: Angle = .zero
+    // Tight selection overlay measuring actual glyph size via Canvas
+    private struct TightSelectionOverlay: View {
+        let string: String
+        let font: Font
+        let style: TextStyle
+        var body: some View {
+            Canvas { ctx, _ in
+                let t = Text(string.isEmpty ? " " : string).font(font)
+                let resolved = ctx.resolve(t)
+                let size = resolved.measure(in: CGSize(width: CGFloat.greatestFiniteMagnitude,
+                                                       height: CGFloat.greatestFiniteMagnitude))
+                var rect = CGRect(origin: .zero, size: size)
+                if style == .largeBackground { rect = rect.insetBy(dx: -8, dy: -4) }
+                ctx.stroke(Path(rect), with: .color(.white), lineWidth: 1)
+                let h: CGFloat = 9
+                for p in [CGPoint(x: rect.minX, y: rect.minY),
+                          CGPoint(x: rect.maxX, y: rect.minY),
+                          CGPoint(x: rect.minX, y: rect.maxY),
+                          CGPoint(x: rect.maxX, y: rect.maxY)] {
+                    let e = CGRect(x: p.x - h/2, y: p.y - h/2, width: h, height: h)
+                    ctx.fill(Path(ellipseIn: e), with: .color(.white))
+                    ctx.stroke(Path(ellipseIn: e), with: .color(.black), lineWidth: 1)
+                }
+            }
+        }
+    }
 
     var body: some View {
         Group {
@@ -34,9 +60,17 @@ struct TextOverlayView: View {
                     .textInputAutocapitalization(.sentences)
                     .task(id: isEditing) { if isEditing { activeTextId.wrappedValue = model.id } }
             } else {
-                content
-                    .overlay(alignment: .topLeading) { controlChips }
-                    .onTapGesture(count: 2, perform: onBeginEdit)
+                // Selected overlay: render content with a tight selection box that
+                // measures actual glyph bounds and tracks width while typing.
+                ZStack(alignment: .topLeading) {
+                    content
+                    TightSelectionOverlay(string: model.string,
+                                          font: fontForStyle(),
+                                          style: model.style)
+                        .allowsHitTesting(false)
+                    controlChips
+                }
+                .onTapGesture(count: 2, perform: onBeginEdit)
             }
         }
         .position(livePosition)
