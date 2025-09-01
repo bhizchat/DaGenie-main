@@ -14,11 +14,21 @@ struct CapcutEditorView: View {
     @State private var showEditBar: Bool = false
     // Audio importer presentation state
     @State private var showAudioImporter: Bool = false
+    // Phase 2B: typing dock state
+    @State private var isTyping: Bool = false
+    @FocusState private var dockFocused: Bool
+    @StateObject private var keyboard = KeyboardObserver()
     
 
     init(url: URL) {
         self.url = url
         _state = StateObject(wrappedValue: EditorState(asset: AVURLAsset(url: url)))
+    }
+
+    // Helper to find selected text index
+    private func selectedTextIndex() -> Int? {
+        guard let id = state.selectedTextId else { return nil }
+        return state.textOverlays.firstIndex(where: { $0.id == id })
     }
 
     var body: some View {
@@ -84,12 +94,17 @@ struct CapcutEditorView: View {
             }
             // Expand to full height so the overlay anchors to screen bottom
             .frame(maxHeight: .infinity, alignment: .top)
-            // Bottom overlay: timeline above toolbar
+            // Bottom overlay: timeline above toolbar (keyboard should cover this)
             .overlay(alignment: .bottom) {
                 VStack(spacing: 0) {
                     TimelineContainer(state: state,
                                       onAddAudio: { showAudioImporter = true },
-                                      onAddText: { state.insertCenteredTextAndSelect(canvasRect: canvasRect) })
+                                      onAddText: {
+                                          state.insertCenteredTextAndSelect(canvasRect: canvasRect)
+                                          isTyping = true
+                                          dockFocused = true
+                                          withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+                                      })
                         .frame(height: 72 + 8 + 32 + 80)
                     if showEditBar {
                         EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false } })
@@ -98,7 +113,11 @@ struct CapcutEditorView: View {
                         EditorBottomToolbar(
                             onEdit: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true } },
                             onAudio: { showAudioImporter = true },
-                            onText: { state.insertCenteredTextAndSelect(canvasRect: canvasRect) },
+                            onText: {
+                                state.insertCenteredTextAndSelect(canvasRect: canvasRect)
+                                isTyping = true
+                                dockFocused = true
+                            },
                             onOverlay: {},
                             onAspect: { showAspectSheet = true },
                             onEffects: {}
@@ -106,8 +125,24 @@ struct CapcutEditorView: View {
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+            }
+            // Typing dock rides above the keyboard without altering parent layout
+            .overlay(alignment: .bottom) {
+                Group {
+                    if isTyping, let idx = selectedTextIndex() {
+                        TypingDock(text: $state.textOverlays[idx].base.string,
+                                   onDone: { isTyping = false; dockFocused = false })
+                            .focused($dockFocused)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, max(0, keyboard.height - 5))
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
             }
         }
+        // Keep bottom UI static; allow keyboard to cover it
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
             print("[CapcutEditorView] open with url=\(url.lastPathComponent)")
             AnalyticsManager.shared.logEvent("capcut_editor_opened", parameters: [
@@ -151,6 +186,8 @@ struct CapcutEditorView: View {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
             } else if state.selectedClipId == nil && state.selectedAudioId == nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+                isTyping = false
+                dockFocused = false
             }
         }
         .sheet(isPresented: $showTextPanel) { TextToolPanel(state: state, canvasRect: canvasRect) }
@@ -612,6 +649,31 @@ private struct ToolbarButton: View {
                     .font(.system(size: 11, weight: .medium))
             }
             .padding(6)
+        }
+    }
+}
+
+// MARK: - Typing Dock (Phase 2B)
+private struct TypingDock: View {
+    @Binding var text: String
+    let onDone: () -> Void
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("Enter text", text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.sentences)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(.vertical, 8)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done", action: onDone)
+            }
         }
     }
 }

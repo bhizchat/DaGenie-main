@@ -35,6 +35,7 @@ struct TextOverlayView: View {
                     .task(id: isEditing) { if isEditing { activeTextId.wrappedValue = model.id } }
             } else {
                 content
+                    .overlay(alignment: .topLeading) { controlChips }
                     .onTapGesture(count: 2, perform: onBeginEdit)
             }
         }
@@ -64,6 +65,30 @@ struct TextOverlayView: View {
                 .background(Color.black.opacity(0.5).blur(radius: 0.5))
                 .cornerRadius(6)
         }
+    }
+
+    // MARK: - Chips (X delete · pencil edit · duplicate · unselect)
+    private var controlChips: some View {
+        ZStack {
+            chip(system: "xmark") { onEndEdit(); model.string.isEmpty ? () : () }
+                .offset(x: -22, y: -22)
+            chip(system: "pencil") { onBeginEdit() }
+                .offset(x: 22, y: -22)
+            chip(system: "doc.on.doc") { /* duplicate handled by parent in future phase */ }
+                .offset(x: -22, y: 22)
+            chip(system: "circle") { /* unselect handled by parent via selection state */ }
+                .offset(x: 22, y: 22)
+        }
+    }
+
+    private func chip(system: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color.black.opacity(0.7))
+                .frame(width: 28, height: 28)
+                .overlay(Image(systemName: system).foregroundColor(.white).font(.system(size: 12, weight: .bold)))
+        }
+        .buttonStyle(.plain)
     }
 
     private func fontForStyle() -> Font {

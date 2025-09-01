@@ -6,6 +6,8 @@ import AVFoundation
 struct EditorTrackArea: View {
     @ObservedObject var state: EditorState
     @Binding var canvasRect: CGRect
+    // Local focus holder to satisfy TextOverlayView's FocusState binding
+    @FocusState private var localFocusedTextId: UUID?
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -17,17 +19,31 @@ struct EditorTrackArea: View {
                 ZStack {
                     ForEach(Array(state.textOverlays.enumerated()), id: \.element.id) { idx, t in
                         if isVisible(t, at: state.currentTime) {
-                            let base = state.textOverlays[idx].base
-                            overlayText(base)
-                                .position(x: base.position.x, y: base.position.y)
-                                .scaleEffect(base.scale)
-                                .rotationEffect(Angle(radians: Double(base.rotation)))
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                .allowsHitTesting(false)
+                            if state.selectedTextId == t.id {
+                                // Interactive rendering for the selected overlay
+                                TextOverlayView(
+                                    model: $state.textOverlays[idx].base,
+                                    isEditing: false,
+                                    onBeginEdit: {},
+                                    onEndEdit: {},
+                                    activeTextId: $localFocusedTextId,
+                                    canvasSize: geo.size
+                                )
+                                .allowsHitTesting(true)
+                            } else {
+                                let base = state.textOverlays[idx].base
+                                overlayText(base)
+                                    .position(x: base.position.x, y: base.position.y)
+                                    .scaleEffect(base.scale)
+                                    .rotationEffect(Angle(radians: Double(base.rotation)))
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                    .allowsHitTesting(false)
+                            }
                         }
                     }
                 }
             }
+            .coordinateSpace(name: "canvas")
             .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
             .onChange(of: geo.size) { newSize in
                 canvasRect = CGRect(origin: .zero, size: newSize)
