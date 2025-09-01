@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import CoreText
 
 struct TextOverlayView: View {
     @Binding var model: TextOverlay
@@ -12,32 +14,8 @@ struct TextOverlayView: View {
     @State private var didBeginDrag: Bool = false
     @State private var currentScale: CGFloat = 1
     @State private var currentRotation: Angle = .zero
-    // Tight selection overlay measuring actual glyph size via Canvas
-    private struct TightSelectionOverlay: View {
-        let string: String
-        let font: Font
-        let style: TextStyle
-        var body: some View {
-            Canvas { ctx, _ in
-                let t = Text(string.isEmpty ? " " : string).font(font)
-                let resolved = ctx.resolve(t)
-                let size = resolved.measure(in: CGSize(width: CGFloat.greatestFiniteMagnitude,
-                                                       height: CGFloat.greatestFiniteMagnitude))
-                var rect = CGRect(origin: .zero, size: size)
-                if style == .largeBackground { rect = rect.insetBy(dx: -8, dy: -4) }
-                ctx.stroke(Path(rect), with: .color(.white), lineWidth: 1)
-                let h: CGFloat = 9
-                for p in [CGPoint(x: rect.minX, y: rect.minY),
-                          CGPoint(x: rect.maxX, y: rect.minY),
-                          CGPoint(x: rect.minX, y: rect.maxY),
-                          CGPoint(x: rect.maxX, y: rect.maxY)] {
-                    let e = CGRect(x: p.x - h/2, y: p.y - h/2, width: h, height: h)
-                    ctx.fill(Path(ellipseIn: e), with: .color(.white))
-                    ctx.stroke(Path(ellipseIn: e), with: .color(.black), lineWidth: 1)
-                }
-            }
-        }
-    }
+    // Live measured glyph size (unscaled) used to size the selection rect and anchor chips
+    @State private var measuredTextSize: CGSize = .zero
 
     var body: some View {
         Group {
@@ -60,15 +38,10 @@ struct TextOverlayView: View {
                     .textInputAutocapitalization(.sentences)
                     .task(id: isEditing) { if isEditing { activeTextId.wrappedValue = model.id } }
             } else {
-                // Selected overlay: render content with a tight selection box that
-                // measures actual glyph bounds and tracks width while typing.
+                // Selected overlay: content + measured selection rect with corner-anchored chips
                 ZStack(alignment: .topLeading) {
                     content
-                    TightSelectionOverlay(string: model.string,
-                                          font: fontForStyle(),
-                                          style: model.style)
-                        .allowsHitTesting(false)
-                    controlChips
+                    selectionRectWithChips
                 }
                 .onTapGesture(count: 2, perform: onBeginEdit)
             }
@@ -79,6 +52,9 @@ struct TextOverlayView: View {
         .rotationEffect(safeAngle(Angle(radians: Double(model.rotation)) + currentRotation))
         .gesture(isEditing ? nil : dragGesture.simultaneously(with: pinchAndRotate))
         .zIndex(Double(model.zIndex))
+        .onAppear { recomputeMeasuredSize() }
+        .onChange(of: model.string) { _ in recomputeMeasuredSize() }
+        .onChange(of: model.style) { _ in recomputeMeasuredSize() }
     }
 
     @ViewBuilder private var content: some View {
@@ -101,18 +77,22 @@ struct TextOverlayView: View {
         }
     }
 
-    // MARK: - Chips (X delete · pencil edit · duplicate · unselect)
-    private var controlChips: some View {
-        ZStack {
-            chip(system: "xmark") { onEndEdit(); model.string.isEmpty ? () : () }
-                .offset(x: -22, y: -22)
-            chip(system: "pencil") { onBeginEdit() }
-                .offset(x: 22, y: -22)
-            chip(system: "doc.on.doc") { /* duplicate handled by parent in future phase */ }
-                .offset(x: -22, y: 22)
-            chip(system: "circle") { /* unselect handled by parent via selection state */ }
-                .offset(x: 22, y: 22)
-        }
+    // MARK: - Measured selection rect with chips anchored at the four corners
+    private var selectionRectWithChips: some View {
+        let paddingW: CGFloat = (model.style == .largeBackground) ? 16 : 0 // 8 + 8
+        let paddingH: CGFloat = (model.style == .largeBackground) ? 8  : 0 // 4 + 4
+        let rectW = max(1, measuredTextSize.width + paddingW)
+        let rectH = max(1, measuredTextSize.height + paddingH)
+
+        return RoundedRectangle(cornerRadius: 4)
+            .stroke(Color.white, lineWidth: 1)
+            .frame(width: rectW, height: rectH, alignment: .topLeading)
+            // Corner chips anchored using overlay(alignment:)
+            .overlay(chip(system: "xmark") { onEndEdit(); _ = model.string.isEmpty }, alignment: .topLeading)
+            .overlay(chip(system: "pencil") { onBeginEdit() }, alignment: .topTrailing)
+            .overlay(chip(system: "doc.on.doc") { /* duplicate in parent */ }, alignment: .bottomLeading)
+            .overlay(chip(system: "circle") { /* unselect in parent */ }, alignment: .bottomTrailing)
+            .allowsHitTesting(false)
     }
 
     private func chip(system: String, action: @escaping () -> Void) -> some View {
@@ -123,6 +103,9 @@ struct TextOverlayView: View {
                 .overlay(Image(systemName: system).foregroundColor(.white).font(.system(size: 12, weight: .bold)))
         }
         .buttonStyle(.plain)
+        // Nudge outward so chips sit just outside the stroked rect
+        .offset(x: (system == "xmark" || system == "doc.on.doc") ? -14 : 14,
+                y: (system == "xmark" || system == "pencil") ? -14 : 14)
     }
 
     private func fontForStyle() -> Font {
@@ -130,6 +113,27 @@ struct TextOverlayView: View {
         case .small: return .system(size: 24, weight: .regular)
         case .largeCenter, .largeBackground: return .system(size: 42, weight: .bold)
         }
+    }
+
+    private func uiFontForStyle() -> UIFont {
+        switch model.style {
+        case .small: return .systemFont(ofSize: 24, weight: .regular)
+        case .largeCenter, .largeBackground: return .systemFont(ofSize: 42, weight: .bold)
+        }
+    }
+
+    // Compute tight single-line text bounds using Core Text
+    private func recomputeMeasuredSize() {
+        let s = model.string.isEmpty ? " " : model.string
+        let font = uiFontForStyle()
+        let attr = NSAttributedString(string: s, attributes: [.font: font])
+        let line = CTLineCreateWithAttributedString(attr as CFAttributedString)
+        let img = CTLineGetImageBounds(line, nil)
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let advW = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let w = (img.isNull || !img.width.isFinite) ? advW : img.width
+        let h = ascent + descent
+        measuredTextSize = CGSize(width: ceil(max(1, w)), height: ceil(max(1, h)))
     }
 
     private var livePosition: CGPoint {
