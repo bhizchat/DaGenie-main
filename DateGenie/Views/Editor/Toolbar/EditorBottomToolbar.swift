@@ -13,7 +13,7 @@ struct EditorBottomToolbar: View {
             HStack(spacing: 0) {
                 item(icon: "scissors", label: "Edit", action: onEdit)
                 item(icon: "music.note", label: "Audio", action: onAudio)
-                item(icon: "textformat", label: "Text", action: onText)
+                item(letter: "T", label: "Text", action: onText)
                 item(icon: "square.on.square", label: "Overlay", action: onOverlay)
                 item(icon: "rectangle.portrait", label: "Aspect", action: onAspect)
                 item(icon: "sparkles", label: "Effects", action: onEffects)
@@ -30,6 +30,23 @@ struct EditorBottomToolbar: View {
         Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); action() }) {
             VStack(spacing: 6) {
                 Image(systemName: icon)
+                    .foregroundColor(.white)
+                    .font(.system(size: 20, weight: .semibold))
+                Text(label)
+                    .foregroundColor(.white)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func item(letter: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: { UIImpactFeedbackGenerator(style: .light).impactOccurred(); action() }) {
+            VStack(spacing: 6) {
+                Text(letter)
                     .foregroundColor(.white)
                     .font(.system(size: 20, weight: .semibold))
                 Text(label)

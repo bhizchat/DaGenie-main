@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import FirebaseAuth
+import UniformTypeIdentifiers
 
 struct CapcutEditorView: View {
     let url: URL
@@ -11,6 +12,9 @@ struct CapcutEditorView: View {
     @State private var showCaptionPanel: Bool = false
     @State private var showAspectSheet: Bool = false
     @State private var showEditBar: Bool = false
+    // Audio importer presentation state
+    @State private var showAudioImporter: Bool = false
+    
 
     init(url: URL) {
         self.url = url
@@ -50,7 +54,7 @@ struct CapcutEditorView: View {
                 .offset(y: -50) // raise X/Export vertically by ~50pt
 
                 // Track canvas
-                EditorTrackArea(player: state.player)
+                EditorTrackArea(state: state, canvasRect: $canvasRect)
                     .frame(height: 280)
                     .padding(.top, -50)   // move canvas up by 50pt
                     .padding(.bottom, 50) // compensate so overall layout height stays the same
@@ -83,7 +87,9 @@ struct CapcutEditorView: View {
             // Bottom overlay: timeline above toolbar
             .overlay(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    TimelineContainer(state: state)
+                    TimelineContainer(state: state,
+                                      onAddAudio: { showAudioImporter = true },
+                                      onAddText: { state.insertCenteredTextAndSelect(canvasRect: canvasRect) })
                         .frame(height: 72 + 8 + 32 + 80)
                     if showEditBar {
                         EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false } })
@@ -91,8 +97,8 @@ struct CapcutEditorView: View {
                     } else {
                         EditorBottomToolbar(
                             onEdit: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true } },
-                            onAudio: {},
-                            onText: { showTextPanel = true },
+                            onAudio: { showAudioImporter = true },
+                            onText: { state.insertCenteredTextAndSelect(canvasRect: canvasRect) },
                             onOverlay: {},
                             onAspect: { showAspectSheet = true },
                             onEffects: {}
@@ -110,6 +116,33 @@ struct CapcutEditorView: View {
             configureAudioSessionForPreview()
             state.preparePlayer()
         }
+        // Device audio file importer
+        .fileImporter(isPresented: $showAudioImporter,
+                      allowedContentTypes: [.audio],
+                      allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls):
+                Task { await importPickedAudio(urls: urls) }
+            case .failure(let err):
+                print("[AudioImport] error: \(err.localizedDescription)")
+            }
+        }
+        // Auto-open Edit toolbar when a video clip is selected
+        .onChange(of: state.selectedClipId) { newValue in
+            if newValue != nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+            } else if state.selectedAudioId == nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+            }
+        }
+        // Auto-open Edit toolbar when an audio strip is selected
+        .onChange(of: state.selectedAudioId) { newValue in
+            if newValue != nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+            } else if state.selectedClipId == nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+            }
+        }
         .sheet(isPresented: $showTextPanel) { TextToolPanel(state: state, canvasRect: canvasRect) }
         .sheet(isPresented: $showCaptionPanel) { CaptionToolPanel(state: state, canvasRect: canvasRect) }
         .actionSheet(isPresented: $showAspectSheet) {
@@ -126,6 +159,28 @@ struct CapcutEditorView: View {
         }
     }
 
+    @MainActor
+    private func importPickedAudio(urls: [URL]) async {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let start = state.currentTime
+        for src in urls {
+            var accessed = src.startAccessingSecurityScopedResource()
+            defer { if accessed { src.stopAccessingSecurityScopedResource() } }
+            let ext = src.pathExtension.isEmpty ? "m4a" : src.pathExtension
+            let dest = docs.appendingPathComponent("audio_\(UUID().uuidString).\(ext)")
+            do {
+                if FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.removeItem(at: dest) }
+                try FileManager.default.copyItem(at: src, to: dest)
+                let displayLabel = preferredDisplayNameForAudio(at: src)
+                await state.addAudio(url: dest, at: start, volume: 1.0, displayName: displayLabel)
+                // Rebuild composition to include newly added audio for preview
+                await state.rebuildCompositionForPreview()
+            } catch {
+                print("[AudioImport] copy failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func timeLabel(_ t: CMTime, duration: CMTime) -> String {
         func fmt(_ time: CMTime) -> String {
             guard time.isNumeric else { return "00:00" }
@@ -138,6 +193,25 @@ struct CapcutEditorView: View {
             return String(format: "%02d:%02d", m, s)
         }
         return fmt(t) + " / " + fmt(duration)
+    }
+
+    // Preferred label for an audio source: AV metadata Title -> Files name -> basename
+    private func preferredDisplayNameForAudio(at src: URL) -> String {
+        let asset = AVURLAsset(url: src)
+        if let titleItem = AVMetadataItem.metadataItems(
+            from: asset.commonMetadata,
+            withKey: AVMetadataKey.commonKeyTitle,
+            keySpace: .common
+        ).first,
+           let title = titleItem.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        if let values = try? src.resourceValues(forKeys: [.localizedNameKey, .nameKey]),
+           let name = (values.localizedName ?? values.name), !name.isEmpty {
+            return (name as NSString).deletingPathExtension
+        }
+        return src.deletingPathExtension().lastPathComponent
     }
 
     private func safeTopInset() -> CGFloat {
@@ -208,6 +282,9 @@ final class EditorState: ObservableObject {
     @Published var pixelsPerSecond: CGFloat = 60
     @Published var isScrubbing: Bool = false
     @Published var selectedClipId: UUID? = nil
+    @Published var selectedAudioId: UUID? = nil
+    // Text selection for on-canvas and timeline linking
+    @Published var selectedTextId: UUID? = nil
 
     private var timeObserver: Any?
 
@@ -272,7 +349,7 @@ final class EditorState: ObservableObject {
 
     // Build a single AVMutableComposition that concatenates all clips
     @MainActor
-    private func rebuildComposition() async {
+    fileprivate func rebuildComposition() async {
         let comp = AVMutableComposition()
         guard !clips.isEmpty else {
             player.replaceCurrentItem(with: nil)
@@ -295,8 +372,27 @@ final class EditorState: ObservableObject {
             cursor = cursor + clip.duration
         }
 
+        // Include user-added audio tracks for preview
+        var mixParams: [AVMutableAudioMixInputParameters] = []
+        for t in audioTracks {
+            let aAsset = AVURLAsset(url: t.url)
+            if let aSrc = aAsset.tracks(withMediaType: .audio).first,
+               let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                let maxDur = max(.zero, totalDuration - t.start)
+                let dur = min(aAsset.duration, t.duration, maxDur)
+                try? aDst.insertTimeRange(CMTimeRange(start: .zero, duration: dur), of: aSrc, at: t.start)
+                let p = AVMutableAudioMixInputParameters(track: aDst)
+                p.setVolume(t.volume, at: .zero)
+                mixParams.append(p)
+            }
+        }
+
         composition = comp
         let item = AVPlayerItem(asset: composition)
+        if !mixParams.isEmpty {
+            let mix = AVMutableAudioMix(); mix.inputParameters = mixParams
+            item.audioMix = mix
+        }
         player.replaceCurrentItem(with: item)
         duration = totalDuration
     }
@@ -393,16 +489,48 @@ final class EditorState: ObservableObject {
 
     // Convenience for adding an external audio track (duration probed automatically)
     @MainActor
-    func addAudio(url: URL, at start: CMTime, volume: Float = 1.0) async {
+    func addAudio(url: URL, at start: CMTime, volume: Float = 1.0, displayName: String? = nil) async {
         let aAsset = AVURLAsset(url: url)
         let dur = aAsset.duration
-        let track = AudioTrack(url: url, start: start, duration: dur, volume: volume)
+        // Load or generate waveform samples off-main; then update model on main
+        let samples = await WaveformGenerator.loadOrGenerate(for: aAsset)
+        var track = AudioTrack(url: url, start: start, duration: dur, volume: volume)
+        track.waveformSamples = samples
+        track.titleOverride = displayName
         audioTracks.append(track)
+    }
+
+    // Public wrapper to rebuild composition after mutations that affect preview
+    @MainActor
+    func rebuildCompositionForPreview() async {
+        await rebuildComposition()
+    }
+
+    // Move audio start time with clamping to timeline
+    @MainActor
+    func moveAudio(id: UUID, toStartSeconds seconds: Double) {
+        guard let idx = audioTracks.firstIndex(where: { $0.id == id }) else { return }
+        let durS = max(0, CMTimeGetSeconds(audioTracks[idx].duration))
+        let totalS = max(0, CMTimeGetSeconds(totalDuration))
+        let clamped = min(max(0, seconds), max(0, totalS - durS))
+        audioTracks[idx].start = CMTime(seconds: clamped, preferredTimescale: 600)
     }
 }
 
 // MARK: - Selection and clip timing helpers
 extension EditorState {
+    // MARK: - Text insertion (centered) used by toolbar and +Add text
+    @MainActor
+    func insertCenteredTextAndSelect(canvasRect: CGRect) {
+        let center = CGPoint(x: canvasRect.width/2, y: canvasRect.height/2)
+        var base = TextOverlay(string: "Enter text", position: center)
+        base.color = RGBAColor(r: 1, g: 1, b: 1, a: 1)
+        let item = TimedTextOverlay(base: base,
+                                    start: currentTime,
+                                    duration: CMTime(seconds: 2.0, preferredTimescale: 600))
+        textOverlays.append(item)
+        selectedTextId = item.id
+    }
     /// Absolute start time (in seconds) of a clip in the concatenated timeline,
     /// accounting for previous clips' TRIMMED durations and this clip's trimStart.
     func startSeconds(for clipId: UUID) -> Double? {

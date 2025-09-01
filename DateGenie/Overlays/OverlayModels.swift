@@ -125,6 +125,15 @@ struct AudioTrack: Identifiable, Equatable {
     var start: CMTime
     var duration: CMTime
     var volume: Float
+    // Cached, normalized samples for timeline waveform rendering
+    var waveformSamples: [Float] = []
+    /// Optional, user-visible title captured at import (e.g., metadata Title or original filename)
+    var titleOverride: String? = nil
+    // Convenience for UI label
+    var displayName: String {
+        if let t = titleOverride, !t.isEmpty { return t }
+        return url.deletingPathExtension().lastPathComponent
+    }
 }
 
 
