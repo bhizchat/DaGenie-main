@@ -54,7 +54,7 @@ struct CapcutEditorView: View {
                 .offset(y: -50) // raise X/Export vertically by ~50pt
 
                 // Track canvas
-                EditorTrackArea(player: state.player)
+                EditorTrackArea(state: state, canvasRect: $canvasRect)
                     .frame(height: 280)
                     .padding(.top, -50)   // move canvas up by 50pt
                     .padding(.bottom, 50) // compensate so overall layout height stays the same
@@ -89,7 +89,7 @@ struct CapcutEditorView: View {
                 VStack(spacing: 0) {
                     TimelineContainer(state: state,
                                       onAddAudio: { showAudioImporter = true },
-                                      onAddText: { showTextPanel = true })
+                                      onAddText: { state.insertCenteredTextAndSelect(canvasRect: canvasRect) })
                         .frame(height: 72 + 8 + 32 + 80)
                     if showEditBar {
                         EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false } })
@@ -98,7 +98,7 @@ struct CapcutEditorView: View {
                         EditorBottomToolbar(
                             onEdit: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true } },
                             onAudio: { showAudioImporter = true },
-                            onText: { showTextPanel = true },
+                            onText: { state.insertCenteredTextAndSelect(canvasRect: canvasRect) },
                             onOverlay: {},
                             onAspect: { showAspectSheet = true },
                             onEffects: {}
@@ -283,6 +283,8 @@ final class EditorState: ObservableObject {
     @Published var isScrubbing: Bool = false
     @Published var selectedClipId: UUID? = nil
     @Published var selectedAudioId: UUID? = nil
+    // Text selection for on-canvas and timeline linking
+    @Published var selectedTextId: UUID? = nil
 
     private var timeObserver: Any?
 
@@ -517,6 +519,18 @@ final class EditorState: ObservableObject {
 
 // MARK: - Selection and clip timing helpers
 extension EditorState {
+    // MARK: - Text insertion (centered) used by toolbar and +Add text
+    @MainActor
+    func insertCenteredTextAndSelect(canvasRect: CGRect) {
+        let center = CGPoint(x: canvasRect.width/2, y: canvasRect.height/2)
+        var base = TextOverlay(string: "Enter text", position: center)
+        base.color = RGBAColor(r: 1, g: 1, b: 1, a: 1)
+        let item = TimedTextOverlay(base: base,
+                                    start: currentTime,
+                                    duration: CMTime(seconds: 2.0, preferredTimescale: 600))
+        textOverlays.append(item)
+        selectedTextId = item.id
+    }
     /// Absolute start time (in seconds) of a clip in the concatenated timeline,
     /// accounting for previous clips' TRIMMED durations and this clip's trimStart.
     func startSeconds(for clipId: UUID) -> Double? {

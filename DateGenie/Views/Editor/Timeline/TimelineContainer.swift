@@ -319,6 +319,8 @@ struct TimelineContainer: View {
                                     .padding(.leading, 56)
                                 , alignment: .leading
                             )
+                            .contentShape(Rectangle())
+                            .onTapGesture { onAddText?() }
                     } else {
                         ForEach(state.textOverlays, id: \.id) { t in
                             let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
@@ -336,22 +338,24 @@ struct TimelineContainer: View {
         }
         .frame(height: TimelineStyle.laneRowHeight)
         .overlay(alignment: .topLeading) {
-            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-            Button(action: { onAddText?() }) {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
-                    .frame(width: 34, height: 34)
-                    .overlay(
-                        Image("letter-t")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 15, height: 15)
-                            .foregroundColor(.black)
-                    )
+            if state.textOverlays.isEmpty {
+                let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+                Button(action: { onAddText?() }) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
+                        .frame(width: 34, height: 34)
+                        .overlay(
+                            Image("letter-t")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 15, height: 15)
+                                .foregroundColor(.black)
+                        )
+                }
+                // Position near the playhead using the same inset as the filmstrip
+                .offset(x: leadingInset + 2, y: (TimelineStyle.laneRowHeight - 34) / 2)
+                .zIndex(3)
             }
-            // Position near the playhead using the same inset as the filmstrip
-            .offset(x: leadingInset + 2, y: (TimelineStyle.laneRowHeight - 34) / 2)
-            .zIndex(3)
         }
     }
     var body: some View {
