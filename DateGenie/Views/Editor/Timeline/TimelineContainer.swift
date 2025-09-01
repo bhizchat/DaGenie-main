@@ -6,16 +6,29 @@ import UniformTypeIdentifiers
 struct TimelineContainer: View {
     @ObservedObject var state: EditorState
     // Optional action for the \"Add ending\" pill
-    let onAddEnding: (() -> Void)? = nil
+    let onAddEnding: (() -> Void)?
     // Optional actions for Audio/Text quick-add buttons
-    let onAddAudio: (() -> Void)? = nil
-    let onAddText: (() -> Void)? = nil
+    let onAddAudio: (() -> Void)?
+    let onAddText: (() -> Void)?
+
+    init(state: EditorState,
+         onAddAudio: (() -> Void)? = nil,
+         onAddText: (() -> Void)? = nil,
+         onAddEnding: (() -> Void)? = nil) {
+        self.state = state
+        self.onAddAudio = onAddAudio
+        self.onAddText = onAddText
+        self.onAddEnding = onAddEnding
+    }
 
     // View-local scroll state
     @State private var contentOffsetX: CGFloat = 0
     @GestureState private var dragDX: CGFloat = 0
     @GestureState private var pinchScale: CGFloat = 1.0
     @State private var didTapClip: Bool = false
+    // Audio drag helpers
+    @State private var draggingAudioId: UUID? = nil
+    @State private var audioDragStartSeconds: Double = 0
     // Observed native ScrollView horizontal offset (PreferenceKey-based)
     @State private var observedOffsetX: CGFloat = 0
     // Timeline dimensions
@@ -57,15 +70,22 @@ struct TimelineContainer: View {
 
     // Extend playhead to span video + all timeline lanes below
     private var playheadHeight: CGFloat {
-        let lanesCount: CGFloat = hasClip ? 2 : 0 // extra audio, text visible only when clips exist
-        let stackedRows = TimelineStyle.videoRowHeight
-            + lanesCount * TimelineStyle.laneRowHeight
-            + lanesCount * TimelineStyle.rowSpacing
-        return rulerHeight + spacingAboveStrip + stackedRows + extraPlayheadExtension
+        return rulerHeight + spacingAboveStrip + stackedRowsHeight + extraPlayheadExtension
     }
 
     private var hasClip: Bool {
         !state.clips.isEmpty && CMTimeGetSeconds(state.totalDuration) > 0
+    }
+
+    // Computed rows height used for layout and publishing preferred height
+    private var lanesCount: CGFloat { hasClip ? 2 : 0 }
+    private var stackedRowsHeight: CGFloat {
+        TimelineStyle.videoRowHeight
+        + lanesCount * TimelineStyle.laneRowHeight
+        + lanesCount * TimelineStyle.rowSpacing
+    }
+    private var preferredHeight: CGFloat {
+        rulerHeight + spacingAboveStrip + stackedRowsHeight
     }
 
     // Centralized vertical anchors so both states (no-clip/has-clip) align consistently
@@ -143,6 +163,7 @@ struct TimelineContainer: View {
                     TapGesture().onEnded {
                         let wasSelected = (state.selectedClipId == clip.id)
                         state.selectedClipId = wasSelected ? nil : clip.id
+                        if !wasSelected { state.selectedAudioId = nil }
                         didTapClip = true
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     }
@@ -158,111 +179,142 @@ struct TimelineContainer: View {
 
     @ViewBuilder private func extraAudioRow(_ geo: GeometryProxy) -> some View {
         HStack(spacing: 0) {
-            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-            let trailingInset = max(0, (geo.size.width / 2) - leftGap)
-            // Align lane start to the same inset as the filmstrip (no extra nudges)
+            let center = geo.size.width / 2
+            let leadingInset = max(0, center + leftGap)
+            let trailingInset = max(0, center - leftGap)
+            let totalSeconds = max(0, CMTimeGetSeconds(state.totalDuration))
+            let timelineWidth = CGFloat(totalSeconds) * state.pixelsPerSecond
+
+            // Leading inset so time 0 sits under the playhead
             Color.clear.frame(width: leadingInset, height: TimelineStyle.laneRowHeight)
-            let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
-            if state.audioTracks.isEmpty {
-                if let s = state.selectedClipStartSeconds, let d = state.selectedClipDurationSeconds {
-                    let startX = CGFloat(s) * state.pixelsPerSecond
-                    let width  = CGFloat(d) * state.pixelsPerSecond
-                    // push to selected clip start
-                    Color.clear.frame(width: startX)
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.18))
-                        .frame(width: width, height: TimelineStyle.laneRowHeight)
-                        .overlay(
-                            HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.leading, 56)
-                            , alignment: .leading
-                        )
-                } else {
-                    // Fallback when no selection: span the whole timeline
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.18))
-                        .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
-                        .overlay(
-                            HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.leading, 56)
-                            , alignment: .leading
-                        )
+
+            // Fixed-width lane; overlay items positioned absolutely
+            Rectangle().fill(Color.clear)
+                .frame(width: timelineWidth, height: TimelineStyle.laneRowHeight)
+                .overlay(alignment: .topLeading) {
+                    if state.audioTracks.isEmpty {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.gray.opacity(0.18))
+                            .frame(width: timelineWidth, height: TimelineStyle.laneRowHeight)
+                            .overlay(
+                                HStack { Text("+ Add audio").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                                    .padding(.leading, 56)
+                                , alignment: .leading
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture { onAddAudio?() }
+                    } else {
+                        ForEach(Array(state.audioTracks.enumerated()), id: \.element.id) { _, t in
+                            let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
+                            let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
+
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.purple.opacity(0.30))
+                                .frame(width: width, height: TimelineStyle.laneRowHeight)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(state.selectedAudioId == t.id ? Color.white : Color.clear, lineWidth: 2)
+                                )
+                                .offset(x: startX)
+                                .contentShape(Rectangle())
+                                .highPriorityGesture(
+                                    TapGesture().onEnded {
+                                        let was = (state.selectedAudioId == t.id)
+                                        state.selectedAudioId = was ? nil : t.id
+                                        if !was { state.selectedClipId = nil }
+                                        didTapClip = true
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    }
+                                )
+                                .gesture(
+                                    LongPressGesture(minimumDuration: 0.25)
+                                        .sequenced(before: DragGesture(minimumDistance: 1))
+                                        .onChanged { value in
+                                            switch value {
+                                            case .first(true):
+                                                // long-press started, set initial drag state
+                                                if draggingAudioId != t.id {
+                                                    draggingAudioId = t.id
+                                                    audioDragStartSeconds = max(0, CMTimeGetSeconds(t.start))
+                                                }
+                                            case .second(true, let drag?):
+                                                let delta = Double(drag.translation.width / max(1, state.pixelsPerSecond))
+                                                let newStart = audioDragStartSeconds + delta
+                                                state.moveAudio(id: t.id, toStartSeconds: newStart)
+                                            default:
+                                                break
+                                            }
+                                        }
+                                        .onEnded { _ in
+                                            draggingAudioId = nil
+                                            Task { await state.rebuildCompositionForPreview() }
+                                        }
+                                )
+                        }
+                    }
                 }
-            } else {
-                // Hide the "+ Add audio" placeholder; show user-added audio items only
-                ForEach(Array(state.audioTracks.enumerated()), id: \.element.id) { _, t in
-                    let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
-                    let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
-                    Color.clear.frame(width: startX)
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.green.opacity(0.25))
-                        .frame(width: width, height: TimelineStyle.laneRowHeight)
-                }
-            }
-            // trailing inset so the last lane content can center under the playhead
+
+            // Trailing inset so last content can center under the playhead
             Color.clear.frame(width: trailingInset, height: TimelineStyle.laneRowHeight)
         }
         .frame(height: TimelineStyle.laneRowHeight)
         .overlay(alignment: .topLeading) {
-            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-            Button(action: { onAddAudio?() }) {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
-                    .frame(width: 34, height: 34)
-                    .overlay(
-                        Image("quaver")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 16, height: 16)
-                            .foregroundColor(.black)
-                    )
+            if state.audioTracks.isEmpty {
+                let leadingInset = max(0, (geo.size.width / 2) + leftGap)
+                Button(action: { onAddAudio?() }) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
+                        .frame(width: 34, height: 34)
+                        .overlay(
+                            Image("quaver")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 16, height: 16)
+                                .foregroundColor(.black)
+                        )
+                }
+                // Position near the playhead using the same inset as the filmstrip
+                .offset(x: leadingInset + 2, y: (TimelineStyle.laneRowHeight - 34) / 2)
+                .zIndex(3)
             }
-            // Position near the playhead using the same inset as the filmstrip
-            .offset(x: leadingInset + 2, y: (TimelineStyle.laneRowHeight - 34) / 2)
-            .zIndex(3)
         }
     }
 
     @ViewBuilder private func textRow(_ geo: GeometryProxy) -> some View {
         HStack(spacing: 0) {
-            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-            let trailingInset = max(0, (geo.size.width / 2) - leftGap)
-            // Align lane start to the same inset as the filmstrip (no extra nudges)
+            let center = geo.size.width / 2
+            let leadingInset = max(0, center + leftGap)
+            let trailingInset = max(0, center - leftGap)
+            let totalSeconds = max(0, CMTimeGetSeconds(state.totalDuration))
+            let timelineWidth = CGFloat(totalSeconds) * state.pixelsPerSecond
+
             Color.clear.frame(width: leadingInset, height: TimelineStyle.laneRowHeight)
-            let totalWidth = CGFloat(max(0, CMTimeGetSeconds(state.totalDuration))) * state.pixelsPerSecond
-            if state.textOverlays.isEmpty {
-                if let s = state.selectedClipStartSeconds, let d = state.selectedClipDurationSeconds {
-                    let startX = CGFloat(s) * state.pixelsPerSecond
-                    let width  = CGFloat(d) * state.pixelsPerSecond
-                    Color.clear.frame(width: startX)
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.18))
-                        .frame(width: width, height: TimelineStyle.laneRowHeight)
-                        .overlay(
-                            HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.leading, 56)
-                            , alignment: .leading
-                        )
-                } else {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.18))
-                        .frame(width: totalWidth, height: TimelineStyle.laneRowHeight)
-                        .overlay(
-                            HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
-                                .padding(.leading, 56)
-                            , alignment: .leading
-                        )
+
+            Rectangle().fill(Color.clear)
+                .frame(width: timelineWidth, height: TimelineStyle.laneRowHeight)
+                .overlay(alignment: .topLeading) {
+                    if state.textOverlays.isEmpty {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.gray.opacity(0.18))
+                            .frame(width: timelineWidth, height: TimelineStyle.laneRowHeight)
+                            .overlay(
+                                HStack { Text("+ Add text").font(.system(size: 13, weight: .semibold)).foregroundColor(.white.opacity(0.9)); Spacer() }
+                                    .padding(.leading, 56)
+                                , alignment: .leading
+                            )
+                    } else {
+                        ForEach(state.textOverlays, id: \.id) { t in
+                            let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
+                            let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.blue.opacity(0.2))
+                                .overlay(Text(t.base.string).font(.system(size: 11, weight: .semibold)).foregroundColor(.white).padding(4), alignment: .leading)
+                                .frame(width: width, height: TimelineStyle.laneRowHeight)
+                                .offset(x: startX)
+                        }
+                    }
                 }
-            } else {
-                ForEach(state.textOverlays, id: \.id) { t in
-                    let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.blue.opacity(0.2))
-                        .overlay(Text(t.base.string).font(.system(size: 11, weight: .semibold)).foregroundColor(.white).padding(4), alignment: .leading)
-                        .frame(width: width, height: TimelineStyle.laneRowHeight)
-                }
-            }
-            // trailing inset so the last lane content can center under the playhead
+
             Color.clear.frame(width: trailingInset, height: TimelineStyle.laneRowHeight)
         }
         .frame(height: TimelineStyle.laneRowHeight)
@@ -323,7 +375,10 @@ struct TimelineContainer: View {
                         .coordinateSpace(name: "timelineScroll")
                         .simultaneousGesture(
                             TapGesture().onEnded {
-                                if !didTapClip { state.selectedClipId = nil }
+                                if !didTapClip {
+                                    state.selectedClipId = nil
+                                    state.selectedAudioId = nil
+                                }
                                 didTapClip = false
                             }
                         )
@@ -385,7 +440,7 @@ struct TimelineContainer: View {
                         }
                     }
                     // Align stacked rows (and overlay) with playhead like before
-                    .frame(height: rowsStackHeight)
+                    .frame(height: stackedRowsHeight)
                     .offset(y: rowsOffsetY)
                     .zIndex(0)
 

@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import FirebaseAuth
+import UniformTypeIdentifiers
 
 struct CapcutEditorView: View {
     let url: URL
@@ -11,6 +12,9 @@ struct CapcutEditorView: View {
     @State private var showCaptionPanel: Bool = false
     @State private var showAspectSheet: Bool = false
     @State private var showEditBar: Bool = false
+    // Audio importer presentation state
+    @State private var showAudioImporter: Bool = false
+    
 
     init(url: URL) {
         self.url = url
@@ -83,7 +87,9 @@ struct CapcutEditorView: View {
             // Bottom overlay: timeline above toolbar
             .overlay(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    TimelineContainer(state: state)
+                    TimelineContainer(state: state,
+                                      onAddAudio: { showAudioImporter = true },
+                                      onAddText: { showTextPanel = true })
                         .frame(height: 72 + 8 + 32 + 80)
                     if showEditBar {
                         EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false } })
@@ -91,7 +97,7 @@ struct CapcutEditorView: View {
                     } else {
                         EditorBottomToolbar(
                             onEdit: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true } },
-                            onAudio: {},
+                            onAudio: { showAudioImporter = true },
                             onText: { showTextPanel = true },
                             onOverlay: {},
                             onAspect: { showAspectSheet = true },
@@ -110,6 +116,33 @@ struct CapcutEditorView: View {
             configureAudioSessionForPreview()
             state.preparePlayer()
         }
+        // Device audio file importer
+        .fileImporter(isPresented: $showAudioImporter,
+                      allowedContentTypes: [.audio],
+                      allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls):
+                Task { await importPickedAudio(urls: urls) }
+            case .failure(let err):
+                print("[AudioImport] error: \(err.localizedDescription)")
+            }
+        }
+        // Auto-open Edit toolbar when a video clip is selected
+        .onChange(of: state.selectedClipId) { newValue in
+            if newValue != nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+            } else if state.selectedAudioId == nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+            }
+        }
+        // Auto-open Edit toolbar when an audio strip is selected
+        .onChange(of: state.selectedAudioId) { newValue in
+            if newValue != nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+            } else if state.selectedClipId == nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+            }
+        }
         .sheet(isPresented: $showTextPanel) { TextToolPanel(state: state, canvasRect: canvasRect) }
         .sheet(isPresented: $showCaptionPanel) { CaptionToolPanel(state: state, canvasRect: canvasRect) }
         .actionSheet(isPresented: $showAspectSheet) {
@@ -123,6 +156,27 @@ struct CapcutEditorView: View {
         .onDisappear {
             // Deactivate playback session if it was activated for preview
             try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        }
+    }
+
+    @MainActor
+    private func importPickedAudio(urls: [URL]) async {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let start = state.currentTime
+        for src in urls {
+            var accessed = src.startAccessingSecurityScopedResource()
+            defer { if accessed { src.stopAccessingSecurityScopedResource() } }
+            let ext = src.pathExtension.isEmpty ? "m4a" : src.pathExtension
+            let dest = docs.appendingPathComponent("audio_\(UUID().uuidString).\(ext)")
+            do {
+                if FileManager.default.fileExists(atPath: dest.path) { try? FileManager.default.removeItem(at: dest) }
+                try FileManager.default.copyItem(at: src, to: dest)
+                await state.addAudio(url: dest, at: start, volume: 1.0)
+                // Rebuild composition to include newly added audio for preview
+                await state.rebuildCompositionForPreview()
+            } catch {
+                print("[AudioImport] copy failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -208,6 +262,7 @@ final class EditorState: ObservableObject {
     @Published var pixelsPerSecond: CGFloat = 60
     @Published var isScrubbing: Bool = false
     @Published var selectedClipId: UUID? = nil
+    @Published var selectedAudioId: UUID? = nil
 
     private var timeObserver: Any?
 
@@ -272,7 +327,7 @@ final class EditorState: ObservableObject {
 
     // Build a single AVMutableComposition that concatenates all clips
     @MainActor
-    private func rebuildComposition() async {
+    fileprivate func rebuildComposition() async {
         let comp = AVMutableComposition()
         guard !clips.isEmpty else {
             player.replaceCurrentItem(with: nil)
@@ -295,8 +350,27 @@ final class EditorState: ObservableObject {
             cursor = cursor + clip.duration
         }
 
+        // Include user-added audio tracks for preview
+        var mixParams: [AVMutableAudioMixInputParameters] = []
+        for t in audioTracks {
+            let aAsset = AVURLAsset(url: t.url)
+            if let aSrc = aAsset.tracks(withMediaType: .audio).first,
+               let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                let maxDur = max(.zero, totalDuration - t.start)
+                let dur = min(aAsset.duration, t.duration, maxDur)
+                try? aDst.insertTimeRange(CMTimeRange(start: .zero, duration: dur), of: aSrc, at: t.start)
+                let p = AVMutableAudioMixInputParameters(track: aDst)
+                p.setVolume(t.volume, at: .zero)
+                mixParams.append(p)
+            }
+        }
+
         composition = comp
         let item = AVPlayerItem(asset: composition)
+        if !mixParams.isEmpty {
+            let mix = AVMutableAudioMix(); mix.inputParameters = mixParams
+            item.audioMix = mix
+        }
         player.replaceCurrentItem(with: item)
         duration = totalDuration
     }
@@ -398,6 +472,22 @@ final class EditorState: ObservableObject {
         let dur = aAsset.duration
         let track = AudioTrack(url: url, start: start, duration: dur, volume: volume)
         audioTracks.append(track)
+    }
+
+    // Public wrapper to rebuild composition after mutations that affect preview
+    @MainActor
+    func rebuildCompositionForPreview() async {
+        await rebuildComposition()
+    }
+
+    // Move audio start time with clamping to timeline
+    @MainActor
+    func moveAudio(id: UUID, toStartSeconds seconds: Double) {
+        guard let idx = audioTracks.firstIndex(where: { $0.id == id }) else { return }
+        let durS = max(0, CMTimeGetSeconds(audioTracks[idx].duration))
+        let totalS = max(0, CMTimeGetSeconds(totalDuration))
+        let clamped = min(max(0, seconds), max(0, totalS - durS))
+        audioTracks[idx].start = CMTime(seconds: clamped, preferredTimescale: 600)
     }
 }
 
