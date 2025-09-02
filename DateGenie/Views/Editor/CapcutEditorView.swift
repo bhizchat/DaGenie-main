@@ -376,6 +376,10 @@ final class EditorState: ObservableObject {
     // Track playback/follow state during interactive scrubs
     private var wasPlayingBeforeScrub: Bool = false
     private var followBeforeScrub: FollowMode? = nil
+    // Live-scrub pacing via display link
+    private var scrubDisplayLink: CADisplayLink?
+    private var pendingScrubTime: CMTime?
+    private var lastSeekedDuringScrub: CMTime = .invalid
 
     init(asset: AVAsset) {
         self.asset = asset
@@ -660,6 +664,39 @@ final class EditorState: ObservableObject {
 // MARK: - Selection and clip timing helpers
 extension EditorState {
     // MARK: - Scrub lifecycle and seek commit gating
+    private func halfFrameTolerance() -> CMTime {
+        if let track = player.currentItem?.asset.tracks(withMediaType: .video).first,
+           track.nominalFrameRate > 0 {
+            let fps = Double(track.nominalFrameRate)
+            return CMTime(seconds: 0.5 / fps, preferredTimescale: 600)
+        }
+        return CMTime(seconds: 1.0 / 120.0, preferredTimescale: 600)
+    }
+
+    private func startScrubDisplayLink() {
+        guard scrubDisplayLink == nil else { return }
+        let dl = CADisplayLink(target: self, selector: #selector(scrubDisplayLinkFired(_:)))
+        dl.preferredFramesPerSecond = 0 // pace at device refresh (60/120Hz)
+        dl.add(to: .main, forMode: .common)
+        scrubDisplayLink = dl
+    }
+
+    private func stopScrubDisplayLink() {
+        scrubDisplayLink?.invalidate()
+        scrubDisplayLink = nil
+    }
+
+    @objc private func scrubDisplayLinkFired(_ link: CADisplayLink) {
+        guard let t = pendingScrubTime else { return }
+        let tol = halfFrameTolerance()
+        if lastSeekedDuringScrub.isValid == false ||
+            abs(CMTimeGetSeconds(t) - CMTimeGetSeconds(lastSeekedDuringScrub)) > CMTimeGetSeconds(tol) {
+            player.currentItem?.cancelPendingSeeks()
+            player.seek(to: t, toleranceBefore: tol, toleranceAfter: tol)
+            lastSeekedDuringScrub = t
+        }
+    }
+
     func beginScrub() {
         if scrubTime == nil {
             wasPlayingBeforeScrub = isPlaying
@@ -667,34 +704,40 @@ extension EditorState {
             scrubTime = displayTime
             followBeforeScrub = followMode
             followMode = .off
+            // be more responsive during interaction
+            player.automaticallyWaitsToMinimizeStalling = false
         }
+        pendingScrubTime = scrubTime
+        startScrubDisplayLink()
         waitingForSeekCommit = false
     }
 
     func scrub(to time: CMTime) {
         scrubTime = time
         displayTime = time
-        // Tolerant seeks during continuous scrubbing for responsiveness
-        let now = CACurrentMediaTime()
-        if now - lastScrubSeekAt > 0.012 { // ~80Hz throttle
-            lastScrubSeekAt = now
-            player.seek(to: time, toleranceBefore: .positiveInfinity, toleranceAfter: .positiveInfinity)
-        }
+        // Defer actual seeks to the display link; just record the most recent intention.
+        pendingScrubTime = time
         lastScrubbedTime = time
     }
 
     func endScrub() {
-        guard let t = lastScrubbedTime else {
+        stopScrubDisplayLink()
+        lastSeekedDuringScrub = .invalid
+        let target = pendingScrubTime ?? lastScrubbedTime
+        guard let t = target else {
             scrubTime = nil
             waitingForSeekCommit = false
-            // Restore follow mode if we suspended it
             if let prev = followBeforeScrub { followMode = prev }
             followBeforeScrub = nil
+            player.automaticallyWaitsToMinimizeStalling = true
             return
         }
         // Keep scrubTime non-nil so display link stays gated until the precise seek lands
         commitSeek(to: t, precise: true)
+        pendingScrubTime = nil
         lastScrubbedTime = nil
+        // restore eager-behavior back to default after commit (also guarded in commit completion)
+        player.automaticallyWaitsToMinimizeStalling = true
     }
 
     private func commitSeek(to time: CMTime, precise: Bool) {
