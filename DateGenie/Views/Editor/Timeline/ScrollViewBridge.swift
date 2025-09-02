@@ -4,6 +4,7 @@ import SwiftUI
 /// live contentOffset.x and optionally set a target offset when not interacting.
 struct ScrollViewBridge: UIViewRepresentable {
     var targetX: CGFloat? = nil
+    var isScrollEnabled: Bool = true
     var onScroll: (CGFloat, Bool, Bool, Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onScroll: onScroll) }
@@ -29,6 +30,8 @@ struct ScrollViewBridge: UIViewRepresentable {
             scrollView.isDirectionalLockEnabled = true
             scrollView.delaysContentTouches = false
             scrollView.canCancelContentTouches = true
+            // Allow the timeline to freeze horizontal scrolling while dragging items
+            scrollView.isScrollEnabled = isScrollEnabled
             if let x = targetX {
                 if !(scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) {
                     let minX: CGFloat = 0

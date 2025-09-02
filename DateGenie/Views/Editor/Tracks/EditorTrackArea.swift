@@ -12,6 +12,9 @@ struct EditorTrackArea: View {
     @GestureState private var canvasMagnify: CGFloat = 1
     @GestureState private var canvasRotate: Angle = .zero
     @State private var canvasAnchor: UnitPoint = .center
+    // Canvas-wide drag state to move selected text from anywhere on the screen
+    @GestureState private var canvasDragTranslation: CGSize = .zero
+    @State private var dragStartPosition: CGPoint? = nil
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -57,7 +60,7 @@ struct EditorTrackArea: View {
                         }
                     }
                 }
-                // Full-canvas gesture: attach without blocking chip/buttons/taps
+                // Full-canvas overlay (non-hittable) keeps layout predictable
                 .overlay(alignment: .center) {
                     if state.selectedTextId != nil {
                         Rectangle()
@@ -65,8 +68,10 @@ struct EditorTrackArea: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil, gestureProvider: { canvasTransformGesture() }))
             }
+            // Make the entire canvas area the gesture target (not just over the text)
+            .contentShape(Rectangle())
+            .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil, gestureProvider: { canvasTransformGesture() }))
             .coordinateSpace(name: "canvas")
             .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
             .onChange(of: geo.size) { newSize in
@@ -122,8 +127,8 @@ struct EditorTrackArea: View {
 
     private func isVisible(_ t: TimedTextOverlay, at time: CMTime) -> Bool {
         guard time.isNumeric else { return false }
-        let start = t.start
-        let end = t.start + t.duration
+        let start = t.effectiveStart
+        let end = t.effectiveStart + t.trimmedDuration
         return time >= start && time <= end
     }
 }
@@ -132,33 +137,65 @@ struct EditorTrackArea: View {
 extension EditorTrackArea {
     private func canvasTransformGesture() -> AnyGesture<Void> {
         if #available(iOS 17, *) {
-            let g = SimultaneousGesture(
-                MagnifyGesture(minimumScaleDelta: 0.005)
-                    .updating($canvasMagnify) { value, state, _ in
-                        state = value.magnification
-                        canvasAnchor = value.startAnchor
-                    }
-                    .onEnded { value in
-                        commitScaleDelta(value.magnification)
-                    },
-                RotationGesture()
-                    .updating($canvasRotate) { value, state, _ in
-                        state = value
-                    }
-                    .onEnded { value in
-                        commitRotationDelta(value)
-                    }
-            ).map { _ in () }
+            // Global pinch: scales currently selected text even if the gesture starts away from it
+            let pinch = MagnifyGesture(minimumScaleDelta: 0.003)
+                .updating($canvasMagnify) { value, state, _ in
+                    state = value.magnification
+                    canvasAnchor = value.startAnchor
+                }
+                .onEnded { value in
+                    commitScaleDelta(value.magnification)
+                }
+
+            // Global rotate: rotates the selected text regardless of touch location
+            let rotate = RotationGesture()
+                .updating($canvasRotate) { value, state, _ in
+                    state = value
+                }
+                .onEnded { value in
+                    commitRotationDelta(value)
+                }
+
+            let drag = DragGesture(minimumDistance: 0)
+                .updating($canvasDragTranslation) { value, state, _ in
+                    state = value.translation
+                    applyDragLive(translation: value.translation)
+                }
+                .onChanged { value in
+                    applyDragLive(translation: value.translation)
+                }
+                .onEnded { _ in
+                    dragStartPosition = nil
+                }
+
+            // Combine pinch + rotate simultaneously, and also allow drag
+            let combined = SimultaneousGesture(SimultaneousGesture(pinch, rotate), drag).map { _ in () }
+            let g = combined
             return AnyGesture(g)
         } else {
-            let g = SimultaneousGesture(
-                MagnificationGesture()
-                    .updating($canvasMagnify) { value, state, _ in state = value }
-                    .onEnded { value in commitScaleDelta(value) },
-                RotationGesture()
-                    .updating($canvasRotate) { value, state, _ in state = value }
-                    .onEnded { value in commitRotationDelta(value) }
-            ).map { _ in () }
+            // Global pinch for iOS 16-
+            let pinch = MagnificationGesture()
+                .updating($canvasMagnify) { value, state, _ in state = value }
+                .onEnded { value in commitScaleDelta(value) }
+
+            // Global rotate for iOS 16-
+            let rotate = RotationGesture()
+                .updating($canvasRotate) { value, state, _ in state = value }
+                .onEnded { value in commitRotationDelta(value) }
+
+            let drag = DragGesture(minimumDistance: 0)
+                .updating($canvasDragTranslation) { value, state, _ in
+                    state = value.translation
+                    applyDragLive(translation: value.translation)
+                }
+                .onChanged { value in
+                    applyDragLive(translation: value.translation)
+                }
+                .onEnded { _ in
+                    dragStartPosition = nil
+                }
+
+            let g = SimultaneousGesture(SimultaneousGesture(pinch, rotate), drag).map { _ in () }
             return AnyGesture(g)
         }
     }
@@ -176,6 +213,18 @@ extension EditorTrackArea {
               let i = state.textOverlays.firstIndex(where: { $0.id == id }),
               delta.radians.isFinite else { return }
         state.textOverlays[i].base.rotation += CGFloat(delta.radians)
+    }
+
+    private func applyDragLive(translation: CGSize) {
+        guard let id = state.selectedTextId,
+              let i = state.textOverlays.firstIndex(where: { $0.id == id }) else { return }
+        let start = dragStartPosition ?? state.textOverlays[i].base.position
+        if dragStartPosition == nil { dragStartPosition = start }
+        let newX = start.x + translation.width
+        let newY = start.y + translation.height
+        let clampedX = min(max(0, newX), canvasRect.width)
+        let clampedY = min(max(0, newY), canvasRect.height)
+        state.textOverlays[i].base.position = CGPoint(x: clampedX, y: clampedY)
     }
 }
 
