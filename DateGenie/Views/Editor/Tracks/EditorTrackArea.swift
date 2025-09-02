@@ -37,7 +37,14 @@ struct EditorTrackArea: View {
                                     .scaleEffect(base.scale)
                                     .rotationEffect(Angle(radians: Double(base.rotation)))
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                    .allowsHitTesting(false)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        state.selectedTextId = t.id
+                                        // Open edit toolbar when selecting a text overlay
+                                        DispatchQueue.main.async {
+                                            NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
+                                        }
+                                    }
                             }
                         }
                     }
@@ -47,6 +54,26 @@ struct EditorTrackArea: View {
             .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
             .onChange(of: geo.size) { newSize in
                 canvasRect = CGRect(origin: .zero, size: newSize)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DeleteSelectedTextOverlay"))) { _ in
+            if let id = state.selectedTextId, let idx = state.textOverlays.firstIndex(where: { $0.id == id }) {
+                state.textOverlays.remove(at: idx)
+                state.selectedTextId = nil
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DuplicateSelectedTextOverlay"))) { note in
+            guard let id = note.object as? UUID, let idx = state.textOverlays.firstIndex(where: { $0.id == id }) else { return }
+            var src = state.textOverlays[idx]
+            var dup = src
+            dup.base = TextOverlay(id: UUID(), string: src.base.string, fontName: src.base.fontName, style: src.base.style, color: src.base.color, position: CGPoint(x: min(src.base.position.x + 16, canvasRect.width), y: min(src.base.position.y + 16, canvasRect.height)), scale: src.base.scale, rotation: src.base.rotation, zIndex: src.base.zIndex + 1)
+            state.textOverlays.append(dup)
+            state.selectedTextId = dup.id
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("UnselectTextOverlay"))) { _ in
+            state.selectedTextId = nil
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
             }
         }
         .frame(maxWidth: .infinity)

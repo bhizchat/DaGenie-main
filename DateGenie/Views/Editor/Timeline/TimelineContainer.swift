@@ -355,6 +355,12 @@ struct TimelineContainer: View {
                                         DispatchQueue.main.async {
                                             NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
                                         }
+                                        // Close toolbar on deselection of the same text strip
+                                        if was {
+                                            DispatchQueue.main.async {
+                                                NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
+                                            }
+                                        }
                                     }
                                 )
                                 .gesture(
@@ -449,6 +455,10 @@ struct TimelineContainer: View {
                                     state.selectedClipId = nil
                                     state.selectedAudioId = nil
                                     state.selectedTextId = nil
+                                    // Explicitly close the Edit toolbar on global deselection
+                                    DispatchQueue.main.async {
+                                        NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
+                                    }
                                 }
                                 didTapClip = false
                             }

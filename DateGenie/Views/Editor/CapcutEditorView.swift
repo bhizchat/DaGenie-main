@@ -135,7 +135,7 @@ struct CapcutEditorView: View {
                                    onDone: { isTyping = false; dockFocused = false })
                             .focused($dockFocused)
                             .padding(.horizontal, 12)
-                            .padding(.bottom, max(0, keyboard.height))
+                            .padding(.bottom, max(0, keyboard.height - 17))
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
@@ -165,6 +165,13 @@ struct CapcutEditorView: View {
         // Open Edit toolbar if any selection event requests it (e.g., selecting a text strip)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenEditToolbarForSelection"))) { _ in
             withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenTypingDockForSelectedText"))) { _ in
+            isTyping = true
+            dockFocused = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("CloseEditToolbarForDeselection"))) { _ in
+            withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
         }
         // Device audio file importer
         .fileImporter(isPresented: $showAudioImporter,

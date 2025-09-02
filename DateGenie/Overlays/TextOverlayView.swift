@@ -12,8 +12,10 @@ struct TextOverlayView: View {
 
     @GestureState private var drag: CGSize = .zero
     @State private var didBeginDrag: Bool = false
-    @State private var currentScale: CGFloat = 1
-    @State private var currentRotation: Angle = .zero
+    // Transient transform state (per Apple docs) and dynamic anchor
+    @GestureState private var magnify: CGFloat = 1
+    @GestureState private var rotate: Angle = .zero
+    @State private var transformAnchor: UnitPoint = .center
     // Live measured glyph size (unscaled) used to size the selection rect and anchor chips
     @State private var measuredTextSize: CGSize = .zero
 
@@ -45,19 +47,25 @@ struct TextOverlayView: View {
                         .frame(width: size.width, height: size.height, alignment: .center)
                     selectionRectWithChips
                 }
-                .onTapGesture(count: 2, perform: onBeginEdit)
-                .simultaneousGesture(
+                // Double-tap to edit should win vs background single-tap, but not override chip buttons
+                .highPriorityGesture(
+                    TapGesture(count: 2).onEnded { onBeginEdit() },
+                    including: .gesture
+                )
+                // Single-tap on background (not chips): close typing or unselect
+                .gesture(
                     TapGesture(count: 1).onEnded {
                         NotificationCenter.default.post(name: Notification.Name("CanvasTapOnSelectedText"), object: nil)
-                    }
+                    },
+                    including: .gesture
                 )
             }
         }
         .position(livePosition)
         .animation(nil, value: drag)
-        .scaleEffect(safeScale(model.scale * currentScale))
-        .rotationEffect(safeAngle(Angle(radians: Double(model.rotation)) + currentRotation))
-        .gesture(isEditing ? nil : dragGesture.simultaneously(with: pinchAndRotate))
+        .scaleEffect(safeScale(model.scale * magnify), anchor: transformAnchor)
+        .rotationEffect(safeAngle(Angle(radians: Double(model.rotation)) + rotate), anchor: transformAnchor)
+        .gesture(isEditing ? nil : dragGesture.simultaneously(with: anchoredTransformGesture), including: .gesture)
         .zIndex(Double(model.zIndex))
         .onAppear { recomputeMeasuredSize() }
         .onChange(of: model.string) { _ in recomputeMeasuredSize() }
@@ -95,11 +103,21 @@ struct TextOverlayView: View {
             .stroke(Color.white, lineWidth: 1)
             .frame(width: rectW, height: rectH, alignment: .topLeading)
             // Corner chips anchored using overlay(alignment:)
-            .overlay(chip(system: "xmark") { onEndEdit(); _ = model.string.isEmpty }, alignment: .topLeading)
-            .overlay(chip(system: "pencil") { onBeginEdit() }, alignment: .topTrailing)
-            .overlay(chip(system: "doc.on.doc") { /* duplicate in parent */ }, alignment: .bottomLeading)
-            .overlay(chip(system: "circle") { /* unselect in parent */ }, alignment: .bottomTrailing)
-            .allowsHitTesting(false)
+            .overlay(chip(system: "xmark") {
+                NotificationCenter.default.post(name: Notification.Name("DeleteSelectedTextOverlay"), object: model.id)
+            }, alignment: .topLeading)
+            .overlay(chip(system: "pencil") {
+                NotificationCenter.default.post(name: Notification.Name("OpenTypingDockForSelectedText"), object: model.id)
+            }, alignment: .topTrailing)
+            // Bottom chips now use custom asset icons
+            .overlay(assetChipButton("text_duplicate") {
+                NotificationCenter.default.post(name: Notification.Name("DuplicateSelectedTextOverlay"), object: model.id)
+            }
+            .offset(x: -14, y: 14), alignment: .bottomLeading)
+            .overlay(assetChipButton("text_unselect") {
+                NotificationCenter.default.post(name: Notification.Name("UnselectTextOverlay"), object: model.id)
+            }
+            .offset(x: 14, y: 14), alignment: .bottomTrailing)
     }
 
     private func chip(system: String, action: @escaping () -> Void) -> some View {
@@ -113,6 +131,24 @@ struct TextOverlayView: View {
         // Nudge outward so chips sit just outside the stroked rect
         .offset(x: (system == "xmark" || system == "doc.on.doc") ? -14 : 14,
                 y: (system == "xmark" || system == "pencil") ? -14 : 14)
+    }
+
+    // Asset-based chip button (for non-SF-symbol icons)
+    private func assetChipButton(_ name: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color.black.opacity(0.7))
+                .frame(width: 28, height: 28)
+                .overlay(
+                    Image(name)
+                        .resizable()
+                        .renderingMode(.original)
+                        .scaledToFit()
+                        .frame(width: 14, height: 14)
+                        .foregroundColor(.white)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func fontForStyle() -> Font {
@@ -184,21 +220,48 @@ struct TextOverlayView: View {
             }
     }
 
-    private var pinchAndRotate: some Gesture {
-        SimultaneousGesture(
-            MagnificationGesture().onChanged { scale in currentScale = scale }
-                .onEnded { scale in
-                    if scale.isFinite && scale > 0.001 {
-                        model.scale = clamp(model.scale * scale, min: 0.2, max: 6.0)
+    private var anchoredTransformGesture: AnyGesture<Void> {
+        if #available(iOS 17, *) {
+            let g = SimultaneousGesture(
+                MagnifyGesture(minimumScaleDelta: 0.005)
+                    .updating($magnify) { value, state, _ in
+                        state = value.magnification
+                        transformAnchor = value.startAnchor
                     }
-                    currentScale = 1
-                },
-            RotationGesture().onChanged { angle in currentRotation = angle }
-                .onEnded { angle in
-                    if angle.radians.isFinite { model.rotation += CGFloat(angle.radians) }
-                    currentRotation = .zero
-                }
-        )
+                    .onEnded { value in
+                        let s = value.magnification
+                        if s.isFinite && s > 0.001 {
+                            model.scale = clamp(model.scale * s, min: 0.2, max: 6.0)
+                        }
+                    },
+                RotationGesture()
+                    .updating($rotate) { value, state, _ in
+                        // Apply a small threshold to reduce jitter (~0.25°)
+                        let minRad: Double = 0.0043633231
+                        state = abs(value.radians) < minRad ? .zero : value
+                    }
+                    .onEnded { value in
+                        if value.radians.isFinite { model.rotation += CGFloat(value.radians) }
+                    }
+            ).map { _ in () }
+            return AnyGesture(g)
+        } else {
+            let g = SimultaneousGesture(
+                MagnificationGesture()
+                    .updating($magnify) { value, state, _ in state = value }
+                    .onEnded { value in
+                        if value.isFinite && value > 0.001 {
+                            model.scale = clamp(model.scale * value, min: 0.2, max: 6.0)
+                        }
+                    },
+                RotationGesture()
+                    .updating($rotate) { value, state, _ in state = value }
+                    .onEnded { value in
+                        if value.radians.isFinite { model.rotation += CGFloat(value.radians) }
+                    }
+            ).map { _ in () }
+            return AnyGesture(g)
+        }
     }
 
     private func clamp(_ v: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat { Swift.min(Swift.max(v, min), max) }
