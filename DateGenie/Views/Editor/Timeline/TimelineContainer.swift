@@ -388,6 +388,10 @@ struct TimelineContainer: View {
                         if !wasSelected {
                             state.selectedAudioId = nil
                             state.selectedTextId = nil
+                            // Ensure toolbar opens immediately on first selection
+                            DispatchQueue.main.async {
+                                NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
+                            }
                         }
                         didTapClip = true
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -443,7 +447,13 @@ struct TimelineContainer: View {
                                 onTap: {
                                     let was = (state.selectedAudioId == t.id)
                                     state.selectedAudioId = was ? nil : t.id
-                                    if !was { state.selectedClipId = nil; state.selectedTextId = nil }
+                                    if !was {
+                                        state.selectedClipId = nil
+                                        state.selectedTextId = nil
+                                        DispatchQueue.main.async {
+                                            NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
+                                        }
+                                    }
                                     didTapClip = true
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 },
@@ -536,10 +546,13 @@ struct TimelineContainer: View {
                                 onTap: {
                                     let was = (state.selectedTextId == t.id)
                                     state.selectedTextId = was ? nil : t.id
-                                    if !was { state.selectedClipId = nil; state.selectedAudioId = nil }
+                                    if !was {
+                                        state.selectedClipId = nil
+                                        state.selectedAudioId = nil
+                                        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                                    }
                                     didTapClip = true
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
                                     if was { DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) } }
                                 },
                                 onBeginMove: { /* no-op to mirror audio UX */ },
