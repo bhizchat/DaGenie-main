@@ -57,15 +57,15 @@ struct EditorTrackArea: View {
                         }
                     }
                 }
-                // Full-canvas gesture layer: active only when a text is selected
+                // Full-canvas gesture: attach without blocking chip/buttons/taps
                 .overlay(alignment: .center) {
                     if state.selectedTextId != nil {
                         Rectangle()
                             .fill(Color.clear)
-                            .contentShape(Rectangle())
-                            .gesture(canvasTransformGesture(), including: .gesture)
+                            .allowsHitTesting(false)
                     }
                 }
+                .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil, gestureProvider: { canvasTransformGesture() }))
             }
             .coordinateSpace(name: "canvas")
             .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
@@ -130,9 +130,9 @@ struct EditorTrackArea: View {
 
 // MARK: - Canvas transform gesture (selected text only)
 extension EditorTrackArea {
-    private func canvasTransformGesture() -> some Gesture {
+    private func canvasTransformGesture() -> AnyGesture<Void> {
         if #available(iOS 17, *) {
-            return SimultaneousGesture(
+            let g = SimultaneousGesture(
                 MagnifyGesture(minimumScaleDelta: 0.005)
                     .updating($canvasMagnify) { value, state, _ in
                         state = value.magnification
@@ -148,16 +148,18 @@ extension EditorTrackArea {
                     .onEnded { value in
                         commitRotationDelta(value)
                     }
-            )
+            ).map { _ in () }
+            return AnyGesture(g)
         } else {
-            return SimultaneousGesture(
+            let g = SimultaneousGesture(
                 MagnificationGesture()
                     .updating($canvasMagnify) { value, state, _ in state = value }
                     .onEnded { value in commitScaleDelta(value) },
                 RotationGesture()
                     .updating($canvasRotate) { value, state, _ in state = value }
                     .onEnded { value in commitRotationDelta(value) }
-            )
+            ).map { _ in () }
+            return AnyGesture(g)
         }
     }
 
@@ -174,6 +176,19 @@ extension EditorTrackArea {
               let i = state.textOverlays.firstIndex(where: { $0.id == id }),
               delta.radians.isFinite else { return }
         state.textOverlays[i].base.rotation += CGFloat(delta.radians)
+    }
+}
+
+// MARK: - Modifier to apply transform gesture without intercepting taps/buttons
+private struct SelectedTransformGestureModifier: ViewModifier {
+    let isActive: Bool
+    let gestureProvider: () -> AnyGesture<Void>
+    func body(content: Content) -> some View {
+        if isActive {
+            content.simultaneousGesture(gestureProvider(), including: .gesture)
+        } else {
+            content
+        }
     }
 }
 
