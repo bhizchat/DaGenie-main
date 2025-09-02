@@ -40,10 +40,17 @@ struct TextOverlayView: View {
             } else {
                 // Selected overlay: content + measured selection rect with corner-anchored chips
                 ZStack(alignment: .topLeading) {
+                    let size = rectSize()
                     content
+                        .frame(width: size.width, height: size.height, alignment: .center)
                     selectionRectWithChips
                 }
                 .onTapGesture(count: 2, perform: onBeginEdit)
+                .simultaneousGesture(
+                    TapGesture(count: 1).onEnded {
+                        NotificationCenter.default.post(name: Notification.Name("CanvasTapOnSelectedText"), object: nil)
+                    }
+                )
             }
         }
         .position(livePosition)
@@ -58,7 +65,8 @@ struct TextOverlayView: View {
     }
 
     @ViewBuilder private var content: some View {
-        let text = Text(model.string)
+        let display = model.string.isEmpty ? "Enter text" : model.string
+        let text = Text(display)
             .font(fontForStyle())
             .foregroundColor(model.color.color)
             .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
@@ -79,10 +87,9 @@ struct TextOverlayView: View {
 
     // MARK: - Measured selection rect with chips anchored at the four corners
     private var selectionRectWithChips: some View {
-        let paddingW: CGFloat = (model.style == .largeBackground) ? 16 : 0 // 8 + 8
-        let paddingH: CGFloat = (model.style == .largeBackground) ? 8  : 0 // 4 + 4
-        let rectW = max(1, measuredTextSize.width + paddingW)
-        let rectH = max(1, measuredTextSize.height + paddingH)
+        let size = rectSize()
+        let rectW = size.width
+        let rectH = size.height
 
         return RoundedRectangle(cornerRadius: 4)
             .stroke(Color.white, lineWidth: 1)
@@ -124,7 +131,7 @@ struct TextOverlayView: View {
 
     // Compute tight single-line text bounds using Core Text
     private func recomputeMeasuredSize() {
-        let s = model.string.isEmpty ? " " : model.string
+        let s = model.string.isEmpty ? "Enter text" : model.string
         let font = uiFontForStyle()
         let attr = NSAttributedString(string: s, attributes: [.font: font])
         let line = CTLineCreateWithAttributedString(attr as CFAttributedString)
@@ -134,6 +141,18 @@ struct TextOverlayView: View {
         let w = (img.isNull || !img.width.isFinite) ? advW : img.width
         let h = ascent + descent
         measuredTextSize = CGSize(width: ceil(max(1, w)), height: ceil(max(1, h)))
+    }
+
+    // Unified rectangle size used for both centered content and stroked rect
+    private func rectSize() -> CGSize {
+        // Extra visual breathing room so the rect isn't too tight
+        let extraInsetW: CGFloat = 20
+        let extraInsetH: CGFloat = 12
+        let paddingW: CGFloat = ((model.style == .largeBackground) ? 16 : 0) + extraInsetW
+        let paddingH: CGFloat = ((model.style == .largeBackground) ? 8  : 0) + extraInsetH
+        let rectW = max(1, measuredTextSize.width + paddingW)
+        let rectH = max(1, measuredTextSize.height + paddingH)
+        return CGSize(width: rectW, height: rectH)
     }
 
     private var livePosition: CGPoint {

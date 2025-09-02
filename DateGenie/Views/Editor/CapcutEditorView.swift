@@ -151,6 +151,17 @@ struct CapcutEditorView: View {
             configureAudioSessionForPreview()
             state.preparePlayer()
         }
+        // Tap handling from canvas for selected text: first tap dismisses keyboard, second tap clears selection
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("CanvasTapOnSelectedText"))) { _ in
+            if dockFocused || isTyping {
+                // First tap: dismiss keyboard
+                isTyping = false
+                dockFocused = false
+            } else {
+                // Second tap: remove rectangle by clearing selection
+                state.selectedTextId = nil
+            }
+        }
         // Open Edit toolbar if any selection event requests it (e.g., selecting a text strip)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenEditToolbarForSelection"))) { _ in
             withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
