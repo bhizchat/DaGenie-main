@@ -23,7 +23,9 @@ struct EditToolsBar: View {
                     EditToolsBarItem(assetName: "Split", title: "Split", action: { }, isEnabled: allowAll || allowForText("Split"))
                     EditToolsBarItem(assetName: "Speed", title: "Speed", action: { }, isEnabled: allowAll || allowForText("Speed"))
                     EditToolsBarItem(assetName: "Volume", title: "Volume", action: { }, isEnabled: allowAll || allowForText("Volume"))
-                    EditToolsBarItem(assetName: "Delete", title: "Delete", action: { }, isEnabled: allowAll || allowForText("Delete"))
+                    EditToolsBarItem(assetName: "Delete", title: "Delete", action: {
+                        Task { await state.deleteSelected() }
+                    }, isEnabled: allowAll || allowForText("Delete"))
                     EditToolsBarItem(assetName: "Duplicate", title: "Duplicate", action: { }, isEnabled: allowAll || allowForText("Duplicate"))
                     EditToolsBarItem(assetName: "Extract_audio", title: "Extract\naudio", action: { }, isEnabled: allowAll || allowForText("Extract_audio"))
                     EditToolsBarItem(assetName: "Opacity", title: "Opacity", action: { }, isEnabled: allowAll || allowForText("Opacity"))

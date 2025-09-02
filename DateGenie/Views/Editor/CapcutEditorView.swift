@@ -970,6 +970,7 @@ extension EditorState {
         var right = max(0, CMTimeGetSeconds(t.trimEnd ?? t.duration))
         let project = max(0, CMTimeGetSeconds(totalDuration))
         let minLen: Double = 0.03
+        let eps: Double = 1.0 / 240.0
 
         if let dx = leftDeltaSeconds {
             if dx >= 0 {
@@ -993,9 +994,10 @@ extension EditorState {
                 right = max(left + minLen, min(dur, right + dx))
             } else {
                 var newRight = right + dx
-                if newRight > dur {
+                // If approaching current duration boundary within tolerance, treat as an extension
+                if newRight > (dur - eps) {
                     let room = max(0, project - start - dur)
-                    let grow = min(newRight - dur, room)
+                    let grow = min(max(0, newRight - dur), room)
                     dur += grow
                 }
                 right = min(dur, newRight)
@@ -1011,6 +1013,36 @@ extension EditorState {
         t.trimStart = CMTime(seconds: left,  preferredTimescale: 600)
         t.trimEnd   = CMTime(seconds: right, preferredTimescale: 600)
         textOverlays[i] = t
+        // Keep preview state coherent when text overlays change timing
+        Task { await rebuildCompositionForPreview() }
+    }
+
+    // MARK: - Delete selection from timeline (clip, audio, or text)
+    @MainActor
+    func deleteSelected() async {
+        if let textId = selectedTextId {
+            if let idx = textOverlays.firstIndex(where: { $0.id == textId }) {
+                textOverlays.remove(at: idx)
+            }
+            selectedTextId = nil
+            return
+        }
+        if let audioId = selectedAudioId {
+            if let idx = audioTracks.firstIndex(where: { $0.id == audioId }) {
+                audioTracks.remove(at: idx)
+            }
+            selectedAudioId = nil
+            await rebuildCompositionForPreview()
+            return
+        }
+        if let clipId = selectedClipId {
+            if let idx = clips.firstIndex(where: { $0.id == clipId }) {
+                clips.remove(at: idx)
+                selectedClipId = nil
+                await rebuildComposition()
+                return
+            }
+        }
     }
 }
 

@@ -140,6 +140,9 @@ struct TimelineContainer: View {
                                           geo: geo)
                     }
                 )
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ResetTimelineDragGate"))) { _ in
+                    if isDraggingLaneItem { isDraggingLaneItem = false }
+                }
             }
             .coordinateSpace(name: "timelineScroll")
             .simultaneousGesture(
@@ -285,7 +288,7 @@ struct TimelineContainer: View {
                 .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
-                .onDisappear { leftHandlePrevDX = 0 }
+                .onDisappear { leftHandlePrevDX = 0; isDraggingLaneItem = false }
 
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
                     if !isDraggingLaneItem { isDraggingLaneItem = true }
@@ -299,7 +302,7 @@ struct TimelineContainer: View {
                 .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
-                .onDisappear { rightHandlePrevDX = 0 }
+                .onDisappear { rightHandlePrevDX = 0; isDraggingLaneItem = false }
             }
         }
         // Align stacked rows (and overlay) with playhead like before
