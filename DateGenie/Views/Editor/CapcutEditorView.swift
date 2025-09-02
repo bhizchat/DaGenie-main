@@ -661,6 +661,16 @@ final class EditorState: ObservableObject {
         let clamped = min(max(0, seconds), max(0, totalS - durS))
         audioTracks[idx].start = CMTime(seconds: clamped, preferredTimescale: 600)
     }
+
+    // Move text start time with clamping based on trimmed length
+    @MainActor
+    func moveText(id: UUID, toStartSeconds seconds: Double) {
+        guard let i = textOverlays.firstIndex(where: { $0.id == id }) else { return }
+        let visibleLen = max(0, CMTimeGetSeconds(textOverlays[i].trimmedDuration))
+        let totalS = max(0, CMTimeGetSeconds(totalDuration))
+        let clamped = min(max(0, seconds), max(0, totalS - visibleLen))
+        textOverlays[i].start = CMTime(seconds: clamped, preferredTimescale: 600)
+    }
 }
 
 // MARK: - Selection and clip timing helpers
@@ -866,15 +876,52 @@ extension EditorState {
     func trimText(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) {
         guard let i = textOverlays.firstIndex(where: { $0.id == id }) else { return }
         var t = textOverlays[i]
-        let durS = max(0, CMTimeGetSeconds(t.duration))
-        var left = max(0, CMTimeGetSeconds(t.trimStart))
+
+        var start = max(0, CMTimeGetSeconds(t.start))
+        var dur   = max(0, CMTimeGetSeconds(t.duration))
+        var left  = max(0, CMTimeGetSeconds(t.trimStart))
         var right = max(0, CMTimeGetSeconds(t.trimEnd ?? t.duration))
-        if let dx = leftDeltaSeconds { left = min(max(0, left + dx), max(0, right - 0.03)) }
-        if let dx = rightDeltaSeconds {
-            right = max(0, min(durS, right + dx))
-            right = max(right, left + 0.03)
+        let project = max(0, CMTimeGetSeconds(totalDuration))
+        let minLen: Double = 0.03
+
+        if let dx = leftDeltaSeconds {
+            if dx >= 0 {
+                left = min(max(0, left + dx), max(0, right - minLen))
+            } else {
+                let extend = -dx
+                if left >= extend {
+                    left -= extend
+                } else {
+                    let extra = extend - left
+                    left = 0
+                    let allowed = min(extra, start)
+                    start -= allowed
+                    dur += allowed
+                }
+            }
         }
-        t.trimStart = CMTime(seconds: left, preferredTimescale: 600)
+
+        if let dx = rightDeltaSeconds {
+            if dx <= 0 {
+                right = max(left + minLen, min(dur, right + dx))
+            } else {
+                var newRight = right + dx
+                if newRight > dur {
+                    let room = max(0, project - start - dur)
+                    let grow = min(newRight - dur, room)
+                    dur += grow
+                }
+                right = min(dur, newRight)
+                right = max(right, left + minLen)
+            }
+        }
+
+        let maxDur = max(0, project - start)
+        if dur > maxDur { dur = maxDur; right = min(right, dur) }
+
+        t.start     = CMTime(seconds: start, preferredTimescale: 600)
+        t.duration  = CMTime(seconds: dur,   preferredTimescale: 600)
+        t.trimStart = CMTime(seconds: left,  preferredTimescale: 600)
         t.trimEnd   = CMTime(seconds: right, preferredTimescale: 600)
         textOverlays[i] = t
     }

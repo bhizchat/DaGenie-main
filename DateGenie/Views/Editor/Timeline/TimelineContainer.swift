@@ -35,6 +35,11 @@ struct TimelineContainer: View {
     // Audio drag helpers
     @State private var draggingAudioId: UUID? = nil
     @State private var audioDragStartSeconds: Double = 0
+    // Text drag helpers and scroll gating
+    @State private var draggingTextId: UUID? = nil
+    @State private var textDragStartSeconds: Double = 0
+    // Freeze timeline scroll while dragging any lane item
+    @State private var isDraggingLaneItem: Bool = false
     // Observed native ScrollView horizontal offset (PreferenceKey-based)
     @State private var observedOffsetX: CGFloat = 0
     // Global handle drag incremental delta trackers (avoid compounding)
@@ -461,6 +466,7 @@ struct TimelineContainer: View {
                                     if draggingAudioId != t.id {
                                         draggingAudioId = t.id
                                         audioDragStartSeconds = max(0, CMTimeGetSeconds(t.start))
+                                        isDraggingLaneItem = true
                                     }
                                 },
                                 onDragMove: { deltaSec in
@@ -469,6 +475,7 @@ struct TimelineContainer: View {
                                 },
                                 onEndMove: {
                                     draggingAudioId = nil
+                                    isDraggingLaneItem = false
                                     Task { await state.rebuildCompositionForPreview() }
                                 },
                                 onTrimLeft: { dxSec in
@@ -555,17 +562,18 @@ struct TimelineContainer: View {
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                     if was { DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) } }
                                 },
-                                onBeginMove: { /* no-op to mirror audio UX */ },
-                                onDragMove: { deltaSec in
-                                    let newStart = max(0, CMTimeGetSeconds(t.start) + deltaSec)
-                                    if let idx = state.textOverlays.firstIndex(where: { $0.id == t.id }) {
-                                        let durS = max(0, CMTimeGetSeconds(state.textOverlays[idx].duration))
-                                        let totalS = max(0, CMTimeGetSeconds(state.totalDuration))
-                                        let clamped = min(max(0, newStart), max(0, totalS - durS))
-                                        state.textOverlays[idx].start = CMTime(seconds: clamped, preferredTimescale: 600)
+                                onBeginMove: {
+                                    if draggingTextId != t.id {
+                                        draggingTextId = t.id
+                                        textDragStartSeconds = max(0, CMTimeGetSeconds(t.start))
+                                        isDraggingLaneItem = true
                                     }
                                 },
-                                onEndMove: { },
+                                onDragMove: { deltaSec in
+                                    let proposed = textDragStartSeconds + deltaSec
+                                    state.moveText(id: t.id, toStartSeconds: proposed)
+                                },
+                                onEndMove: { draggingTextId = nil; isDraggingLaneItem = false },
                                 onTrimLeft: { dxSec in state.trimText(id: t.id, leftDeltaSeconds: dxSec) },
                                 onTrimRight: { dxSec in state.trimText(id: t.id, rightDeltaSeconds: dxSec) }
                             )
@@ -618,7 +626,7 @@ struct TimelineContainer: View {
                                 }
                             }
                             .background(
-                                ScrollViewBridge(targetX: programmaticX) { x, isTracking, isDragging, isDecel in
+                                ScrollViewBridge(targetX: programmaticX, isScrollEnabled: !isDraggingLaneItem) { x, isTracking, isDragging, isDecel in
                                     observedOffsetX = x
                                     // Consider any of these phases an interaction; mirror to scrubbing flag
                                     let interacting = (isTracking || isDragging || isDecel)
@@ -798,6 +806,7 @@ struct TimelineContainer: View {
                 Rectangle()
                     .fill(Color.white)
                     .frame(width: 2, height: playheadHeight)
+                    .allowsHitTesting(false)
                 // Timecode HUD during scrubbing
                 if state.isScrubbing {
                     VStack(spacing: 4) {
@@ -810,6 +819,7 @@ struct TimelineContainer: View {
                     }
                     .offset(y: -((stripHeight + spacingAboveStrip + rulerHeight + extraPlayheadExtension)/2) - 20)
                     .transition(.opacity)
+                    .allowsHitTesting(false)
                 }
             }
             
