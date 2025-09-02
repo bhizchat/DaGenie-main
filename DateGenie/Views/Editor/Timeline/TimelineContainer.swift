@@ -85,12 +85,249 @@ struct TimelineContainer: View {
         return (x * s).rounded(.toNearestOrAwayFromZero) / s
     }
 
+    // MARK: - Scroll handler (extracted for type-checking performance)
+    private func handleScrollEvent(x: CGFloat,
+                                   isTracking: Bool,
+                                   isDragging: Bool,
+                                   isDecel: Bool,
+                                   geo: GeometryProxy) {
+        observedOffsetX = x
+        // Consider any of these phases an interaction; mirror to scrubbing flag
+        let interacting = (isTracking || isDragging || isDecel)
+        if isScrollInteracting != interacting {
+            isScrollInteracting = interacting
+            state.isScrubbing = interacting
+            if interacting {
+                state.beginScrub()
+            } else {
+                lastScrollEndedAt = CACurrentMediaTime()
+                state.endScrub()
+            }
+        }
+        // Map scroll → time only while user (or deceleration) is driving.
+        if interacting {
+            let ct = timeForOffset(x, width: geo.size.width,
+                                   pps: state.pixelsPerSecond,
+                                   duration: state.totalDuration)
+            state.scrub(to: ct)
+        }
+    }
+
+    // MARK: - Small helpers to reduce type-check depth
+    @ViewBuilder private func headerRuler(_ geo: GeometryProxy) -> some View {
+        rulerOverlay(width: geo.size.width, center: geo.size.width / 2)
+            .frame(height: rulerHeight)
+            .offset(y: -105) // raise ruler vertically by ~105pt total
+    }
+
+    @ViewBuilder private func scrollerAndOverlays(_ geo: GeometryProxy) -> some View {
+        ZStack(alignment: .topLeading) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: TimelineStyle.rowSpacing) {
+                    videoRow(geo)
+                    if hasClip {
+                        extraAudioRow(geo)
+                        textRow(geo)
+                    }
+                }
+                .background(
+                    ScrollViewBridge(targetX: programmaticX,
+                                     isScrollEnabled: !isDraggingLaneItem) { x, t, d, decel in
+                        handleScrollEvent(x: x,
+                                          isTracking: t,
+                                          isDragging: d,
+                                          isDecel: decel,
+                                          geo: geo)
+                    }
+                )
+            }
+            .coordinateSpace(name: "timelineScroll")
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    if !didTapClip {
+                        state.selectedClipId = nil
+                        state.selectedAudioId = nil
+                        state.selectedTextId = nil
+                        // Explicitly close the Edit toolbar on global deselection
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
+                        }
+                    }
+                    didTapClip = false
+                }
+            )
+
+            // Selection overlay (frame + handles) positioned in the SAME coordinate space as rows
+            if let s = state.selectedClipStartSeconds,
+               let e = state.selectedClipEndSeconds,
+               e > s {
+                let pps = state.pixelsPerSecond
+                // Use unified mapping for precise placement
+                let startX = (offsetForTime(CMTime(seconds: s, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                let endX   = (offsetForTime(CMTime(seconds: e, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                let selW   = endX - startX
+
+                Group {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.white, lineWidth: 3)
+                        .frame(width: selW, height: TimelineStyle.videoRowHeight)
+                        .position(x: startX + selW / 2,
+                                  y: TimelineStyle.videoRowHeight / 2)
+                        .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+
+                    // Left handle
+                    ZStack {
+                        RoundedRectangle(cornerRadius: selectionHandleCorner)
+                            .fill(Color.white)
+                            .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.black.opacity(0.9))
+                                    .frame(width: selectionHandleWidth * 0.35,
+                                           height: max(8, TimelineStyle.videoRowHeight - 12))
+                            )
+                    }
+                    .position(x: startX - selectionHandleWidth / 2,
+                              y: TimelineStyle.videoRowHeight / 2)
+                    .zIndex(200)
+
+                    // Right handle
+                    ZStack {
+                        RoundedRectangle(cornerRadius: selectionHandleCorner)
+                            .fill(Color.white)
+                            .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.black.opacity(0.9))
+                                    .frame(width: selectionHandleWidth * 0.35,
+                                           height: max(8, TimelineStyle.videoRowHeight - 12))
+                            )
+                    }
+                    .position(x: endX + selectionHandleWidth / 2,
+                              y: TimelineStyle.videoRowHeight / 2)
+                    .zIndex(200)
+                }
+                // Ensure overlay does not intercept timeline gestures
+                .allowsHitTesting(false)
+            }
+
+            // Global overlay for AUDIO selection (absolute coordinates)
+            if let sA = state.selectedAudioStartSeconds,
+               let eA = state.selectedAudioEndSeconds,
+               eA > sA, let a = state.selectedAudio {
+                let pps = state.pixelsPerSecond
+                let startX = (offsetForTime(CMTime(seconds: sA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                let endX   = (offsetForTime(CMTime(seconds: eA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
+
+                // Frame (optional outline to match video look)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.white, lineWidth: 2)
+                    .frame(width: endX - startX, height: TimelineStyle.laneRowHeight)
+                    .position(x: startX + (endX - startX)/2, y: y)
+                    .allowsHitTesting(false)
+
+                // Left handle
+                EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
+                    if !isDraggingLaneItem { isDraggingLaneItem = true }
+                    let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
+                    leftHandlePrevDX = dx
+                    Task { await state.trimAudio(id: a.id, leftDeltaSeconds: deltaSec) }
+                }, onEnd: {
+                    leftHandlePrevDX = 0
+                    isDraggingLaneItem = false
+                })
+                .highPriorityGesture(DragGesture(minimumDistance: 0))
+                .position(x: startX - selectionHandleWidth/2, y: y)
+                .zIndex(220)
+                .onDisappear { leftHandlePrevDX = 0 }
+
+                // Right handle
+                EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
+                    if !isDraggingLaneItem { isDraggingLaneItem = true }
+                    let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
+                    rightHandlePrevDX = dx
+                    Task { await state.trimAudio(id: a.id, rightDeltaSeconds: deltaSec) }
+                }, onEnd: {
+                    rightHandlePrevDX = 0
+                    isDraggingLaneItem = false
+                })
+                .highPriorityGesture(DragGesture(minimumDistance: 0))
+                .position(x: endX + selectionHandleWidth/2, y: y)
+                .zIndex(220)
+                .onDisappear { rightHandlePrevDX = 0 }
+            }
+
+            // Global overlay for TEXT selection (absolute coordinates)
+            if let sT = state.selectedTextStartSeconds,
+               let eT = state.selectedTextEndSeconds,
+               eT > sT, let t = state.selectedText {
+                let pps = state.pixelsPerSecond
+                let startX = (offsetForTime(CMTime(seconds: sT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                let endX   = (offsetForTime(CMTime(seconds: eT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + TimelineStyle.laneRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
+
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(Color.white, lineWidth: 2)
+                    .frame(width: endX - startX, height: TimelineStyle.laneRowHeight)
+                    .position(x: startX + (endX - startX)/2, y: y)
+                    .allowsHitTesting(false)
+
+                EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
+                    if !isDraggingLaneItem { isDraggingLaneItem = true }
+                    let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
+                    leftHandlePrevDX = dx
+                    state.trimText(id: t.id, leftDeltaSeconds: deltaSec)
+                }, onEnd: {
+                    leftHandlePrevDX = 0
+                    isDraggingLaneItem = false
+                })
+                .highPriorityGesture(DragGesture(minimumDistance: 0))
+                .position(x: startX - selectionHandleWidth/2, y: y)
+                .zIndex(220)
+                .onDisappear { leftHandlePrevDX = 0 }
+
+                EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
+                    if !isDraggingLaneItem { isDraggingLaneItem = true }
+                    let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
+                    rightHandlePrevDX = dx
+                    state.trimText(id: t.id, rightDeltaSeconds: deltaSec)
+                }, onEnd: {
+                    rightHandlePrevDX = 0
+                    isDraggingLaneItem = false
+                })
+                .highPriorityGesture(DragGesture(minimumDistance: 0))
+                .position(x: endX + selectionHandleWidth/2, y: y)
+                .zIndex(220)
+                .onDisappear { rightHandlePrevDX = 0 }
+            }
+        }
+        // Align stacked rows (and overlay) with playhead like before
+        .frame(height: stackedRowsHeight)
+        .offset(y: rowsOffsetY)
+        .zIndex(0)
+    }
+
     // Edge handle for global overlay (absolute positioning)
     private struct EdgeHandle: View {
         let height: CGFloat
         let width: CGFloat
         let onDrag: (CGFloat) -> Void // dx in points
+        let onEnd: () -> Void         // reset bookkeeping per gesture
+        let onBegin: (() -> Void)?
         @GestureState private var dx: CGFloat = 0
+        @State private var didBegin: Bool = false
+        init(height: CGFloat,
+             width: CGFloat,
+             onDrag: @escaping (CGFloat) -> Void,
+             onEnd: @escaping () -> Void,
+             onBegin: (() -> Void)? = nil) {
+            self.height = height
+            self.width = width
+            self.onDrag = onDrag
+            self.onEnd = onEnd
+            self.onBegin = onBegin
+        }
         var body: some View {
             ZStack {
                 RoundedRectangle(cornerRadius: 0)
@@ -107,7 +344,11 @@ struct TimelineContainer: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .updating($dx) { v, st, _ in st = v.translation.width }
-                    .onChanged { v in onDrag(v.translation.width) }
+                    .onChanged { v in
+                        if !didBegin { didBegin = true; onBegin?() }
+                        onDrag(v.translation.width)
+                    }
+                    .onEnded { _ in onEnd() }
             )
         }
     }
@@ -608,206 +849,16 @@ struct TimelineContainer: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottom) {
-                // Stack ruler above lanes with a small gap
                 VStack(spacing: spacingAboveStrip) {
-                    // Ruler overlay (seconds ticks) in header
-                    rulerOverlay(width: geo.size.width, center: geo.size.width / 2)
-                        .frame(height: rulerHeight)
-                        .offset(y: -105) // raise ruler vertically by ~105pt total
-
-                    // Shared horizontal scroller and selection overlay share the same vertical offset
-                    ZStack(alignment: .topLeading) {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            VStack(spacing: TimelineStyle.rowSpacing) {
-                                videoRow(geo)
-                                if hasClip {
-                                    extraAudioRow(geo)
-                                    textRow(geo)
-                                }
-                            }
-                            .background(
-                                ScrollViewBridge(targetX: programmaticX, isScrollEnabled: !isDraggingLaneItem) { x, isTracking, isDragging, isDecel in
-                                    observedOffsetX = x
-                                    // Consider any of these phases an interaction; mirror to scrubbing flag
-                                    let interacting = (isTracking || isDragging || isDecel)
-                                    if isScrollInteracting != interacting {
-                                        isScrollInteracting = interacting
-                                        state.isScrubbing = interacting
-                                        if interacting {
-                                            state.beginScrub()
-                                        } else {
-                                            lastScrollEndedAt = CACurrentMediaTime()
-                                            state.endScrub()
-                                        }
-                                    }
-                                    // Map scroll → time only while user (or deceleration) is driving.
-                                    if interacting {
-                                        let ct = timeForOffset(x, width: geo.size.width,
-                                                               pps: state.pixelsPerSecond,
-                                                               duration: state.totalDuration)
-                                        state.scrub(to: ct)
-                                    }
-                                }
-                            )
-                        }
-                        .coordinateSpace(name: "timelineScroll")
-                        .simultaneousGesture(
-                            TapGesture().onEnded {
-                                if !didTapClip {
-                                    state.selectedClipId = nil
-                                    state.selectedAudioId = nil
-                                    state.selectedTextId = nil
-                                    // Explicitly close the Edit toolbar on global deselection
-                                    DispatchQueue.main.async {
-                                        NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
-                                    }
-                                }
-                                didTapClip = false
-                            }
-                        )
-
-                        // Selection overlay (frame + handles) positioned in the SAME coordinate space as rows
-                        if let s = state.selectedClipStartSeconds,
-                           let e = state.selectedClipEndSeconds,
-                           e > s {
-                            let pps = state.pixelsPerSecond
-                            // Use unified mapping for precise placement
-                            let startX = (offsetForTime(CMTime(seconds: s, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                            let endX   = (offsetForTime(CMTime(seconds: e, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                            let selW   = endX - startX
-
-                            Group {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Color.white, lineWidth: 3)
-                                    .frame(width: selW, height: TimelineStyle.videoRowHeight)
-                                    .position(x: startX + selW / 2,
-                                              y: TimelineStyle.videoRowHeight / 2)
-                                    .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
-
-                                // Left handle
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: selectionHandleCorner)
-                                        .fill(Color.white)
-                                        .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(Color.black.opacity(0.9))
-                                                .frame(width: selectionHandleWidth * 0.35,
-                                                       height: max(8, TimelineStyle.videoRowHeight - 12))
-                                        )
-                                }
-                                .position(x: startX - selectionHandleWidth / 2,
-                                          y: TimelineStyle.videoRowHeight / 2)
-                                .zIndex(200)
-
-                                // Right handle
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: selectionHandleCorner)
-                                        .fill(Color.white)
-                                        .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(Color.black.opacity(0.9))
-                                                .frame(width: selectionHandleWidth * 0.35,
-                                                       height: max(8, TimelineStyle.videoRowHeight - 12))
-                                        )
-                                }
-                                .position(x: endX + selectionHandleWidth / 2,
-                                          y: TimelineStyle.videoRowHeight / 2)
-                                .zIndex(200)
-                            }
-                            // Ensure overlay does not intercept timeline gestures
-                            .allowsHitTesting(false)
-                        }
-
-                        // Global overlay for AUDIO selection (absolute coordinates)
-                        if let sA = state.selectedAudioStartSeconds,
-                           let eA = state.selectedAudioEndSeconds,
-                           eA > sA, let a = state.selectedAudio {
-                            let pps = state.pixelsPerSecond
-                            let startX = (offsetForTime(CMTime(seconds: sA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                            let endX   = (offsetForTime(CMTime(seconds: eA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                            let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
-
-                            // Frame (optional outline to match video look)
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(Color.white, lineWidth: 2)
-                                .frame(width: endX - startX, height: TimelineStyle.laneRowHeight)
-                                .position(x: startX + (endX - startX)/2, y: y)
-                                .allowsHitTesting(false)
-
-                            // Left handle
-                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
-                                let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
-                                leftHandlePrevDX = dx
-                                Task { await state.trimAudio(id: a.id, leftDeltaSeconds: deltaSec) }
-                            }
-                            .highPriorityGesture(DragGesture(minimumDistance: 0))
-                            .position(x: startX - selectionHandleWidth/2, y: y)
-                            .zIndex(220)
-                            .onDisappear { leftHandlePrevDX = 0 }
-
-                            // Right handle
-                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
-                                let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
-                                rightHandlePrevDX = dx
-                                Task { await state.trimAudio(id: a.id, rightDeltaSeconds: deltaSec) }
-                            }
-                            .highPriorityGesture(DragGesture(minimumDistance: 0))
-                            .position(x: endX + selectionHandleWidth/2, y: y)
-                            .zIndex(220)
-                            .onDisappear { rightHandlePrevDX = 0 }
-                        }
-
-                        // Global overlay for TEXT selection (absolute coordinates)
-                        if let sT = state.selectedTextStartSeconds,
-                           let eT = state.selectedTextEndSeconds,
-                           eT > sT, let t = state.selectedText {
-                            let pps = state.pixelsPerSecond
-                            let startX = (offsetForTime(CMTime(seconds: sT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                            let endX   = (offsetForTime(CMTime(seconds: eT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                            let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + TimelineStyle.laneRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
-
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .strokeBorder(Color.white, lineWidth: 2)
-                                .frame(width: endX - startX, height: TimelineStyle.laneRowHeight)
-                                .position(x: startX + (endX - startX)/2, y: y)
-                                .allowsHitTesting(false)
-
-                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
-                                let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
-                                leftHandlePrevDX = dx
-                                state.trimText(id: t.id, leftDeltaSeconds: deltaSec)
-                            }
-                            .highPriorityGesture(DragGesture(minimumDistance: 0))
-                            .position(x: startX - selectionHandleWidth/2, y: y)
-                            .zIndex(220)
-                            .onDisappear { leftHandlePrevDX = 0 }
-
-                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
-                                let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
-                                rightHandlePrevDX = dx
-                                state.trimText(id: t.id, rightDeltaSeconds: deltaSec)
-                            }
-                            .highPriorityGesture(DragGesture(minimumDistance: 0))
-                            .position(x: endX + selectionHandleWidth/2, y: y)
-                            .zIndex(220)
-                            .onDisappear { rightHandlePrevDX = 0 }
-                        }
-                    }
-                    // Align stacked rows (and overlay) with playhead like before
-                    .frame(height: stackedRowsHeight)
-                    .offset(y: rowsOffsetY)
-                    .zIndex(0)
-
+                    headerRuler(geo)
+                    scrollerAndOverlays(geo)
                 }
 
-                // Centered playhead line spanning ruler + gap + strip
+                // Centered playhead + HUD
                 Rectangle()
                     .fill(Color.white)
                     .frame(width: 2, height: playheadHeight)
                     .allowsHitTesting(false)
-                // Timecode HUD during scrubbing
                 if state.isScrubbing {
                     VStack(spacing: 4) {
                         Text(timeString(state.displayTime))
@@ -950,9 +1001,9 @@ struct TimelineContainer: View {
                 let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "mov"
                 let dest = docs.appendingPathComponent("picked_\(UUID().uuidString).\(ext)")
                 try data.write(to: dest, options: .atomic)
-                // Append to editor timeline
+                // Insert at current playhead (ripple), not append
                 await MainActor.run {
-                    Task { await state.appendClip(url: dest) }
+                    Task { await state.insertClipAtPlayhead(url: dest) }
                 }
                 print("[Timeline] picked video saved → \(dest.lastPathComponent)")
             } else {

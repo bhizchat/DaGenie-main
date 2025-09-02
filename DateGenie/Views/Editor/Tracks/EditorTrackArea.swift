@@ -60,7 +60,7 @@ struct EditorTrackArea: View {
                         }
                     }
                 }
-                // Full-canvas gesture: attach without blocking chip/buttons/taps
+                // Full-canvas overlay (non-hittable) keeps layout predictable
                 .overlay(alignment: .center) {
                     if state.selectedTextId != nil {
                         Rectangle()
@@ -68,8 +68,10 @@ struct EditorTrackArea: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil, gestureProvider: { canvasTransformGesture() }))
             }
+            // Make the entire canvas area the gesture target (not just over the text)
+            .contentShape(Rectangle())
+            .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil, gestureProvider: { canvasTransformGesture() }))
             .coordinateSpace(name: "canvas")
             .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
             .onChange(of: geo.size) { newSize in
@@ -135,7 +137,8 @@ struct EditorTrackArea: View {
 extension EditorTrackArea {
     private func canvasTransformGesture() -> AnyGesture<Void> {
         if #available(iOS 17, *) {
-            let pinch = MagnifyGesture(minimumScaleDelta: 0.005)
+            // Global pinch: scales currently selected text even if the gesture starts away from it
+            let pinch = MagnifyGesture(minimumScaleDelta: 0.003)
                 .updating($canvasMagnify) { value, state, _ in
                     state = value.magnification
                     canvasAnchor = value.startAnchor
@@ -144,6 +147,7 @@ extension EditorTrackArea {
                     commitScaleDelta(value.magnification)
                 }
 
+            // Global rotate: rotates the selected text regardless of touch location
             let rotate = RotationGesture()
                 .updating($canvasRotate) { value, state, _ in
                     state = value
@@ -169,10 +173,12 @@ extension EditorTrackArea {
             let g = combined
             return AnyGesture(g)
         } else {
+            // Global pinch for iOS 16-
             let pinch = MagnificationGesture()
                 .updating($canvasMagnify) { value, state, _ in state = value }
                 .onEnded { value in commitScaleDelta(value) }
 
+            // Global rotate for iOS 16-
             let rotate = RotationGesture()
                 .updating($canvasRotate) { value, state, _ in state = value }
                 .onEnded { value in commitRotationDelta(value) }

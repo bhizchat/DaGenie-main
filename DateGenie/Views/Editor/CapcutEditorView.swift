@@ -448,7 +448,7 @@ final class EditorState: ObservableObject {
     }
 
     var totalDuration: CMTime {
-        clips.reduce(.zero) { $0 + $1.duration }
+        clips.reduce(.zero) { $0 + $1.trimmedDuration }
     }
 
     // Append a new clip and rebuild the composition + thumbnails
@@ -492,13 +492,14 @@ final class EditorState: ObservableObject {
 
         var cursor: CMTime = .zero
         for clip in clips {
+            let srcRange = CMTimeRange(start: clip.trimStart, duration: clip.trimmedDuration)
             if let v = clip.asset.tracks(withMediaType: .video).first {
-                try? videoTrack?.insertTimeRange(CMTimeRange(start: .zero, duration: clip.duration), of: v, at: cursor)
+                try? videoTrack?.insertTimeRange(srcRange, of: v, at: cursor)
             }
             if clip.hasOriginalAudio, let a = clip.asset.tracks(withMediaType: .audio).first {
-                try? audioTrack?.insertTimeRange(CMTimeRange(start: .zero, duration: clip.duration), of: a, at: cursor)
+                try? audioTrack?.insertTimeRange(srcRange, of: a, at: cursor)
             }
-            cursor = cursor + clip.duration
+            cursor = cursor + clip.trimmedDuration
         }
 
         // Include user-added audio tracks for preview
@@ -783,6 +784,92 @@ extension EditorState {
             }
         }
         attempt(1)
+    }
+    
+    // MARK: - Insert clip at playhead (with split)
+    @MainActor
+    func insertClipAtPlayhead(url: URL) async {
+        await insertClip(url: url, at: displayTime)
+    }
+
+    @MainActor
+    private func insertClip(url: URL, at timelineTime: CMTime) async {
+        let asset = AVURLAsset(url: url)
+        var newClip = Clip(url: url, asset: asset, duration: asset.duration)
+        // Detect original audio presence immediately
+        let hasAudio = asset.tracks(withMediaType: .audio).first != nil
+        newClip.hasOriginalAudio = hasAudio
+
+        // Determine insertion index and whether we are inside a clip
+        let tolerance = halfFrameTolerance()
+        var accumulated: CMTime = .zero
+        var insertIndex: Int = clips.count
+        var splitLocal: CMTime? = nil
+
+        for i in clips.indices {
+            let dur = clips[i].trimmedDuration
+            let start = accumulated
+            let end = accumulated + dur
+
+            if timelineTime <= start + tolerance {
+                insertIndex = i
+                break
+            }
+            if timelineTime < end - tolerance {
+                // inside clip i
+                let local = timelineTime - start
+                // boundary checks
+                if local <= tolerance {
+                    insertIndex = i
+                } else if (end - timelineTime) <= tolerance {
+                    insertIndex = i + 1
+                } else {
+                    insertIndex = i
+                    splitLocal = local
+                }
+                break
+            }
+            accumulated = end
+        }
+
+        // Perform split if needed
+        if let local = splitLocal {
+            let host = clips[insertIndex]
+            let splitInAsset = host.trimStart + local
+
+            var left = host
+            var right = host
+            left.trimEnd = splitInAsset
+            right.trimStart = splitInAsset
+
+            clips.remove(at: insertIndex)
+            clips.insert(contentsOf: [left, newClip, right], at: insertIndex)
+
+            await rebuildComposition()
+            await generateThumbnails(forClipAt: insertIndex)       // left
+            await generateThumbnails(forClipAt: insertIndex + 1)   // new
+            await generateThumbnails(forClipAt: insertIndex + 2)   // right
+            selectedClipId = newClip.id
+        } else {
+            // No split; just insert
+            clips.insert(newClip, at: insertIndex)
+            await rebuildComposition()
+            await generateThumbnails(forClipAt: insertIndex)
+            selectedClipId = newClip.id
+        }
+
+        // Generate waveform for audio if present
+        if hasAudio {
+            let samples = await WaveformGenerator.loadOrGenerate(for: asset)
+            await MainActor.run {
+                if let idx = clips.firstIndex(where: { $0.id == newClip.id }) {
+                    clips[idx].waveformSamples = samples
+                }
+            }
+        }
+
+        // Keep the inserted region visible
+        followMode = .keepVisible
     }
     // MARK: - Text insertion (centered) used by toolbar and +Add text
     @MainActor
