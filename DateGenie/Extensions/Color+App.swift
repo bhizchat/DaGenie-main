@@ -21,4 +21,7 @@ public extension Color {
     static let nodeTop    = Color(hex: 0xF26D64)
     static let nodeBottom = Color(hex: 0xC9554D)
     static let composerGray = Color(hex: 0xD9D9D9)
+    // Editor theme colours
+    static let editorTimelineBackground = Color(hex: 0x141414)
+    static let editorToolbarBackground  = Color(hex: 0x19191A)
 }

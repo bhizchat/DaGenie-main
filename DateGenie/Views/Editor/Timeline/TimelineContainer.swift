@@ -903,7 +903,7 @@ struct TimelineContainer: View {
             .gesture(magnifyGesture(geo: geo))
         }
         .frame(maxWidth: .infinity)
-        .background(Color.black.opacity(0.08))
+        .background(Color.editorTimelineBackground)
     }
 
     private func seconds(_ t: CMTime) -> Double { max(0.0, CMTimeGetSeconds(t)) }
