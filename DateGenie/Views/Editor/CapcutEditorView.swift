@@ -402,7 +402,9 @@ final class EditorState: ObservableObject {
         guard !isPlaying else { return }
         player.play()
         isPlaying = true
-        followMode = .keepVisible
+        // During active playback, keep the playhead centered so the filmstrip scrolls
+        // continuously under the fixed playhead line.
+        followMode = .center
         startDisplayLink()
     }
 

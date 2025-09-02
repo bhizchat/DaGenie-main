@@ -884,7 +884,11 @@ struct TimelineContainer: View {
                 switch state.followMode {
                 case .off:
                     break
-                case .center, .keepVisible:
+                case .center:
+                    // Always center the timeline under the fixed playhead during playback
+                    if abs(target - observedOffsetX) > 0.5 { applyProgrammaticScroll(target) }
+                case .keepVisible:
+                    // Only scroll when the playhead would go offscreen
                     let leftEdge = observedOffsetX
                     let rightEdge = observedOffsetX + geo.size.width
                     let playheadX = leadingInset(for: geo.size.width) + CGFloat(seconds(state.displayTime)) * state.pixelsPerSecond
