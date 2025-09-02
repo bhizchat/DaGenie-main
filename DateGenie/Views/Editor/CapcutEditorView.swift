@@ -61,13 +61,13 @@ struct CapcutEditorView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, max(0, safeTopInset() - 36))
-                .offset(y: -50) // raise X/Export vertically by ~50pt
+                .offset(y: -92) // nudge X/Export down by ~8pt from previous
 
                 // Track canvas
                 EditorTrackArea(state: state, canvasRect: $canvasRect)
                     .frame(height: 280)
-                    .padding(.top, -50)   // move canvas up by 50pt
-                    .padding(.bottom, 50) // compensate so overall layout height stays the same
+                    .padding(.top, -100)   // move canvas up further by 50pt
+                    .padding(.bottom, 100) // compensate so overall layout height stays the same
                     .padding(.horizontal, 0)
 
                 // Middle controls (play + time) centered in free space between canvas and bottom toolbar
@@ -86,9 +86,9 @@ struct CapcutEditorView: View {
                                 Spacer(minLength: 0)
                             }
                             .padding(.horizontal, 24)
-                            .offset(y: -50) // lift timecode to sit just under play button
+                            .offset(y: -70) // lift timecode further to sit just under play button
                         }
-                        .offset(y: -30) // move play button/time group up ~30pt
+                        .offset(y: -95) // move play button/time group up by ~35pt
                     }
 
             }

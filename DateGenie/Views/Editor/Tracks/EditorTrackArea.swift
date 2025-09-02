@@ -19,7 +19,8 @@ struct EditorTrackArea: View {
         GeometryReader { geo in
             ZStack {
                 // Chrome-free playback surface (no system controls)
-                PlayerSurface(player: state.player, videoGravity: .resizeAspect)
+                // Fill horizontally to the phone edges, cropping if needed (industry-standard preview)
+                PlayerSurface(player: state.player, videoGravity: .resizeAspectFill)
                     .background(Color.black)
 
                 // Render visible text overlays in canvas coordinate space
