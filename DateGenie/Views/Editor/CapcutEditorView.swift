@@ -450,9 +450,12 @@ final class EditorState: ObservableObject {
             let aAsset = AVURLAsset(url: t.url)
             if let aSrc = aAsset.tracks(withMediaType: .audio).first,
                let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                let maxDur = max(.zero, totalDuration - t.start)
-                let dur = min(aAsset.duration, t.duration, maxDur)
-                try? aDst.insertTimeRange(CMTimeRange(start: .zero, duration: dur), of: aSrc, at: t.start)
+                // Trim-aware insertion from source time range
+                let srcRange = CMTimeRange(start: t.trimStart, duration: t.trimmedDuration)
+                // Clamp to available project space
+                let maxDur = max(.zero, totalDuration - (t.start))
+                let dur = min(srcRange.duration, maxDur)
+                try? aDst.insertTimeRange(CMTimeRange(start: srcRange.start, duration: dur), of: aSrc, at: t.start)
                 let p = AVMutableAudioMixInputParameters(track: aDst)
                 p.setVolume(t.volume, at: .zero)
                 mixParams.append(p)
@@ -636,6 +639,64 @@ extension EditorState {
         guard let s = selectedClipStartSeconds,
               let d = selectedClipDurationSeconds else { return nil }
         return s + d
+    }
+
+    // MARK: - Audio/Text selection helpers
+    var selectedAudio: AudioTrack? { audioTracks.first { $0.id == selectedAudioId } }
+    var selectedText: TimedTextOverlay? { textOverlays.first { $0.id == selectedTextId } }
+
+    var selectedAudioStartSeconds: Double? {
+        guard let a = selectedAudio else { return nil }
+        return max(0, CMTimeGetSeconds(a.start + a.trimStart))
+    }
+    var selectedAudioEndSeconds: Double? {
+        guard let a = selectedAudio else { return nil }
+        return max(0, CMTimeGetSeconds(a.start + a.trimStart + a.trimmedDuration))
+    }
+
+    var selectedTextStartSeconds: Double? {
+        guard let t = selectedText else { return nil }
+        return max(0, CMTimeGetSeconds(t.effectiveStart))
+    }
+    var selectedTextEndSeconds: Double? {
+        guard let t = selectedText else { return nil }
+        return max(0, CMTimeGetSeconds(t.effectiveStart + t.trimmedDuration))
+    }
+
+    // MARK: - Trimming mutators
+    @MainActor
+    func trimAudio(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) async {
+        guard let i = audioTracks.firstIndex(where: { $0.id == id }) else { return }
+        var track = audioTracks[i]
+        let durS = max(0, CMTimeGetSeconds(track.duration))
+        var left = max(0, CMTimeGetSeconds(track.trimStart))
+        var right = max(0, CMTimeGetSeconds(track.trimEnd ?? track.duration))
+        if let dx = leftDeltaSeconds { left = min(max(0, left + dx), max(0, right - 0.03)) }
+        if let dx = rightDeltaSeconds {
+            right = max(0, min(durS, right + dx))
+            right = max(right, left + 0.03)
+        }
+        track.trimStart = CMTime(seconds: left, preferredTimescale: 600)
+        track.trimEnd   = CMTime(seconds: right, preferredTimescale: 600)
+        audioTracks[i] = track
+        await rebuildCompositionForPreview()
+    }
+
+    @MainActor
+    func trimText(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) {
+        guard let i = textOverlays.firstIndex(where: { $0.id == id }) else { return }
+        var t = textOverlays[i]
+        let durS = max(0, CMTimeGetSeconds(t.duration))
+        var left = max(0, CMTimeGetSeconds(t.trimStart))
+        var right = max(0, CMTimeGetSeconds(t.trimEnd ?? t.duration))
+        if let dx = leftDeltaSeconds { left = min(max(0, left + dx), max(0, right - 0.03)) }
+        if let dx = rightDeltaSeconds {
+            right = max(0, min(durS, right + dx))
+            right = max(right, left + 0.03)
+        }
+        t.trimStart = CMTime(seconds: left, preferredTimescale: 600)
+        t.trimEnd   = CMTime(seconds: right, preferredTimescale: 600)
+        textOverlays[i] = t
     }
 }
 

@@ -51,6 +51,196 @@ struct TimelineContainer: View {
     private let selectionHandleWidth: CGFloat = 35
     private let selectionHandleCorner: CGFloat = 0
 
+    // Reusable trim handle pair used for audio/text lane items
+    private struct TrimHandles: View {
+        let height: CGFloat
+        let handleWidth: CGFloat
+        let corner: CGFloat
+        let onLeftDrag: (CGFloat) -> Void   // dx in points
+        let onRightDrag: (CGFloat) -> Void  // dx in points
+        @GestureState private var leftDX: CGFloat = 0
+        @GestureState private var rightDX: CGFloat = 0
+        var body: some View {
+            HStack {
+                // Left handle
+                ZStack {
+                    RoundedRectangle(cornerRadius: corner)
+                        .fill(Color.white)
+                        .frame(width: handleWidth, height: height - 4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.black.opacity(0.9))
+                                .frame(width: handleWidth * 0.35,
+                                       height: max(8, height - 12))
+                        )
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .updating($leftDX) { v, st, _ in st = v.translation.width }
+                        .onChanged { v in onLeftDrag(v.translation.width) }
+                )
+
+                Spacer(minLength: 0)
+
+                // Right handle
+                ZStack {
+                    RoundedRectangle(cornerRadius: corner)
+                        .fill(Color.white)
+                        .frame(width: handleWidth, height: height - 4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.black.opacity(0.9))
+                                .frame(width: handleWidth * 0.35,
+                                       height: max(8, height - 12))
+                        )
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .updating($rightDX) { v, st, _ in st = v.translation.width }
+                        .onChanged { v in onRightDrag(v.translation.width) }
+                )
+            }
+            .padding(.horizontal, -handleWidth / 2)
+        }
+    }
+
+    // Lightweight lane item for audio strips
+    private struct AudioStripPill: View {
+        let width: CGFloat
+        let height: CGFloat
+        let offsetX: CGFloat
+        let title: String
+        let samples: [Float]
+        let isSelected: Bool
+        let pps: CGFloat
+        // Interactions
+        let onTap: () -> Void
+        let onBeginMove: () -> Void
+        let onDragMove: (Double) -> Void   // delta seconds
+        let onEndMove: () -> Void
+        let onTrimLeft: (Double) -> Void   // delta seconds
+        let onTrimRight: (Double) -> Void  // delta seconds
+
+        var body: some View {
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(red: 0xE3/255.0, green: 0x9F/255.0, blue: 0xF6/255.0, opacity: 0.85))
+
+                WaveformView(samples: samples, color: Color(red: 0.94, green: 0.90, blue: 1.00))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 6)
+                    .allowsHitTesting(false)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .padding(.top, 4)
+                    .padding(.leading, 6)
+                    .allowsHitTesting(false)
+            }
+            .frame(width: width, height: height)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isSelected ? Color.white : Color.clear, lineWidth: 2)
+            )
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    TrimHandles(
+                        height: height,
+                        handleWidth: 35,
+                        corner: 0,
+                        onLeftDrag: { dx in onTrimLeft(Double(dx / max(1, pps))) },
+                        onRightDrag:{ dx in onTrimRight(Double(dx / max(1, pps))) }
+                    )
+                    .zIndex(10)
+                }
+            }
+            .offset(x: offsetX)
+            .contentShape(Rectangle())
+            .highPriorityGesture(TapGesture().onEnded { onTap() })
+            .gesture(
+                LongPressGesture(minimumDuration: 0.25)
+                    .sequenced(before: DragGesture(minimumDistance: 1))
+                    .onChanged { value in
+                        switch value {
+                        case .first(true): onBeginMove()
+                        case .second(true, let drag?):
+                            let deltaSec = Double(drag.translation.width / max(1, pps))
+                            onDragMove(deltaSec)
+                        default: break
+                        }
+                    }
+                    .onEnded { _ in onEndMove() }
+            )
+        }
+    }
+
+    // Lightweight lane item for text strips
+    private struct TextStripPill: View {
+        let width: CGFloat
+        let height: CGFloat
+        let offsetX: CGFloat
+        let text: String
+        let isSelected: Bool
+        let pps: CGFloat
+        // Interactions
+        let onTap: () -> Void
+        let onBeginMove: () -> Void
+        let onDragMove: (Double) -> Void
+        let onEndMove: () -> Void
+        let onTrimLeft: (Double) -> Void
+        let onTrimRight: (Double) -> Void
+
+        var body: some View {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.blue.opacity(0.2))
+                .overlay(
+                    Text(text)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(4), alignment: .leading
+                )
+                .frame(width: width, height: height)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isSelected ? Color.white : Color.clear, lineWidth: 2)
+                )
+                .overlay(alignment: .leading) {
+                    if isSelected {
+                        TrimHandles(
+                            height: height,
+                            handleWidth: 35,
+                            corner: 0,
+                            onLeftDrag: { dx in onTrimLeft(Double(dx / max(1, pps))) },
+                            onRightDrag:{ dx in onTrimRight(Double(dx / max(1, pps))) }
+                        )
+                        .zIndex(10)
+                    }
+                }
+                .offset(x: offsetX)
+                .contentShape(Rectangle())
+                .highPriorityGesture(TapGesture().onEnded { onTap() })
+                .gesture(
+                    LongPressGesture(minimumDuration: 0.25)
+                        .sequenced(before: DragGesture(minimumDistance: 1))
+                        .onChanged { value in
+                            switch value {
+                            case .first(true): onBeginMove()
+                            case .second(true, let drag?):
+                                let deltaSec = Double(drag.translation.width / max(1, pps))
+                                onDragMove(deltaSec)
+                            default: break
+                            }
+                        }
+                        .onEnded { _ in onEndMove() }
+                )
+        }
+    }
+
     private var headerOffsetY: CGFloat {
         -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
     }
@@ -208,70 +398,43 @@ struct TimelineContainer: View {
                             .onTapGesture { onAddAudio?() }
                     } else {
                         ForEach(Array(state.audioTracks.enumerated()), id: \.element.id) { _, t in
-                            let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
-                            let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
-
-                            ZStack(alignment: .topLeading) {
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color(red: 0xE3/255.0, green: 0x9F/255.0, blue: 0xF6/255.0, opacity: 0.85))
-
-                                // Waveform inside the pill
-                                WaveformView(samples: t.waveformSamples, color: Color(red: 0.94, green: 0.90, blue: 1.00))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 6)
-                                    .allowsHitTesting(false)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-
-                                // File name at top-left
-                                Text(t.displayName)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                                    .padding(.top, 4)
-                                    .padding(.leading, 6)
-                                    .allowsHitTesting(false)
-                            }
-                            .frame(width: width, height: TimelineStyle.laneRowHeight)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(state.selectedAudioId == t.id ? Color.white : Color.clear, lineWidth: 2)
-                            )
-                            .offset(x: startX)
-                            .contentShape(Rectangle())
-                            .highPriorityGesture(
-                                TapGesture().onEnded {
+                            let startX: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.start + t.trimStart))) * state.pixelsPerSecond
+                            let width: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.trimmedDuration))) * state.pixelsPerSecond
+                            AudioStripPill(
+                                width: width,
+                                height: TimelineStyle.laneRowHeight,
+                                offsetX: startX,
+                                title: t.displayName,
+                                samples: t.waveformSamples,
+                                isSelected: state.selectedAudioId == t.id,
+                                pps: state.pixelsPerSecond,
+                                onTap: {
                                     let was = (state.selectedAudioId == t.id)
                                     state.selectedAudioId = was ? nil : t.id
-                                    if !was {
-                                        state.selectedClipId = nil
-                                        state.selectedTextId = nil
-                                    }
+                                    if !was { state.selectedClipId = nil; state.selectedTextId = nil }
                                     didTapClip = true
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                },
+                                onBeginMove: {
+                                    if draggingAudioId != t.id {
+                                        draggingAudioId = t.id
+                                        audioDragStartSeconds = max(0, CMTimeGetSeconds(t.start))
+                                    }
+                                },
+                                onDragMove: { deltaSec in
+                                    let newStart = audioDragStartSeconds + deltaSec
+                                    state.moveAudio(id: t.id, toStartSeconds: newStart)
+                                },
+                                onEndMove: {
+                                    draggingAudioId = nil
+                                    Task { await state.rebuildCompositionForPreview() }
+                                },
+                                onTrimLeft: { dxSec in
+                                    Task { await state.trimAudio(id: t.id, leftDeltaSeconds: dxSec) }
+                                },
+                                onTrimRight: { dxSec in
+                                    Task { await state.trimAudio(id: t.id, rightDeltaSeconds: dxSec) }
                                 }
-                            )
-                            .gesture(
-                                LongPressGesture(minimumDuration: 0.25)
-                                    .sequenced(before: DragGesture(minimumDistance: 1))
-                                    .onChanged { value in
-                                        switch value {
-                                        case .first(true):
-                                            if draggingAudioId != t.id {
-                                                draggingAudioId = t.id
-                                                audioDragStartSeconds = max(0, CMTimeGetSeconds(t.start))
-                                            }
-                                        case .second(true, let drag?):
-                                            let delta = Double(drag.translation.width / max(1, state.pixelsPerSecond))
-                                            let newStart = audioDragStartSeconds + delta
-                                            state.moveAudio(id: t.id, toStartSeconds: newStart)
-                                        default:
-                                            break
-                                        }
-                                    }
-                                    .onEnded { _ in
-                                        draggingAudioId = nil
-                                        Task { await state.rebuildCompositionForPreview() }
-                                    }
                             )
                         }
                     }
@@ -329,62 +492,38 @@ struct TimelineContainer: View {
                             .onTapGesture { onAddText?() }
                     } else {
                         ForEach(state.textOverlays, id: \.id) { t in
-                            let startX = CGFloat(max(0, CMTimeGetSeconds(t.start))) * state.pixelsPerSecond
-                            let width = CGFloat(max(0, CMTimeGetSeconds(t.duration))) * state.pixelsPerSecond
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.blue.opacity(0.2))
-                                .overlay(Text(t.base.string).font(.system(size: 11, weight: .semibold)).foregroundColor(.white).padding(4), alignment: .leading)
-                                .frame(width: width, height: TimelineStyle.laneRowHeight)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(state.selectedTextId == t.id ? Color.white : Color.clear, lineWidth: 2)
-                                )
-                                .offset(x: startX)
-                                .contentShape(Rectangle())
-                                .highPriorityGesture(
-                                    TapGesture().onEnded {
-                                        let was = (state.selectedTextId == t.id)
-                                        state.selectedTextId = was ? nil : t.id
-                                        if !was {
-                                            state.selectedClipId = nil
-                                            state.selectedAudioId = nil
-                                        }
-                                        didTapClip = true
-                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                        // Open Edit toolbar when selecting a text strip
-                                        DispatchQueue.main.async {
-                                            NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
-                                        }
-                                        // Close toolbar on deselection of the same text strip
-                                        if was {
-                                            DispatchQueue.main.async {
-                                                NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
-                                            }
-                                        }
+                            let startX: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.effectiveStart))) * state.pixelsPerSecond
+                            let width: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.trimmedDuration))) * state.pixelsPerSecond
+                            TextStripPill(
+                                width: width,
+                                height: TimelineStyle.laneRowHeight,
+                                offsetX: startX,
+                                text: t.base.string,
+                                isSelected: state.selectedTextId == t.id,
+                                pps: state.pixelsPerSecond,
+                                onTap: {
+                                    let was = (state.selectedTextId == t.id)
+                                    state.selectedTextId = was ? nil : t.id
+                                    if !was { state.selectedClipId = nil; state.selectedAudioId = nil }
+                                    didTapClip = true
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                                    if was { DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) } }
+                                },
+                                onBeginMove: { /* no-op to mirror audio UX */ },
+                                onDragMove: { deltaSec in
+                                    let newStart = max(0, CMTimeGetSeconds(t.start) + deltaSec)
+                                    if let idx = state.textOverlays.firstIndex(where: { $0.id == t.id }) {
+                                        let durS = max(0, CMTimeGetSeconds(state.textOverlays[idx].duration))
+                                        let totalS = max(0, CMTimeGetSeconds(state.totalDuration))
+                                        let clamped = min(max(0, newStart), max(0, totalS - durS))
+                                        state.textOverlays[idx].start = CMTime(seconds: clamped, preferredTimescale: 600)
                                     }
-                                )
-                                .gesture(
-                                    LongPressGesture(minimumDuration: 0.25)
-                                        .sequenced(before: DragGesture(minimumDistance: 1))
-                                        .onChanged { value in
-                                            switch value {
-                                            case .first(true):
-                                                // no-op; keep consistent with audio strip UX
-                                                break
-                                            case .second(true, let drag?):
-                                                let delta = Double(drag.translation.width / max(1, state.pixelsPerSecond))
-                                                let newStart = max(0, CMTimeGetSeconds(t.start) + delta)
-                                                if let idx = state.textOverlays.firstIndex(where: { $0.id == t.id }) {
-                                                    let durS = max(0, CMTimeGetSeconds(state.textOverlays[idx].duration))
-                                                    let totalS = max(0, CMTimeGetSeconds(state.totalDuration))
-                                                    let clamped = min(max(0, newStart), max(0, totalS - durS))
-                                                    state.textOverlays[idx].start = CMTime(seconds: clamped, preferredTimescale: 600)
-                                                }
-                                            default:
-                                                break
-                                            }
-                                        }
-                                )
+                                },
+                                onEndMove: { },
+                                onTrimLeft: { dxSec in state.trimText(id: t.id, leftDeltaSeconds: dxSec) },
+                                onTrimRight: { dxSec in state.trimText(id: t.id, rightDeltaSeconds: dxSec) }
+                            )
                         }
                     }
                 }
