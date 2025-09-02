@@ -15,7 +15,7 @@ struct CaptionBarView: View {
     let onDone: () -> Void
 
     @State private var draftText: String = ""
-    @StateObject private var kb = KeyboardObserver()
+    @StateObject private var kb = CaptionKeyboardObserver()
 
     // Fixed, single-line bar metrics (Snapchat-like pill)
     private let barFont = UIFont.systemFont(ofSize: 18, weight: .semibold)
@@ -96,7 +96,7 @@ struct CaptionBarView: View {
     }
 }
 
-final class KeyboardObserver: ObservableObject {
+final class CaptionKeyboardObserver: ObservableObject {
     @Published var endFrameGlobal: CGRect = .zero
     init() {
         NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { note in

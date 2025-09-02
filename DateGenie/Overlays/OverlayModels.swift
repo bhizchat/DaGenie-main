@@ -102,11 +102,22 @@ struct TimedTextOverlay: Identifiable, Equatable {
     var base: TextOverlay
     var start: CMTime
     var duration: CMTime
+    // Local trims within the scheduled duration
+    var trimStart: CMTime = .zero
+    var trimEnd: CMTime? = nil
 
     init(base: TextOverlay, start: CMTime, duration: CMTime) {
         self.base = base
         self.start = start
         self.duration = duration
+    }
+    /// Effective absolute start after left trim
+    var effectiveStart: CMTime { start + trimStart }
+    /// Effective duration after trimming. Guaranteed ≥ .zero
+    var trimmedDuration: CMTime {
+        let end = trimEnd ?? duration
+        let d = end - trimStart
+        return d >= .zero ? d : .zero
     }
 }
 
@@ -133,6 +144,15 @@ struct AudioTrack: Identifiable, Equatable {
     var displayName: String {
         if let t = titleOverride, !t.isEmpty { return t }
         return url.deletingPathExtension().lastPathComponent
+    }
+    // Local trims within the source asset's duration
+    var trimStart: CMTime = .zero
+    var trimEnd: CMTime? = nil
+    /// Effective duration after trimming. Guaranteed ≥ .zero
+    var trimmedDuration: CMTime {
+        let end = trimEnd ?? duration
+        let d = end - trimStart
+        return d >= .zero ? d : .zero
     }
 }
 

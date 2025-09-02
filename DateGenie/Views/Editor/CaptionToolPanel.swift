@@ -41,7 +41,7 @@ struct CaptionToolPanel: View {
         model.text = text
         model.isVisible = true
         model.verticalOffsetNormalized = vertical
-        let item = TimedCaption(base: model, start: state.currentTime, duration: CMTime(seconds: durationSec, preferredTimescale: 600))
+        let item = TimedCaption(base: model, start: state.displayTime, duration: CMTime(seconds: durationSec, preferredTimescale: 600))
         state.captions.append(item)
         dismiss()
     }

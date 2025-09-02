@@ -6,6 +6,12 @@ import AVFoundation
 struct EditorTrackArea: View {
     @ObservedObject var state: EditorState
     @Binding var canvasRect: CGRect
+    // Local focus holder to satisfy TextOverlayView's FocusState binding
+    @FocusState private var localFocusedTextId: UUID?
+    // Canvas-wide transform gesture state (applies to selected text)
+    @GestureState private var canvasMagnify: CGFloat = 1
+    @GestureState private var canvasRotate: Angle = .zero
+    @State private var canvasAnchor: UnitPoint = .center
     var body: some View {
         GeometryReader { geo in
             ZStack {
@@ -15,22 +21,87 @@ struct EditorTrackArea: View {
 
                 // Render visible text overlays in canvas coordinate space
                 ZStack {
-                    ForEach(Array(state.textOverlays.enumerated()), id: \.element.id) { idx, t in
-                        if isVisible(t, at: state.currentTime) {
-                            let base = state.textOverlays[idx].base
-                            overlayText(base)
-                                .position(x: base.position.x, y: base.position.y)
-                                .scaleEffect(base.scale)
-                                .rotationEffect(Angle(radians: Double(base.rotation)))
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                                .allowsHitTesting(false)
+                    ForEach(state.textOverlays, id: \ .id) { t in
+                        if isVisible(t, at: state.displayTime) {
+                            if state.selectedTextId == t.id {
+                                if let i = state.textOverlays.firstIndex(where: { $0.id == t.id }) {
+                                    TextOverlayView(
+                                        model: $state.textOverlays[i].base,
+                                        externalScaleDelta: canvasMagnify,
+                                        externalRotationDelta: canvasRotate,
+                                        externalAnchor: canvasAnchor,
+                                        enableInternalTransformGesture: false,
+                                        isEditing: false,
+                                        onBeginEdit: {},
+                                        onEndEdit: {},
+                                        activeTextId: $localFocusedTextId,
+                                        canvasSize: geo.size
+                                    )
+                                    .allowsHitTesting(true)
+                                }
+                            } else {
+                                let base = t.base
+                                overlayText(base)
+                                    .position(x: base.position.x, y: base.position.y)
+                                    .scaleEffect(base.scale)
+                                    .rotationEffect(Angle(radians: Double(base.rotation)))
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        state.selectedTextId = t.id
+                                        DispatchQueue.main.async {
+                                            NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
+                                        }
+                                    }
+                            }
                         }
                     }
                 }
+                // Full-canvas gesture: attach without blocking chip/buttons/taps
+                .overlay(alignment: .center) {
+                    if state.selectedTextId != nil {
+                        Rectangle()
+                            .fill(Color.clear)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil, gestureProvider: { canvasTransformGesture() }))
             }
+            .coordinateSpace(name: "canvas")
             .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
             .onChange(of: geo.size) { newSize in
                 canvasRect = CGRect(origin: .zero, size: newSize)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DeleteSelectedTextOverlay"))) { note in
+            guard let id = (note.object as? UUID) ?? state.selectedTextId else { return }
+            if let idx = state.textOverlays.firstIndex(where: { $0.id == id }) {
+                state.textOverlays.remove(at: idx)
+                if state.selectedTextId == id { state.selectedTextId = nil }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DuplicateSelectedTextOverlay"))) { note in
+            guard let id = note.object as? UUID,
+                  let idx = state.textOverlays.firstIndex(where: { $0.id == id }) else { return }
+            let src = state.textOverlays[idx]
+            var dup = src
+            dup.base = TextOverlay(id: UUID(),
+                                   string: src.base.string,
+                                   fontName: src.base.fontName,
+                                   style: src.base.style,
+                                   color: src.base.color,
+                                   position: CGPoint(x: min(src.base.position.x + 16, canvasRect.width),
+                                                     y: min(src.base.position.y + 16, canvasRect.height)),
+                                   scale: src.base.scale,
+                                   rotation: src.base.rotation,
+                                   zIndex: src.base.zIndex + 1)
+            state.textOverlays.append(dup)
+            state.selectedTextId = dup.id
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("UnselectTextOverlay"))) { _ in
+            state.selectedTextId = nil
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
             }
         }
         .frame(maxWidth: .infinity)
@@ -54,6 +125,70 @@ struct EditorTrackArea: View {
         let start = t.start
         let end = t.start + t.duration
         return time >= start && time <= end
+    }
+}
+
+// MARK: - Canvas transform gesture (selected text only)
+extension EditorTrackArea {
+    private func canvasTransformGesture() -> AnyGesture<Void> {
+        if #available(iOS 17, *) {
+            let g = SimultaneousGesture(
+                MagnifyGesture(minimumScaleDelta: 0.005)
+                    .updating($canvasMagnify) { value, state, _ in
+                        state = value.magnification
+                        canvasAnchor = value.startAnchor
+                    }
+                    .onEnded { value in
+                        commitScaleDelta(value.magnification)
+                    },
+                RotationGesture()
+                    .updating($canvasRotate) { value, state, _ in
+                        state = value
+                    }
+                    .onEnded { value in
+                        commitRotationDelta(value)
+                    }
+            ).map { _ in () }
+            return AnyGesture(g)
+        } else {
+            let g = SimultaneousGesture(
+                MagnificationGesture()
+                    .updating($canvasMagnify) { value, state, _ in state = value }
+                    .onEnded { value in commitScaleDelta(value) },
+                RotationGesture()
+                    .updating($canvasRotate) { value, state, _ in state = value }
+                    .onEnded { value in commitRotationDelta(value) }
+            ).map { _ in () }
+            return AnyGesture(g)
+        }
+    }
+
+    private func commitScaleDelta(_ scaleDelta: CGFloat) {
+        guard let id = state.selectedTextId,
+              let i = state.textOverlays.firstIndex(where: { $0.id == id }),
+              scaleDelta.isFinite, scaleDelta > 0.001 else { return }
+        let clamped = max(0.2, min(6.0, state.textOverlays[i].base.scale * scaleDelta))
+        state.textOverlays[i].base.scale = clamped
+    }
+
+    private func commitRotationDelta(_ delta: Angle) {
+        guard let id = state.selectedTextId,
+              let i = state.textOverlays.firstIndex(where: { $0.id == id }),
+              delta.radians.isFinite else { return }
+        state.textOverlays[i].base.rotation += CGFloat(delta.radians)
+    }
+}
+
+// MARK: - Modifier to apply transform gesture without intercepting taps/buttons
+private struct SelectedTransformGestureModifier: ViewModifier {
+    let isActive: Bool
+    let gestureProvider: () -> AnyGesture<Void>
+    func body(content: Content) -> some View {
+        if isActive {
+            content.simultaneousGesture(gestureProvider(), including: .gesture)
+        } else {
+            content
+        }
     }
 }
 

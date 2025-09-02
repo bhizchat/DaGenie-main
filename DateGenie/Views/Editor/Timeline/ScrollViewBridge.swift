@@ -17,23 +17,32 @@ struct ScrollViewBridge: UIViewRepresentable {
                 scrollView.delegate = context.coordinator
                 context.coordinator.scrollView = scrollView
             }
-            // Ensure content insets keep a fixed playhead at center
-            let center = scrollView.bounds.width / 2
-            let inset = pxRound(center, scale: scrollView.window?.windowScene?.screen.scale ?? UIScreen.main.scale)
-            let currentInsets = scrollView.contentInset
-            if currentInsets.left != inset || currentInsets.right != inset {
-                scrollView.contentInset = UIEdgeInsets(top: 0, left: inset, bottom: 0, right: inset)
-            }
+            // No runtime contentInset centering. We use spacer views inside content for centering.
+            let _ = scrollView.bounds.width / 2
             // Configure scroll physics to reduce edge friction and avoid auto insets
             scrollView.contentInsetAdjustmentBehavior = .never
-            scrollView.decelerationRate = .fast
+            // Prefer natural glide and rubber-band bounce for editor timeline feel
+            scrollView.decelerationRate = .normal
+            scrollView.alwaysBounceHorizontal = true
+            scrollView.alwaysBounceVertical = false
+            scrollView.bounces = true
+            scrollView.isDirectionalLockEnabled = true
+            scrollView.delaysContentTouches = false
+            scrollView.canCancelContentTouches = true
             if let x = targetX {
                 if !(scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) {
-                    let minX = -scrollView.contentInset.left
-                    let maxX = scrollView.contentSize.width - scrollView.bounds.width + scrollView.contentInset.right
+                    let minX: CGFloat = 0
+                    let maxX = max(0, scrollView.contentSize.width - scrollView.bounds.width)
                     let clamped = min(max(x, minX), maxX)
-                    if scrollView.contentOffset.x != clamped {
-                        scrollView.setContentOffset(CGPoint(x: clamped, y: 0), animated: false)
+                    // Pixel-round to device scale to eliminate sub-pixel jitter
+                    let scale = scrollView.window?.screen.scale ?? UIScreen.main.scale
+                    let rounded = (clamped * scale).rounded(.toNearestOrAwayFromZero) / scale
+                    if abs(scrollView.contentOffset.x - rounded) > 0.5 {
+                        context.coordinator.suppressNextDidScroll = true
+                        scrollView.setContentOffset(CGPoint(x: rounded, y: 0), animated: false)
+                        DispatchQueue.main.async {
+                            DispatchQueue.main.async { context.coordinator.suppressNextDidScroll = false }
+                        }
                     }
                 }
             }
@@ -43,8 +52,10 @@ struct ScrollViewBridge: UIViewRepresentable {
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var onScroll: (CGFloat, Bool, Bool, Bool) -> Void
         weak var scrollView: UIScrollView?
+        var suppressNextDidScroll: Bool = false
         init(onScroll: @escaping (CGFloat, Bool, Bool, Bool) -> Void) { self.onScroll = onScroll }
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            guard !suppressNextDidScroll else { return }
             onScroll(scrollView.contentOffset.x, scrollView.isTracking, scrollView.isDragging, scrollView.isDecelerating)
         }
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -55,6 +66,15 @@ struct ScrollViewBridge: UIViewRepresentable {
         }
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
             onScroll(scrollView.contentOffset.x, scrollView.isTracking, scrollView.isDragging, scrollView.isDecelerating)
+        }
+        // Clamp final landing position without fighting momentum mid-flight
+        func scrollViewWillEndDragging(_ scrollView: UIScrollView,
+                                       withVelocity velocity: CGPoint,
+                                       targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+            let minX: CGFloat = 0
+            let maxX = max(0, scrollView.contentSize.width - scrollView.bounds.width)
+            let proposed = targetContentOffset.pointee.x
+            targetContentOffset.pointee.x = min(max(proposed, minX), maxX)
         }
     }
 

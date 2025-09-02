@@ -36,7 +36,7 @@ struct TextToolPanel: View {
         let center = CGPoint(x: canvasRect.width/2, y: canvasRect.height/2)
         var base = TextOverlay(string: text, position: center)
         base.color = RGBAColor(color)
-        let item = TimedTextOverlay(base: base, start: state.currentTime, duration: CMTime(seconds: durationSec, preferredTimescale: 600))
+        let item = TimedTextOverlay(base: base, start: state.displayTime, duration: CMTime(seconds: durationSec, preferredTimescale: 600))
         state.textOverlays.append(item)
         dismiss()
     }

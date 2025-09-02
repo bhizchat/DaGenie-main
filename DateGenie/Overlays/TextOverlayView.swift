@@ -1,7 +1,14 @@
 import SwiftUI
+import UIKit
+import CoreText
 
 struct TextOverlayView: View {
     @Binding var model: TextOverlay
+    // Optional external transform deltas from a canvas-wide gesture layer
+    var externalScaleDelta: CGFloat = 1
+    var externalRotationDelta: Angle = .zero
+    var externalAnchor: UnitPoint = .center
+    var enableInternalTransformGesture: Bool = true
     var isEditing: Bool
     var onBeginEdit: () -> Void
     var onEndEdit: () -> Void
@@ -10,8 +17,12 @@ struct TextOverlayView: View {
 
     @GestureState private var drag: CGSize = .zero
     @State private var didBeginDrag: Bool = false
-    @State private var currentScale: CGFloat = 1
-    @State private var currentRotation: Angle = .zero
+    // Transient transform state (per Apple docs) and dynamic anchor
+    @GestureState private var magnify: CGFloat = 1
+    @GestureState private var rotate: Angle = .zero
+    @State private var transformAnchor: UnitPoint = .center
+    // Live measured glyph size (unscaled) used to size the selection rect and anchor chips
+    @State private var measuredTextSize: CGSize = .zero
 
     var body: some View {
         Group {
@@ -34,20 +45,41 @@ struct TextOverlayView: View {
                     .textInputAutocapitalization(.sentences)
                     .task(id: isEditing) { if isEditing { activeTextId.wrappedValue = model.id } }
             } else {
-                content
-                    .onTapGesture(count: 2, perform: onBeginEdit)
+                // Selected overlay: content + measured selection rect with corner-anchored chips
+                ZStack(alignment: .topLeading) {
+                    let size = rectSize()
+                    content
+                        .frame(width: size.width, height: size.height, alignment: .center)
+                    selectionRectWithChips
+                }
+                // Double-tap to edit should win vs background single-tap, but not override chip buttons
+                .highPriorityGesture(
+                    TapGesture(count: 2).onEnded { onBeginEdit() },
+                    including: .gesture
+                )
+                // Single-tap on rectangle background (not chips): open typing dock
+                .gesture(
+                    TapGesture(count: 1).onEnded {
+                        NotificationCenter.default.post(name: Notification.Name("OpenTypingDockForSelectedText"), object: model.id)
+                    },
+                    including: .gesture
+                )
             }
         }
         .position(livePosition)
         .animation(nil, value: drag)
-        .scaleEffect(safeScale(model.scale * currentScale))
-        .rotationEffect(safeAngle(Angle(radians: Double(model.rotation)) + currentRotation))
-        .gesture(isEditing ? nil : dragGesture.simultaneously(with: pinchAndRotate))
+        .scaleEffect(safeScale(model.scale * magnify * externalScaleDelta), anchor: enableInternalTransformGesture ? transformAnchor : externalAnchor)
+        .rotationEffect(safeAngle(Angle(radians: Double(model.rotation)) + rotate + externalRotationDelta), anchor: enableInternalTransformGesture ? transformAnchor : externalAnchor)
+        .gesture(isEditing || !enableInternalTransformGesture ? nil : dragGesture.simultaneously(with: anchoredTransformGesture), including: .gesture)
         .zIndex(Double(model.zIndex))
+        .onAppear { recomputeMeasuredSize() }
+        .onChange(of: model.string) { _ in recomputeMeasuredSize() }
+        .onChange(of: model.style) { _ in recomputeMeasuredSize() }
     }
 
     @ViewBuilder private var content: some View {
-        let text = Text(model.string)
+        let display = model.string.isEmpty ? "Enter text" : model.string
+        let text = Text(display)
             .font(fontForStyle())
             .foregroundColor(model.color.color)
             .shadow(color: .black.opacity(0.8), radius: 3, x: 0, y: 1)
@@ -66,11 +98,102 @@ struct TextOverlayView: View {
         }
     }
 
+    // MARK: - Measured selection rect with chips anchored at the four corners
+    private var selectionRectWithChips: some View {
+        let size = rectSize()
+        let rectW = size.width
+        let rectH = size.height
+
+        return RoundedRectangle(cornerRadius: 4)
+            .stroke(Color.white, lineWidth: 1)
+            .frame(width: rectW, height: rectH, alignment: .topLeading)
+            // Corner chips anchored using overlay(alignment:)
+            .overlay(chip(system: "xmark") {
+                NotificationCenter.default.post(name: Notification.Name("DeleteSelectedTextOverlay"), object: model.id)
+            }, alignment: .topLeading)
+            .overlay(chip(system: "pencil") {
+                NotificationCenter.default.post(name: Notification.Name("OpenTypingDockForSelectedText"), object: model.id)
+            }, alignment: .topTrailing)
+            // Bottom chips now use custom asset icons
+            .overlay(assetChipButton("text_duplicate") {
+                NotificationCenter.default.post(name: Notification.Name("DuplicateSelectedTextOverlay"), object: model.id)
+            }
+            .offset(x: -14, y: 14), alignment: .bottomLeading)
+            .overlay(assetChipButton("text_unselect") {
+                NotificationCenter.default.post(name: Notification.Name("UnselectTextOverlay"), object: model.id)
+            }
+            .offset(x: 14, y: 14), alignment: .bottomTrailing)
+    }
+
+    private func chip(system: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color.black.opacity(0.7))
+                .frame(width: 28, height: 28)
+                .overlay(Image(systemName: system).foregroundColor(.white).font(.system(size: 12, weight: .bold)))
+        }
+        .buttonStyle(.plain)
+        // Nudge outward so chips sit just outside the stroked rect
+        .offset(x: (system == "xmark" || system == "doc.on.doc") ? -14 : 14,
+                y: (system == "xmark" || system == "pencil") ? -14 : 14)
+    }
+
+    // Asset-based chip button (for non-SF-symbol icons)
+    private func assetChipButton(_ name: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color.black.opacity(0.7))
+                .frame(width: 28, height: 28)
+                .overlay(
+                    Image(name)
+                        .resizable()
+                        .renderingMode(.original)
+                        .scaledToFit()
+                        .frame(width: 14, height: 14)
+                        .foregroundColor(.white)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     private func fontForStyle() -> Font {
         switch model.style {
         case .small: return .system(size: 24, weight: .regular)
         case .largeCenter, .largeBackground: return .system(size: 42, weight: .bold)
         }
+    }
+
+    private func uiFontForStyle() -> UIFont {
+        switch model.style {
+        case .small: return .systemFont(ofSize: 24, weight: .regular)
+        case .largeCenter, .largeBackground: return .systemFont(ofSize: 42, weight: .bold)
+        }
+    }
+
+    // Compute tight single-line text bounds using Core Text
+    private func recomputeMeasuredSize() {
+        let s = model.string.isEmpty ? "Enter text" : model.string
+        let font = uiFontForStyle()
+        let attr = NSAttributedString(string: s, attributes: [.font: font])
+        let line = CTLineCreateWithAttributedString(attr as CFAttributedString)
+        let img = CTLineGetImageBounds(line, nil)
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let advW = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let w = (img.isNull || !img.width.isFinite) ? advW : img.width
+        let h = ascent + descent
+        measuredTextSize = CGSize(width: ceil(max(1, w)), height: ceil(max(1, h)))
+    }
+
+    // Unified rectangle size used for both centered content and stroked rect
+    private func rectSize() -> CGSize {
+        // Extra visual breathing room so the rect isn't too tight
+        let extraInsetW: CGFloat = 20
+        let extraInsetH: CGFloat = 12
+        let paddingW: CGFloat = ((model.style == .largeBackground) ? 16 : 0) + extraInsetW
+        let paddingH: CGFloat = ((model.style == .largeBackground) ? 8  : 0) + extraInsetH
+        let rectW = max(1, measuredTextSize.width + paddingW)
+        let rectH = max(1, measuredTextSize.height + paddingH)
+        return CGSize(width: rectW, height: rectH)
     }
 
     private var livePosition: CGPoint {
@@ -102,21 +225,48 @@ struct TextOverlayView: View {
             }
     }
 
-    private var pinchAndRotate: some Gesture {
-        SimultaneousGesture(
-            MagnificationGesture().onChanged { scale in currentScale = scale }
-                .onEnded { scale in
-                    if scale.isFinite && scale > 0.001 {
-                        model.scale = clamp(model.scale * scale, min: 0.2, max: 6.0)
+    private var anchoredTransformGesture: AnyGesture<Void> {
+        if #available(iOS 17, *) {
+            let g = SimultaneousGesture(
+                MagnifyGesture(minimumScaleDelta: 0.005)
+                    .updating($magnify) { value, state, _ in
+                        state = value.magnification
+                        transformAnchor = value.startAnchor
                     }
-                    currentScale = 1
-                },
-            RotationGesture().onChanged { angle in currentRotation = angle }
-                .onEnded { angle in
-                    if angle.radians.isFinite { model.rotation += CGFloat(angle.radians) }
-                    currentRotation = .zero
-                }
-        )
+                    .onEnded { value in
+                        let s = value.magnification
+                        if s.isFinite && s > 0.001 {
+                            model.scale = clamp(model.scale * s, min: 0.2, max: 6.0)
+                        }
+                    },
+                RotationGesture()
+                    .updating($rotate) { value, state, _ in
+                        // Apply a small threshold to reduce jitter (~0.25°)
+                        let minRad: Double = 0.0043633231
+                        state = abs(value.radians) < minRad ? .zero : value
+                    }
+                    .onEnded { value in
+                        if value.radians.isFinite { model.rotation += CGFloat(value.radians) }
+                    }
+            ).map { _ in () }
+            return AnyGesture(g)
+        } else {
+            let g = SimultaneousGesture(
+                MagnificationGesture()
+                    .updating($magnify) { value, state, _ in state = value }
+                    .onEnded { value in
+                        if value.isFinite && value > 0.001 {
+                            model.scale = clamp(model.scale * value, min: 0.2, max: 6.0)
+                        }
+                    },
+                RotationGesture()
+                    .updating($rotate) { value, state, _ in state = value }
+                    .onEnded { value in
+                        if value.radians.isFinite { model.rotation += CGFloat(value.radians) }
+                    }
+            ).map { _ in () }
+            return AnyGesture(g)
+        }
     }
 
     private func clamp(_ v: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat { Swift.min(Swift.max(v, min), max) }
