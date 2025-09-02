@@ -4,6 +4,11 @@ import CoreText
 
 struct TextOverlayView: View {
     @Binding var model: TextOverlay
+    // Optional external transform deltas from a canvas-wide gesture layer
+    var externalScaleDelta: CGFloat = 1
+    var externalRotationDelta: Angle = .zero
+    var externalAnchor: UnitPoint = .center
+    var enableInternalTransformGesture: Bool = true
     var isEditing: Bool
     var onBeginEdit: () -> Void
     var onEndEdit: () -> Void
@@ -52,10 +57,10 @@ struct TextOverlayView: View {
                     TapGesture(count: 2).onEnded { onBeginEdit() },
                     including: .gesture
                 )
-                // Single-tap on background (not chips): close typing or unselect
+                // Single-tap on rectangle background (not chips): open typing dock
                 .gesture(
                     TapGesture(count: 1).onEnded {
-                        NotificationCenter.default.post(name: Notification.Name("CanvasTapOnSelectedText"), object: nil)
+                        NotificationCenter.default.post(name: Notification.Name("OpenTypingDockForSelectedText"), object: model.id)
                     },
                     including: .gesture
                 )
@@ -63,9 +68,9 @@ struct TextOverlayView: View {
         }
         .position(livePosition)
         .animation(nil, value: drag)
-        .scaleEffect(safeScale(model.scale * magnify), anchor: transformAnchor)
-        .rotationEffect(safeAngle(Angle(radians: Double(model.rotation)) + rotate), anchor: transformAnchor)
-        .gesture(isEditing ? nil : dragGesture.simultaneously(with: anchoredTransformGesture), including: .gesture)
+        .scaleEffect(safeScale(model.scale * magnify * externalScaleDelta), anchor: enableInternalTransformGesture ? transformAnchor : externalAnchor)
+        .rotationEffect(safeAngle(Angle(radians: Double(model.rotation)) + rotate + externalRotationDelta), anchor: enableInternalTransformGesture ? transformAnchor : externalAnchor)
+        .gesture(isEditing || !enableInternalTransformGesture ? nil : dragGesture.simultaneously(with: anchoredTransformGesture), including: .gesture)
         .zIndex(Double(model.zIndex))
         .onAppear { recomputeMeasuredSize() }
         .onChange(of: model.string) { _ in recomputeMeasuredSize() }

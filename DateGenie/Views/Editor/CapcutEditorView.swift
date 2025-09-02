@@ -130,8 +130,15 @@ struct CapcutEditorView: View {
             // Typing dock rides above the keyboard without altering parent layout
             .overlay(alignment: .bottom) {
                 Group {
-                    if isTyping, let idx = selectedTextIndex() {
-                        TypingDock(text: $state.textOverlays[idx].base.string,
+                    if isTyping, let id = state.selectedTextId,
+                       let binding = Binding(get: {
+                           state.textOverlays.first(where: { $0.id == id })?.base.string ?? ""
+                       }, set: { newValue in
+                           if let i = state.textOverlays.firstIndex(where: { $0.id == id }) {
+                               state.textOverlays[i].base.string = newValue
+                           }
+                       }) as Binding<String>? {
+                        TypingDock(text: binding,
                                    onDone: { isTyping = false; dockFocused = false })
                             .focused($dockFocused)
                             .padding(.horizontal, 12)
