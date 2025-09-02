@@ -22,7 +22,7 @@ struct EditorTrackArea: View {
                 // Render visible text overlays in canvas coordinate space
                 ZStack {
                     ForEach(state.textOverlays, id: \ .id) { t in
-                        if isVisible(t, at: state.currentTime) {
+                        if isVisible(t, at: state.displayTime) {
                             if state.selectedTextId == t.id {
                                 if let i = state.textOverlays.firstIndex(where: { $0.id == t.id }) {
                                     TextOverlayView(

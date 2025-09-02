@@ -80,7 +80,7 @@ struct CapcutEditorView: View {
                                     .font(.system(size: 28, weight: .bold))
                             }
                             HStack {
-                                Text(timeLabel(state.currentTime, duration: state.duration))
+                                Text(timeLabel(state.displayTime, duration: state.duration))
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(.white)
                                 Spacer(minLength: 0)
@@ -234,7 +234,7 @@ struct CapcutEditorView: View {
     @MainActor
     private func importPickedAudio(urls: [URL]) async {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let start = state.currentTime
+        let start = state.displayTime
         for src in urls {
             var accessed = src.startAccessingSecurityScopedResource()
             defer { if accessed { src.stopAccessingSecurityScopedResource() } }
@@ -332,6 +332,7 @@ struct CapcutEditorView: View {
 
 // MARK: - EditorState (minimal for playback)
 final class EditorState: ObservableObject {
+    enum FollowMode: String { case off, keepVisible, center }
     let asset: AVAsset
     let player: AVPlayer = AVPlayer()
     private var composition: AVMutableComposition = AVMutableComposition()
@@ -340,7 +341,12 @@ final class EditorState: ObservableObject {
     private var thumbnailGenTokens: [UUID: UUID] = [:]
 
     @Published var duration: CMTime = .zero
-    @Published var currentTime: CMTime = .zero
+    // Player-backed time (updated by display link in playback)
+    @Published var playerTime: CMTime = .zero
+    // Authoritative UI time (scrubTime if present, else playerTime)
+    @Published var displayTime: CMTime = .zero
+    // Live only during user scroll/drag/deceleration
+    @Published var scrubTime: CMTime? = nil
     @Published var isPlaying: Bool = false
     @Published var renderConfig: VideoRenderConfig = VideoRenderConfig()
     @Published var textOverlays: [TimedTextOverlay] = []
@@ -353,12 +359,23 @@ final class EditorState: ObservableObject {
     @Published var thumbnailTimes: [CMTime] = []
     @Published var pixelsPerSecond: CGFloat = 60
     @Published var isScrubbing: Bool = false
+    @Published var followMode: FollowMode = .off
     @Published var selectedClipId: UUID? = nil
     @Published var selectedAudioId: UUID? = nil
     // Text selection for on-canvas and timeline linking
     @Published var selectedTextId: UUID? = nil
 
     private var timeObserver: Any?
+    private var displayLink: CADisplayLink?
+    // Gate playback-driven UI updates until a precise seek commits
+    @Published var waitingForSeekCommit: Bool = false
+    private var lastScrubbedTime: CMTime? = nil
+    private var lastScrubSeekAt: CFTimeInterval = 0
+    // Prevent display-linked writes and follow during composition swaps
+    private var rebuildingComposition: Bool = false
+    // Track playback/follow state during interactive scrubs
+    private var wasPlayingBeforeScrub: Bool = false
+    private var followBeforeScrub: FollowMode? = nil
 
     init(asset: AVAsset) {
         self.asset = asset
@@ -374,25 +391,54 @@ final class EditorState: ObservableObject {
         }
         installTimeObserver()
         pause()
+        displayTime = .zero
     }
 
     func play() {
         guard !isPlaying else { return }
         player.play()
         isPlaying = true
+        followMode = .keepVisible
+        startDisplayLink()
     }
 
     func pause() {
         player.pause()
         isPlaying = false
+        followMode = .off
+        stopDisplayLink()
     }
 
     func seek(to time: CMTime, precise: Bool = false) {
+        // Always update UI time immediately; player may settle asynchronously
+        displayTime = time
         if precise {
-            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            commitSeek(to: time, precise: true)
         } else {
             player.seek(to: time)
         }
+    }
+
+    // MARK: - Display-linked playhead updates
+    @objc private func displayLinkFired(_ link: CADisplayLink) {
+        // Only let playback drive UI time when not scrubbing
+        guard isPlaying, scrubTime == nil, waitingForSeekCommit == false, rebuildingComposition == false else { return }
+        let t = self.player.currentTime()
+        self.playerTime = t
+        self.displayTime = t
+    }
+
+    private func startDisplayLink() {
+        guard displayLink == nil else { return }
+        let dl = CADisplayLink(target: self, selector: #selector(displayLinkFired(_:)))
+        dl.preferredFramesPerSecond = 0 // adopt device refresh rate (60/120Hz)
+        dl.add(to: .main, forMode: .common)
+        displayLink = dl
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
     }
 
     var totalDuration: CMTime {
@@ -423,6 +469,11 @@ final class EditorState: ObservableObject {
     @MainActor
     fileprivate func rebuildComposition() async {
         let comp = AVMutableComposition()
+        // Preserve UI time and playback state; treat as a settle
+        let keepTime = displayTime
+        let wasPlaying = isPlaying
+        rebuildingComposition = true
+        stopDisplayLink()
         guard !clips.isEmpty else {
             player.replaceCurrentItem(with: nil)
             duration = .zero
@@ -470,6 +521,20 @@ final class EditorState: ObservableObject {
         }
         player.replaceCurrentItem(with: item)
         duration = totalDuration
+        // Seek new item back to kept time precisely, then resume
+        let keepSeconds = max(0.0, min(CMTimeGetSeconds(keepTime), max(0.0, CMTimeGetSeconds(duration))))
+        let target = CMTime(seconds: keepSeconds, preferredTimescale: 600)
+        waitingForSeekCommit = true
+        player.currentItem?.cancelPendingSeeks()
+        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            guard let self = self else { return }
+            self.playerTime = target
+            self.displayTime = target
+            self.waitingForSeekCommit = false
+            self.rebuildingComposition = false
+            if wasPlaying { self.player.play() }
+            self.startDisplayLink()
+        }
     }
 
     // Generate filmstrip thumbnails for a single clip (progressive & cancellable)
@@ -536,10 +601,10 @@ final class EditorState: ObservableObject {
 
     private func installTimeObserver() {
         removeTimeObserver()
-        let interval = CMTime(seconds: 0.1, preferredTimescale: 600)
-        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+        // Lower cadence observer; displayLink handles UI time smoothly
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] _ in
             guard let self = self else { return }
-            self.currentTime = time
             // If zoom level changed significantly, regenerate thumbnails for fidelity
             for idx in self.clips.indices {
                 let prev = self.clips[idx].thumbnailPPS
@@ -594,6 +659,76 @@ final class EditorState: ObservableObject {
 
 // MARK: - Selection and clip timing helpers
 extension EditorState {
+    // MARK: - Scrub lifecycle and seek commit gating
+    func beginScrub() {
+        if scrubTime == nil {
+            wasPlayingBeforeScrub = isPlaying
+            if wasPlayingBeforeScrub { pause() }
+            scrubTime = displayTime
+            followBeforeScrub = followMode
+            followMode = .off
+        }
+        waitingForSeekCommit = false
+    }
+
+    func scrub(to time: CMTime) {
+        scrubTime = time
+        displayTime = time
+        // Tolerant seeks during continuous scrubbing for responsiveness
+        let now = CACurrentMediaTime()
+        if now - lastScrubSeekAt > 0.012 { // ~80Hz throttle
+            lastScrubSeekAt = now
+            player.seek(to: time, toleranceBefore: .positiveInfinity, toleranceAfter: .positiveInfinity)
+        }
+        lastScrubbedTime = time
+    }
+
+    func endScrub() {
+        guard let t = lastScrubbedTime else {
+            scrubTime = nil
+            waitingForSeekCommit = false
+            // Restore follow mode if we suspended it
+            if let prev = followBeforeScrub { followMode = prev }
+            followBeforeScrub = nil
+            return
+        }
+        // Keep scrubTime non-nil so display link stays gated until the precise seek lands
+        commitSeek(to: t, precise: true)
+        lastScrubbedTime = nil
+    }
+
+    private func commitSeek(to time: CMTime, precise: Bool) {
+        waitingForSeekCommit = true
+        player.currentItem?.cancelPendingSeeks()
+        let before: CMTime = precise ? .zero : .positiveInfinity
+        let after: CMTime  = precise ? .zero : .positiveInfinity
+        let requested = time
+        func attempt(_ retriesLeft: Int) {
+            player.seek(to: requested, toleranceBefore: before, toleranceAfter: after) { [weak self] _ in
+                guard let self = self else { return }
+                let landed = self.player.currentTime()
+                let delta = abs(CMTimeGetSeconds(landed) - CMTimeGetSeconds(requested))
+                let landedZero = CMTimeGetSeconds(landed) < 0.002
+                let requestedNonZero = CMTimeGetSeconds(requested) > 0.25
+                if (delta > 0.12 || (landedZero && requestedNonZero)) && retriesLeft > 0 {
+                    // One more precise attempt; AVPlayer sometimes reports an early time momentarily
+                    attempt(retriesLeft - 1)
+                    return
+                }
+                self.playerTime = landed
+                self.displayTime = requested // prefer requested to avoid minor rounding drift
+                self.waitingForSeekCommit = false
+                // Now allow playback-driven updates again
+                self.scrubTime = nil
+                // Restore follow mode and playback if it was active before scrub
+                if let prev = self.followBeforeScrub { self.followMode = prev }
+                self.followBeforeScrub = nil
+                if self.wasPlayingBeforeScrub { self.play() }
+                self.wasPlayingBeforeScrub = false
+            }
+        }
+        attempt(1)
+    }
     // MARK: - Text insertion (centered) used by toolbar and +Add text
     @MainActor
     func insertCenteredTextAndSelect(canvasRect: CGRect) {
@@ -601,18 +736,18 @@ extension EditorState {
         var base = TextOverlay(string: "Enter text", position: center)
         base.color = RGBAColor(r: 1, g: 1, b: 1, a: 1)
         let item = TimedTextOverlay(base: base,
-                                    start: currentTime,
+                                    start: displayTime,
                                     duration: CMTime(seconds: 2.0, preferredTimescale: 600))
         textOverlays.append(item)
         selectedTextId = item.id
     }
-    /// Absolute start time (in seconds) of a clip in the concatenated timeline,
-    /// accounting for previous clips' TRIMMED durations and this clip's trimStart.
+    /// Absolute start time (in seconds) of a clip in the concatenated timeline.
+    /// Uses only previous clips' trimmed durations. The selected clip's trimStart
+    /// does not shift its position on the concatenated timeline.
     func startSeconds(for clipId: UUID) -> Double? {
         var acc: Double = 0
         for c in clips {
             if c.id == clipId {
-                acc += max(0, CMTimeGetSeconds(c.trimStart))
                 return acc
             }
             acc += max(0, CMTimeGetSeconds(c.trimmedDuration))

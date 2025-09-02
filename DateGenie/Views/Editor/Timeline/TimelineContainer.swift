@@ -22,10 +22,16 @@ struct TimelineContainer: View {
     }
 
     // View-local scroll state
-    @State private var contentOffsetX: CGFloat = 0
+    // Programmatic scroll target should be opt-in; nil means "do not touch scroll view"
+    @State private var programmaticX: CGFloat? = nil
     @GestureState private var dragDX: CGFloat = 0
     @GestureState private var pinchScale: CGFloat = 1.0
     @State private var didTapClip: Bool = false
+    // Track whether the user (or deceleration) is currently driving the scroll view
+    @State private var isScrollInteracting: Bool = false
+    @State private var lastScrollEndedAt: CFTimeInterval = 0
+    // Cooldown after zoom to avoid immediate follow bounce
+    @State private var lastZoomEndedAt: CFTimeInterval = 0
     // Audio drag helpers
     @State private var draggingAudioId: UUID? = nil
     @State private var audioDragStartSeconds: Double = 0
@@ -53,6 +59,26 @@ struct TimelineContainer: View {
     private let selectionPadV: CGFloat = 6
     private let selectionHandleWidth: CGFloat = 35
     private let selectionHandleCorner: CGFloat = 0
+    // MARK: - Fixed-playhead mapping helpers (single source of truth)
+    private func screenScale() -> CGFloat { UIScreen.main.scale }
+    private func leadingInset(for width: CGFloat) -> CGFloat {
+        let center = width / 2
+        let pxRoundedCenter = (center * screenScale()).rounded(.toNearestOrAwayFromZero) / screenScale()
+        return max(0, pxRoundedCenter + leftGap)
+    }
+    private func timeForOffset(_ x: CGFloat, width: CGFloat, pps: CGFloat, duration: CMTime) -> CMTime {
+        let center = width / 2
+        let tSeconds = Double(max(0, (x - leadingInset(for: width) + center) / max(1, pps)))
+        let dur = max(0.0, CMTimeGetSeconds(duration))
+        return CMTime(seconds: min(tSeconds, dur), preferredTimescale: 600)
+    }
+    private func offsetForTime(_ time: CMTime, width: CGFloat, pps: CGFloat) -> CGFloat {
+        let center = width / 2
+        let t = max(0.0, CMTimeGetSeconds(time))
+        let x = leadingInset(for: width) + CGFloat(t) * pps - center
+        let s = screenScale()
+        return (x * s).rounded(.toNearestOrAwayFromZero) / s
+    }
 
     // Edge handle for global overlay (absolute positioning)
     private struct EdgeHandle: View {
@@ -579,16 +605,26 @@ struct TimelineContainer: View {
                                 }
                             }
                             .background(
-                                ScrollViewBridge(targetX: contentOffsetX) { x, isTracking, isDragging, isDecel in
+                                ScrollViewBridge(targetX: programmaticX) { x, isTracking, isDragging, isDecel in
                                     observedOffsetX = x
-                                    let center = geo.size.width / 2
-                                    let leadingInset = max(0, center + leftGap)
-                                    // Map scroll -> time only when the user is interacting
-                                    if (isTracking || isDragging || isDecel) {
-                                        let raw = (x - leadingInset + center) / max(1, state.pixelsPerSecond)
-                                        let dur = max(0.0, CMTimeGetSeconds(state.totalDuration))
-                                        let t = max(0.0, min(Double(raw), dur))
-                                        state.seek(to: CMTime(seconds: t, preferredTimescale: 600), precise: false)
+                                    // Consider any of these phases an interaction; mirror to scrubbing flag
+                                    let interacting = (isTracking || isDragging || isDecel)
+                                    if isScrollInteracting != interacting {
+                                        isScrollInteracting = interacting
+                                        state.isScrubbing = interacting
+                                        if interacting {
+                                            state.beginScrub()
+                                        } else {
+                                            lastScrollEndedAt = CACurrentMediaTime()
+                                            state.endScrub()
+                                        }
+                                    }
+                                    // Map scroll → time only while user (or deceleration) is driving.
+                                    if interacting {
+                                        let ct = timeForOffset(x, width: geo.size.width,
+                                                               pps: state.pixelsPerSecond,
+                                                               duration: state.totalDuration)
+                                        state.scrub(to: ct)
                                     }
                                 }
                             )
@@ -614,11 +650,9 @@ struct TimelineContainer: View {
                            let e = state.selectedClipEndSeconds,
                            e > s {
                             let pps = state.pixelsPerSecond
-                            let center = geo.size.width / 2
-                            let leadingInset = max(0, center + leftGap)
-                            // Use the observed ScrollView offset and include leading inset used by rows
-                            let startX = leadingInset + CGFloat(s) * pps - observedOffsetX
-                            let endX   = leadingInset + CGFloat(e) * pps - observedOffsetX
+                            // Use unified mapping for precise placement
+                            let startX = (offsetForTime(CMTime(seconds: s, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                            let endX   = (offsetForTime(CMTime(seconds: e, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
                             let selW   = endX - startX
 
                             Group {
@@ -670,10 +704,8 @@ struct TimelineContainer: View {
                            let eA = state.selectedAudioEndSeconds,
                            eA > sA, let a = state.selectedAudio {
                             let pps = state.pixelsPerSecond
-                            let center = geo.size.width / 2
-                            let leadingInset = max(0, center + leftGap)
-                            let startX = leadingInset + CGFloat(sA) * pps - observedOffsetX
-                            let endX   = leadingInset + CGFloat(eA) * pps - observedOffsetX
+                            let startX = (offsetForTime(CMTime(seconds: sA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                            let endX   = (offsetForTime(CMTime(seconds: eA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
                             let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
 
                             // Frame (optional outline to match video look)
@@ -711,10 +743,8 @@ struct TimelineContainer: View {
                            let eT = state.selectedTextEndSeconds,
                            eT > sT, let t = state.selectedText {
                             let pps = state.pixelsPerSecond
-                            let center = geo.size.width / 2
-                            let leadingInset = max(0, center + leftGap)
-                            let startX = leadingInset + CGFloat(sT) * pps - observedOffsetX
-                            let endX   = leadingInset + CGFloat(eT) * pps - observedOffsetX
+                            let startX = (offsetForTime(CMTime(seconds: sT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                            let endX   = (offsetForTime(CMTime(seconds: eT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
                             let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + TimelineStyle.laneRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
 
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -758,7 +788,7 @@ struct TimelineContainer: View {
                 // Timecode HUD during scrubbing
                 if state.isScrubbing {
                     VStack(spacing: 4) {
-                        Text(timeString(state.currentTime))
+                        Text(timeString(state.displayTime))
                             .font(.system(size: 12, weight: .semibold))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -832,7 +862,7 @@ struct TimelineContainer: View {
             }
             // Fixed left time counter (mm:ss / mm:ss) drawn last to sit above everything
             .overlay(alignment: .topLeading) {
-                Text("\(mmss(seconds(state.currentTime))) / \(mmss(seconds(state.duration)))")
+                Text("\(mmss(seconds(state.displayTime))) / \(mmss(seconds(state.duration)))")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
@@ -844,13 +874,24 @@ struct TimelineContainer: View {
             .onChange(of: selectedVideoItem) { _ in
                 Task { await handlePickedVideo() }
             }
-            .onChange(of: state.currentTime) { _ in
-                guard !state.isScrubbing else { return }
-                let center = geo.size.width / 2
-                let leadingInset = max(0, center + leftGap)
-                // Ensure start frame (time 0) aligns exactly under the playhead for the first clip when currentTime == 0
-                let target = leadingInset + CGFloat(seconds(state.currentTime)) * state.pixelsPerSecond - center
-                contentOffsetX = target
+            .onChange(of: state.displayTime) { _ in
+                // Idle-only programmatic follow with modes
+                guard !isScrollInteracting,
+                      state.waitingForSeekCommit == false,
+                      CACurrentMediaTime() - lastScrollEndedAt > 0.3,
+                      CACurrentMediaTime() - lastZoomEndedAt > 0.25 else { return }
+                let target = offsetForTime(state.displayTime, width: geo.size.width, pps: state.pixelsPerSecond)
+                switch state.followMode {
+                case .off:
+                    break
+                case .center, .keepVisible:
+                    let leftEdge = observedOffsetX
+                    let rightEdge = observedOffsetX + geo.size.width
+                    let playheadX = leadingInset(for: geo.size.width) + CGFloat(seconds(state.displayTime)) * state.pixelsPerSecond
+                    if playheadX < leftEdge || playheadX > rightEdge {
+                        if abs(target - observedOffsetX) > 10 { applyProgrammaticScroll(target) }
+                    }
+                }
             }
             .onAppear {
                 state.pixelsPerSecond = max(minPPS, min(maxPPS, state.pixelsPerSecond))
@@ -862,6 +903,12 @@ struct TimelineContainer: View {
     }
 
     private func seconds(_ t: CMTime) -> Double { max(0.0, CMTimeGetSeconds(t)) }
+
+    // One-shot programmatic scroll target. Sets programmaticX then clears next runloop.
+    private func applyProgrammaticScroll(_ x: CGFloat) {
+        programmaticX = x
+        DispatchQueue.main.async { programmaticX = nil }
+    }
 
     // MARK: - Video picker state
     @State private var selectedVideoItem: PhotosPickerItem? = nil
@@ -906,15 +953,15 @@ struct TimelineContainer: View {
         MagnificationGesture(minimumScaleDelta: 0.01)
             .updating($pinchScale) { value, scale, _ in
                 scale = value
+                let newPPS = max(minPPS, min(maxPPS, state.pixelsPerSecond * value))
+                state.pixelsPerSecond = newPPS
+                applyProgrammaticScroll(offsetForTime(state.displayTime, width: geo.size.width, pps: newPPS))
             }
             .onEnded { value in
-                let oldPPS = state.pixelsPerSecond
-                let newPPS = max(minPPS, min(maxPPS, oldPPS * value))
-                // Keep current time centered after zoom
-                let center = geo.size.width / 2
+                let newPPS = max(minPPS, min(maxPPS, state.pixelsPerSecond))
                 state.pixelsPerSecond = newPPS
-                let target = CGFloat(seconds(state.currentTime)) * newPPS - center
-                contentOffsetX = max(0, target)
+                applyProgrammaticScroll(offsetForTime(state.displayTime, width: geo.size.width, pps: newPPS))
+                lastZoomEndedAt = CACurrentMediaTime()
             }
     }
 
