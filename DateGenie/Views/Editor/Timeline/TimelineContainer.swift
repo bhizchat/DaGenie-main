@@ -31,6 +31,9 @@ struct TimelineContainer: View {
     @State private var audioDragStartSeconds: Double = 0
     // Observed native ScrollView horizontal offset (PreferenceKey-based)
     @State private var observedOffsetX: CGFloat = 0
+    // Global handle drag incremental delta trackers (avoid compounding)
+    @State private var leftHandlePrevDX: CGFloat = 0
+    @State private var rightHandlePrevDX: CGFloat = 0
     // Timeline dimensions
     private let stripHeight: CGFloat = 72       // filmstrip height
     private let rulerHeight: CGFloat = 32       // header/ruler height above filmstrip
@@ -50,6 +53,33 @@ struct TimelineContainer: View {
     private let selectionPadV: CGFloat = 6
     private let selectionHandleWidth: CGFloat = 35
     private let selectionHandleCorner: CGFloat = 0
+
+    // Edge handle for global overlay (absolute positioning)
+    private struct EdgeHandle: View {
+        let height: CGFloat
+        let width: CGFloat
+        let onDrag: (CGFloat) -> Void // dx in points
+        @GestureState private var dx: CGFloat = 0
+        var body: some View {
+            ZStack {
+                RoundedRectangle(cornerRadius: 0)
+                    .fill(Color.white)
+                    .frame(width: width, height: height - 4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.black.opacity(0.9))
+                            .frame(width: width * 0.35,
+                                   height: max(8, height - 12))
+                    )
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .updating($dx) { v, st, _ in st = v.translation.width }
+                    .onChanged { v in onDrag(v.translation.width) }
+            )
+        }
+    }
 
     // Reusable trim handle pair used for audio/text lane items
     private struct TrimHandles: View {
@@ -147,18 +177,6 @@ struct TimelineContainer: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(isSelected ? Color.white : Color.clear, lineWidth: 2)
             )
-            .overlay(alignment: .leading) {
-                if isSelected {
-                    TrimHandles(
-                        height: height,
-                        handleWidth: 35,
-                        corner: 0,
-                        onLeftDrag: { dx in onTrimLeft(Double(dx / max(1, pps))) },
-                        onRightDrag:{ dx in onTrimRight(Double(dx / max(1, pps))) }
-                    )
-                    .zIndex(10)
-                }
-            }
             .offset(x: offsetX)
             .contentShape(Rectangle())
             .highPriorityGesture(TapGesture().onEnded { onTap() })
@@ -209,18 +227,6 @@ struct TimelineContainer: View {
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(isSelected ? Color.white : Color.clear, lineWidth: 2)
                 )
-                .overlay(alignment: .leading) {
-                    if isSelected {
-                        TrimHandles(
-                            height: height,
-                            handleWidth: 35,
-                            corner: 0,
-                            onLeftDrag: { dx in onTrimLeft(Double(dx / max(1, pps))) },
-                            onRightDrag:{ dx in onTrimRight(Double(dx / max(1, pps))) }
-                        )
-                        .zIndex(10)
-                    }
-                }
                 .offset(x: offsetX)
                 .contentShape(Rectangle())
                 .highPriorityGesture(TapGesture().onEnded { onTap() })
@@ -657,6 +663,85 @@ struct TimelineContainer: View {
                             }
                             // Ensure overlay does not intercept timeline gestures
                             .allowsHitTesting(false)
+                        }
+
+                        // Global overlay for AUDIO selection (absolute coordinates)
+                        if let sA = state.selectedAudioStartSeconds,
+                           let eA = state.selectedAudioEndSeconds,
+                           eA > sA, let a = state.selectedAudio {
+                            let pps = state.pixelsPerSecond
+                            let center = geo.size.width / 2
+                            let leadingInset = max(0, center + leftGap)
+                            let startX = leadingInset + CGFloat(sA) * pps - observedOffsetX
+                            let endX   = leadingInset + CGFloat(eA) * pps - observedOffsetX
+                            let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
+
+                            // Frame (optional outline to match video look)
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(Color.white, lineWidth: 2)
+                                .frame(width: endX - startX, height: TimelineStyle.laneRowHeight)
+                                .position(x: startX + (endX - startX)/2, y: y)
+                                .allowsHitTesting(false)
+
+                            // Left handle
+                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
+                                let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
+                                leftHandlePrevDX = dx
+                                Task { await state.trimAudio(id: a.id, leftDeltaSeconds: deltaSec) }
+                            }
+                            .highPriorityGesture(DragGesture(minimumDistance: 0))
+                            .position(x: startX - selectionHandleWidth/2, y: y)
+                            .zIndex(220)
+                            .onDisappear { leftHandlePrevDX = 0 }
+
+                            // Right handle
+                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
+                                let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
+                                rightHandlePrevDX = dx
+                                Task { await state.trimAudio(id: a.id, rightDeltaSeconds: deltaSec) }
+                            }
+                            .highPriorityGesture(DragGesture(minimumDistance: 0))
+                            .position(x: endX + selectionHandleWidth/2, y: y)
+                            .zIndex(220)
+                            .onDisappear { rightHandlePrevDX = 0 }
+                        }
+
+                        // Global overlay for TEXT selection (absolute coordinates)
+                        if let sT = state.selectedTextStartSeconds,
+                           let eT = state.selectedTextEndSeconds,
+                           eT > sT, let t = state.selectedText {
+                            let pps = state.pixelsPerSecond
+                            let center = geo.size.width / 2
+                            let leadingInset = max(0, center + leftGap)
+                            let startX = leadingInset + CGFloat(sT) * pps - observedOffsetX
+                            let endX   = leadingInset + CGFloat(eT) * pps - observedOffsetX
+                            let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + TimelineStyle.laneRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
+
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .strokeBorder(Color.white, lineWidth: 2)
+                                .frame(width: endX - startX, height: TimelineStyle.laneRowHeight)
+                                .position(x: startX + (endX - startX)/2, y: y)
+                                .allowsHitTesting(false)
+
+                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
+                                let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
+                                leftHandlePrevDX = dx
+                                state.trimText(id: t.id, leftDeltaSeconds: deltaSec)
+                            }
+                            .highPriorityGesture(DragGesture(minimumDistance: 0))
+                            .position(x: startX - selectionHandleWidth/2, y: y)
+                            .zIndex(220)
+                            .onDisappear { leftHandlePrevDX = 0 }
+
+                            EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth) { dx in
+                                let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
+                                rightHandlePrevDX = dx
+                                state.trimText(id: t.id, rightDeltaSeconds: deltaSec)
+                            }
+                            .highPriorityGesture(DragGesture(minimumDistance: 0))
+                            .position(x: endX + selectionHandleWidth/2, y: y)
+                            .zIndex(220)
+                            .onDisappear { rightHandlePrevDX = 0 }
                         }
                     }
                     // Align stacked rows (and overlay) with playhead like before
