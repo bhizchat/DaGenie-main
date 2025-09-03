@@ -49,7 +49,11 @@ struct TimelineContainer: View {
     private let stripHeight: CGFloat = 72       // filmstrip height
     private let rulerHeight: CGFloat = 32       // header/ruler height above filmstrip
     private let spacingAboveStrip: CGFloat = 8  // gap between ruler and filmstrip
-    private let extraPlayheadExtension: CGFloat = 80 // extend playhead/HUD upward
+    // Single source of truth to vertically lift the entire timeline stack (ruler, rows, buttons, HUD)
+    private let verticalLift: CGFloat = 40
+    // Extend playhead/HUD upward; keep base consistent and add vertical lift so the HUD still clears the ruler
+    private let basePlayheadExtension: CGFloat = 80
+    private var extraPlayheadExtension: CGFloat { basePlayheadExtension + verticalLift }
 
     // Config
     private let minPPS: CGFloat = 20
@@ -117,17 +121,34 @@ struct TimelineContainer: View {
     @ViewBuilder private func headerRuler(_ geo: GeometryProxy) -> some View {
         rulerOverlay(width: geo.size.width, center: geo.size.width / 2)
             .frame(height: rulerHeight)
-            .offset(y: -105) // raise ruler vertically by ~105pt total
+            .offset(y: headerOffsetY)
     }
 
     @ViewBuilder private func scrollerAndOverlays(_ geo: GeometryProxy) -> some View {
         ZStack(alignment: .topLeading) {
             ScrollView(.horizontal, showsIndicators: false) {
-                VStack(spacing: TimelineStyle.rowSpacing) {
-                    videoRow(geo)
-                    if hasClip {
-                        extraAudioRow(geo)
-                        textRow(geo)
+                let showVertical = hasExtractedAudio || hasClip
+                Group {
+                    if showVertical {
+                        let visibleLanes: CGFloat = 2
+                        let visibleHeight = TimelineStyle.videoRowHeight
+                            + visibleLanes * TimelineStyle.laneRowHeight
+                            + visibleLanes * TimelineStyle.rowSpacing
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(spacing: TimelineStyle.rowSpacing) {
+                                videoRow(geo)
+                                if hasExtractedAudio { extractedAudioRow(geo) }
+                                if hasClip {
+                                    extraAudioRow(geo)
+                                    textRow(geo)
+                                }
+                            }
+                            .frame(height: stackedRowsHeight)
+                            .background(VerticalScrollBridge { _, _, _, _ in })
+                        }
+                        .frame(height: visibleHeight)
+                    } else {
+                        VStack(spacing: TimelineStyle.rowSpacing) { videoRow(geo) }
                     }
                 }
                 .background(
@@ -140,6 +161,12 @@ struct TimelineContainer: View {
                                           geo: geo)
                     }
                 )
+                // Keep overlay alignment coherent during programmatic follow while playing
+                .onChange(of: state.displayTime) { _ in
+                    if !isScrollInteracting {
+                        observedOffsetX = offsetForTime(state.displayTime, width: geo.size.width, pps: state.pixelsPerSecond)
+                    }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ResetTimelineDragGate"))) { _ in
                     if isDraggingLaneItem { isDraggingLaneItem = false }
                 }
@@ -178,37 +205,39 @@ struct TimelineContainer: View {
                                   y: TimelineStyle.videoRowHeight / 2)
                         .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
 
-                    // Left handle
-                    ZStack {
-                        RoundedRectangle(cornerRadius: selectionHandleCorner)
-                            .fill(Color.white)
-                            .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.black.opacity(0.9))
-                                    .frame(width: selectionHandleWidth * 0.35,
-                                           height: max(8, TimelineStyle.videoRowHeight - 12))
-                            )
-                    }
-                    .position(x: startX - selectionHandleWidth / 2,
-                              y: TimelineStyle.videoRowHeight / 2)
-                    .zIndex(200)
+                    if !state.isPlaying {
+                        // Left handle
+                        ZStack {
+                            RoundedRectangle(cornerRadius: selectionHandleCorner)
+                                .fill(Color.white)
+                                .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.black.opacity(0.9))
+                                        .frame(width: selectionHandleWidth * 0.35,
+                                               height: max(8, TimelineStyle.videoRowHeight - 12))
+                                )
+                        }
+                        .position(x: startX - selectionHandleWidth / 2,
+                                  y: TimelineStyle.videoRowHeight / 2)
+                        .zIndex(200)
 
-                    // Right handle
-                    ZStack {
-                        RoundedRectangle(cornerRadius: selectionHandleCorner)
-                            .fill(Color.white)
-                            .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.black.opacity(0.9))
-                                    .frame(width: selectionHandleWidth * 0.35,
-                                           height: max(8, TimelineStyle.videoRowHeight - 12))
-                            )
+                        // Right handle
+                        ZStack {
+                            RoundedRectangle(cornerRadius: selectionHandleCorner)
+                                .fill(Color.white)
+                                .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.black.opacity(0.9))
+                                        .frame(width: selectionHandleWidth * 0.35,
+                                               height: max(8, TimelineStyle.videoRowHeight - 12))
+                                )
+                        }
+                        .position(x: endX + selectionHandleWidth / 2,
+                                  y: TimelineStyle.videoRowHeight / 2)
+                        .zIndex(200)
                     }
-                    .position(x: endX + selectionHandleWidth / 2,
-                              y: TimelineStyle.videoRowHeight / 2)
-                    .zIndex(200)
                 }
                 // Ensure overlay does not intercept timeline gestures
                 .allowsHitTesting(false)
@@ -221,7 +250,19 @@ struct TimelineContainer: View {
                 let pps = state.pixelsPerSecond
                 let startX = (offsetForTime(CMTime(seconds: sA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
                 let endX   = (offsetForTime(CMTime(seconds: eA, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
+                // Decide which audio lane Y to use (extracted vs regular). Extracted sits directly below video.
+                let isExtractedSel = a.isExtracted
+                // Offset to the center of the target lane
+                let laneYOffset: CGFloat = {
+                    if isExtractedSel {
+                        return TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + (extractedLaneHeight / 2)
+                    } else {
+                        // If extracted lane exists, regular audio is one lane further down
+                        let extra = hasExtractedAudio ? (extractedLaneHeight + TimelineStyle.rowSpacing) : 0
+                        return TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + extra + (TimelineStyle.laneRowHeight / 2)
+                    }
+                }()
+                let y = laneYOffset
 
                 // Frame (optional outline to match video look)
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -523,12 +564,12 @@ struct TimelineContainer: View {
     }
 
     private var headerOffsetY: CGFloat {
-        -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
+        -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
     }
 
     // Shared rows vertical offset used by both the ScrollView rows and the selection overlay
     private var rowsOffsetY: CGFloat {
-        -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
+        -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
     }
 
     // Fixed container height for the stacked rows to prevent layout jumps when overlay appears
@@ -537,6 +578,7 @@ struct TimelineContainer: View {
         return TimelineStyle.videoRowHeight
              + lanesCount * TimelineStyle.laneRowHeight
              + lanesCount * TimelineStyle.rowSpacing
+             + extractedExtraHeight
     }
 
     // Extend playhead to span video + all timeline lanes below
@@ -554,13 +596,14 @@ struct TimelineContainer: View {
         TimelineStyle.videoRowHeight
         + lanesCount * TimelineStyle.laneRowHeight
         + lanesCount * TimelineStyle.rowSpacing
+        + extractedExtraHeight
     }
     private var preferredHeight: CGFloat {
         rulerHeight + spacingAboveStrip + stackedRowsHeight
     }
 
     // Centralized vertical anchors so both states (no-clip/has-clip) align consistently
-    private var rowsBaseY: CGFloat { -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 }
+    private var rowsBaseY: CGFloat { -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift }
     private var filmstripCenterY: CGFloat { rowsBaseY + (TimelineStyle.videoRowHeight / 2) }
     private var noClipButtonDelta: CGFloat { hasClip ? 0 : 120 }
     private var clipButtonDelta: CGFloat { hasClip ? 80 : 0 }
@@ -670,7 +713,7 @@ struct TimelineContainer: View {
             Rectangle().fill(Color.clear)
                 .frame(width: timelineWidth, height: TimelineStyle.laneRowHeight)
                 .overlay(alignment: .topLeading) {
-                    if state.audioTracks.isEmpty {
+                    if !state.audioTracks.contains(where: { !$0.isExtracted }) {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(Color.gray.opacity(0.18))
                             .frame(width: timelineWidth, height: TimelineStyle.laneRowHeight)
@@ -682,7 +725,7 @@ struct TimelineContainer: View {
                             .contentShape(Rectangle())
                             .onTapGesture { onAddAudio?() }
                     } else {
-                        ForEach(Array(state.audioTracks.enumerated()), id: \.element.id) { _, t in
+                        ForEach(Array(state.audioTracks.enumerated()).filter { !$0.element.isExtracted }, id: \.element.id) { _, t in
                             let startX: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.start + t.trimStart))) * state.pixelsPerSecond
                             let width: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.trimmedDuration))) * state.pixelsPerSecond
                             AudioStripPill(
@@ -738,7 +781,7 @@ struct TimelineContainer: View {
         }
         .frame(height: TimelineStyle.laneRowHeight)
         .overlay(alignment: .topLeading) {
-            if state.audioTracks.isEmpty {
+            if !state.audioTracks.contains(where: { !$0.isExtracted }) {
                 let leadingInset = max(0, (geo.size.width / 2) + leftGap)
                 Button(action: { onAddAudio?() }) {
                     RoundedRectangle(cornerRadius: 8)
@@ -919,7 +962,7 @@ struct TimelineContainer: View {
             // Plus button fixed to the trailing edge; does not move with scroll/zoom
             .overlay(alignment: .trailing) {
                 // Vertically center on the video (filmstrip) row; when there is no clip, nudge the plus 20pt lower
-                let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50
+                let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
                 let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20)
                 PhotosPicker(selection: $selectedVideoItem, matching: .videos, photoLibrary: .shared()) {
                     RoundedRectangle(cornerRadius: 8)
@@ -944,7 +987,7 @@ struct TimelineContainer: View {
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
                     .padding(.top, 0)
-                    .offset(y: -10)
+                    .offset(y: -10 - verticalLift)
                     .zIndex(1000)
                     .allowsHitTesting(false)
             }
@@ -981,6 +1024,92 @@ struct TimelineContainer: View {
         }
         .frame(maxWidth: .infinity)
         .background(Color.editorTimelineBackground)
+    }
+
+    // MARK: - Extracted audio lane helpers
+    private var hasExtractedAudio: Bool {
+        state.audioTracks.contains { $0.isExtracted }
+    }
+    private var extractedLaneHeight: CGFloat { TimelineStyle.laneRowHeight }
+    private var extractedExtraHeight: CGFloat {
+        hasExtractedAudio ? (extractedLaneHeight + TimelineStyle.rowSpacing) : 0
+    }
+
+    @ViewBuilder private func extractedAudioRow(_ geo: GeometryProxy) -> some View {
+        HStack(spacing: 0) {
+            let center = geo.size.width / 2
+            let leadingInset = max(0, center + leftGap)
+            let trailingInset = max(0, center - leftGap)
+            let totalSeconds = max(0, CMTimeGetSeconds(state.totalDuration))
+            let timelineWidth = CGFloat(totalSeconds) * state.pixelsPerSecond
+
+            Color.clear.frame(width: leadingInset, height: extractedLaneHeight)
+
+            Rectangle().fill(Color.clear)
+                .frame(width: timelineWidth, height: extractedLaneHeight)
+                .overlay(alignment: .topLeading) {
+                    ForEach(state.audioTracks.filter { $0.isExtracted }, id: \.id) { t in
+                        let startX: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.start + t.trimStart))) * state.pixelsPerSecond
+                        let width: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.trimmedDuration))) * state.pixelsPerSecond
+                        ExtractedAudioStrip(width: width,
+                                            height: extractedLaneHeight,
+                                            offsetX: startX,
+                                            title: t.displayName,
+                                            samples: t.waveformSamples,
+                                            onTap: {
+                                                let was = (state.selectedAudioId == t.id)
+                                                state.selectedAudioId = was ? nil : t.id
+                                                if !was {
+                                                    state.selectedClipId = nil
+                                                    state.selectedTextId = nil
+                                                    DispatchQueue.main.async {
+                                                        NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
+                                                    }
+                                                }
+                                                didTapClip = true
+                                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                            })
+                    }
+                }
+
+            Color.clear.frame(width: trailingInset, height: extractedLaneHeight)
+        }
+        .frame(height: extractedLaneHeight)
+    }
+
+    private struct ExtractedAudioStrip: View {
+        let width: CGFloat
+        let height: CGFloat
+        let offsetX: CGFloat
+        let title: String
+        let samples: [Float]
+        let onTap: () -> Void
+        var body: some View {
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(red: 0xBE/255.0, green: 0x93/255.0, blue: 0xD4/255.0, opacity: 0.9))
+                WaveformView(samples: samples, color: Color.white.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 6)
+                    .allowsHitTesting(false)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.top, 4)
+                    .padding(.leading, 6)
+                    .lineLimit(1)
+                    .allowsHitTesting(false)
+            }
+            .frame(width: width, height: height)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.white.opacity(0.8), lineWidth: 1)
+            )
+            .offset(x: offsetX)
+            .contentShape(Rectangle())
+            .highPriorityGesture(TapGesture().onEnded { onTap() })
+        }
     }
 
     private func seconds(_ t: CMTime) -> Double { max(0.0, CMTimeGetSeconds(t)) }

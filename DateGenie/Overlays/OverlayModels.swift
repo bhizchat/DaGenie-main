@@ -154,6 +154,10 @@ struct AudioTrack: Identifiable, Equatable {
         let d = end - trimStart
         return d >= .zero ? d : .zero
     }
+    /// Provenance: true if created via Extract Audio from a clip
+    var isExtracted: Bool = false
+    /// If extracted, the source clip identifier for follow/link behaviors
+    var sourceClipId: UUID? = nil
 }
 
 
