@@ -4,6 +4,7 @@ struct EditToolsBar: View {
     @ObservedObject var state: EditorState
     let onClose: () -> Void
     let onVolume: () -> Void
+    let onSpeed: () -> Void
 
     var body: some View {
         // Match the original bottom toolbar footprint so the timeline doesn't shift
@@ -24,17 +25,19 @@ struct EditToolsBar: View {
                     }
 
                     EditToolsBarItem(assetName: "Split", title: "Split", action: { }, isEnabled: allowAll || allowForText("Split"))
-                    EditToolsBarItem(assetName: "Speed", title: "Speed", action: { }, isEnabled: allowAll || allowForText("Speed"))
+                    EditToolsBarItem(assetName: "Speed", title: "Speed", action: onSpeed, isEnabled: allowAll || allowForText("Speed"))
                     EditToolsBarItem(assetName: "Volume", title: "Volume", action: onVolume, isEnabled: allowAll || allowForText("Volume"))
                     EditToolsBarItem(assetName: "Delete", title: "Delete", action: {
                         Task { await state.deleteSelected() }
                     }, isEnabled: allowAll || allowForText("Delete"))
-                    EditToolsBarItem(assetName: "Duplicate", title: "Duplicate", action: { }, isEnabled: allowAll || allowForText("Duplicate"))
+                    EditToolsBarItem(assetName: "Duplicate", title: "Duplicate", action: { Task { await state.duplicateSelected() } }, isEnabled: allowAll || allowForText("Duplicate"))
                     EditToolsBarItem(assetName: "Extract_audio", title: "Extract\naudio", action: {
                         let um = UIApplication.shared.topMostViewController()?.undoManager
                         Task { await state.extractOriginalAudioFromSelectedClip(undoManager: um) }
                     }, isEnabled: (isClipSelected && !isAudioSelected) && (allowAll || allowForText("Extract_audio")))
-                    EditToolsBarItem(assetName: "Opacity", title: "Opacity", action: { }, isEnabled: allowAll || allowForText("Opacity"))
+                    // Opacity is available for video clip and text only (not audio)
+                    let opacityEnabled = (isClipSelected || isTextSelected)
+                    EditToolsBarItem(assetName: "Opacity", title: "Opacity", action: { }, isEnabled: opacityEnabled)
                 }
                 .padding(.vertical, 6)
             }

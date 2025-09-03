@@ -154,6 +154,17 @@ struct AudioTrack: Identifiable, Equatable {
         let d = end - trimStart
         return d >= .zero ? d : .zero
     }
+    // Speed / pitch controls for standalone audio
+    /// Playback speed multiplier applied to this audio track.
+    var speed: Double = 1.0
+    /// Preserve pitch when retimed.
+    var preservePitch: Bool = true
+    /// Effective on-timeline duration after trim and speed.
+    var effectiveTrimmedDuration: CMTime {
+        guard speed > 0 else { return .zero }
+        let seconds = CMTimeGetSeconds(trimmedDuration) / speed
+        return CMTime(seconds: max(0, seconds), preferredTimescale: 600)
+    }
     /// Provenance: true if created via Extract Audio from a clip
     var isExtracted: Bool = false
     /// If extracted, the source clip identifier for follow/link behaviors

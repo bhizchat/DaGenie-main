@@ -21,6 +21,10 @@ struct CapcutEditorView: View {
     // Volume dock state
     @State private var showVolumeDock: Bool = false
     @State private var volumeSliderValue: Double = 50
+    // Speed dock state
+    @State private var showSpeedDock: Bool = false
+    @State private var speedSliderUnit: Double = 0 // 0..1 mapped to 0.2..100
+    @State private var preservePitchToggle: Bool = true
     
 
     init(url: URL) {
@@ -140,11 +144,44 @@ struct CapcutEditorView: View {
                         .padding(.horizontal, 12)
                         .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
+                    // Inline Speed dock (Standard)
+                    if showSpeedDock {
+                        SpeedDockView(
+                            speedUnit: $speedSliderUnit,
+                            preservePitch: $preservePitchToggle,
+                            onApply: {
+                                let speed = unitToRate(speedSliderUnit)
+                                if let id = state.selectedClipId, let i = state.clips.firstIndex(where: { $0.id == id }) {
+                                    state.clips[i].speed = speed
+                                    state.clips[i].preserveOriginalPitch = preservePitchToggle
+                                } else if let id = state.selectedAudioId, let i = state.audioTracks.firstIndex(where: { $0.id == id }) {
+                                    state.audioTracks[i].speed = speed
+                                    state.audioTracks[i].preservePitch = preservePitchToggle
+                                }
+                                withAnimation(.easeInOut(duration: 0.2)) { showSpeedDock = false }
+                                Task { await state.rebuildCompositionForPreview() }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
+                            }
+                        )
+                        .padding(.horizontal, 12)
+                        .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                    }
                     if showEditBar {
-                        EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false } }, onVolume: {
+                        EditToolsBar(state: state, onClose: {
+                            withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false }
+                            // Ensure timeline scroll is re-enabled after closing tools
+                            DispatchQueue.main.async {
+                                NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                            }
+                        }, onVolume: {
                             // Toggle the volume dock
                             if showVolumeDock {
                                 withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = false }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
                             } else {
                                 if let id = state.selectedAudioId, let i = state.audioTracks.firstIndex(where: { $0.id == id }) {
                                     volumeSliderValue = Double(state.audioTracks[i].volume * 100.0)
@@ -153,7 +190,34 @@ struct CapcutEditorView: View {
                                 } else {
                                     volumeSliderValue = 50
                                 }
-                                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = true }
+                                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = true; showSpeedDock = false }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
+                            }
+                        }, onSpeed: {
+                            // Toggle speed dock
+                            if showSpeedDock {
+                                withAnimation(.easeInOut(duration: 0.2)) { showSpeedDock = false }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
+                            } else {
+                                // Seed values from selection
+                                if let id = state.selectedClipId, let i = state.clips.firstIndex(where: { $0.id == id }) {
+                                    speedSliderUnit = rateToUnit(state.clips[i].speed)
+                                    preservePitchToggle = state.clips[i].preserveOriginalPitch
+                                } else if let id = state.selectedAudioId, let i = state.audioTracks.firstIndex(where: { $0.id == id }) {
+                                    speedSliderUnit = rateToUnit(state.audioTracks[i].speed)
+                                    preservePitchToggle = state.audioTracks[i].preservePitch
+                                } else {
+                                    speedSliderUnit = rateToUnit(1.0)
+                                    preservePitchToggle = true
+                                }
+                                withAnimation(.easeInOut(duration: 0.2)) { showSpeedDock = true; showVolumeDock = false }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
                             }
                         })
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
@@ -348,12 +412,13 @@ struct CapcutEditorView: View {
     }
 
     private func export() {
-        VideoOverlayExporter.export(assetURL: url,
+        // Export from the current preview composition (already retimed), with overlays
+        let exportAsset = state.player.currentItem?.asset ?? state.asset
+        let mix = state.player.currentItem?.audioMix
+        VideoOverlayExporter.export(from: exportAsset,
+                                    audioMix: mix,
                                     timedTexts: state.textOverlays,
                                     timedCaptions: state.captions,
-                                    renderConfig: state.renderConfig,
-                                    audioTracks: state.audioTracks,
-                                    originalClipVolume: state.clips.first?.originalAudioVolume, // single-asset path
                                     canvasRect: canvasRect) { out in
             guard let out = out else { return }
             // Save thumbnail + project persistence if available
@@ -504,7 +569,7 @@ final class EditorState: ObservableObject {
     }
 
     var totalDuration: CMTime {
-        clips.reduce(.zero) { $0 + $1.trimmedDuration }
+        clips.reduce(.zero) { $0 + $1.effectiveDuration }
     }
 
     // Append a new clip and rebuild the composition + thumbnails
@@ -550,18 +615,23 @@ final class EditorState: ObservableObject {
         var mixParams: [AVMutableAudioMixInputParameters] = []
         for clip in clips {
             let srcRange = CMTimeRange(start: clip.trimStart, duration: clip.trimmedDuration)
-            if let v = clip.asset.tracks(withMediaType: .video).first {
-                try? videoTrack?.insertTimeRange(srcRange, of: v, at: cursor)
+            let outDur = clip.effectiveDuration
+            if let v = clip.asset.tracks(withMediaType: .video).first, let vdst = videoTrack {
+                try? vdst.insertTimeRange(srcRange, of: v, at: cursor)
+                // Retime the just-inserted segment to match speed
+                vdst.scaleTimeRange(CMTimeRange(start: cursor, duration: srcRange.duration), toDuration: outDur)
             }
             if clip.hasOriginalAudio && !clip.muteOriginalAudio,
                let aSrc = clip.asset.tracks(withMediaType: .audio).first,
                let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 try? aDst.insertTimeRange(srcRange, of: aSrc, at: cursor)
+                aDst.scaleTimeRange(CMTimeRange(start: cursor, duration: srcRange.duration), toDuration: outDur)
                 let p = AVMutableAudioMixInputParameters(track: aDst)
                 p.setVolume(clip.originalAudioVolume, at: .zero)
+                p.audioTimePitchAlgorithm = clip.preserveOriginalPitch ? .spectral : .varispeed
                 mixParams.append(p)
             }
-            cursor = cursor + clip.trimmedDuration
+            cursor = cursor + outDur
         }
         // Include user-added audio tracks for preview
         for t in audioTracks {
@@ -570,18 +640,24 @@ final class EditorState: ObservableObject {
                let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 // Trim-aware insertion from source time range
                 let srcRange = CMTimeRange(start: t.trimStart, duration: t.trimmedDuration)
-                // Clamp to available project space
-                let maxDur = max(.zero, totalDuration - (t.start))
-                let dur = min(srcRange.duration, maxDur)
-                try? aDst.insertTimeRange(CMTimeRange(start: srcRange.start, duration: dur), of: aSrc, at: t.start)
+                // Desired output duration after retime; clamp to project tail
+                let maxOut = max(.zero, totalDuration - (t.start))
+                let outDur = CMTimeMinimum(t.effectiveTrimmedDuration, maxOut)
+                try? aDst.insertTimeRange(srcRange, of: aSrc, at: t.start)
+                aDst.scaleTimeRange(CMTimeRange(start: t.start, duration: srcRange.duration), toDuration: outDur)
                 let p = AVMutableAudioMixInputParameters(track: aDst)
                 p.setVolume(t.volume, at: .zero)
+                p.audioTimePitchAlgorithm = t.preservePitch ? .spectral : .varispeed
                 mixParams.append(p)
             }
         }
 
         composition = comp
         let item = AVPlayerItem(asset: composition)
+        // Global default: if any retimed audio requests pitch preservation, prefer spectral
+        let wantsPitch = (clips.contains { $0.speed != 1.0 && $0.preserveOriginalPitch }) ||
+                         (audioTracks.contains { $0.speed != 1.0 && $0.preservePitch })
+        item.audioTimePitchAlgorithm = wantsPitch ? .spectral : .varispeed
         if !mixParams.isEmpty {
             let mix = AVMutableAudioMix(); mix.inputParameters = mixParams
             item.audioMix = mix
@@ -608,7 +684,7 @@ final class EditorState: ObservableObject {
     private func generateThumbnails(forClipAt index: Int) async {
         guard clips.indices.contains(index) else { return }
         let clip = clips[index]
-        let total = CMTimeGetSeconds(clip.duration)
+        let total = CMTimeGetSeconds(clip.effectiveDuration)
         guard total.isFinite && total > 0 else { return }
         // Determine number of tiles needed to span the clip's on-screen width at current zoom
         let tileWidth = max(24, self.pixelsPerSecond)
@@ -1147,9 +1223,100 @@ extension EditorState {
             }
         }
     }
+
+    /// Duplicate the currently selected item and place the copy immediately to the right on the same lane/track.
+    @MainActor
+    func duplicateSelected() async {
+        // TEXT overlay duplication
+        if let tid = selectedTextId, let i = textOverlays.firstIndex(where: { $0.id == tid }) {
+            let src = textOverlays[i]
+            // Compute new placement so visible start = source visible end
+            let sourceEnd = src.effectiveStart + src.trimmedDuration
+            let newStart = max(.zero, sourceEnd - src.trimStart)
+            // Create a brand new base with a new id (since base.id is let)
+            let newBase = TextOverlay(
+                id: UUID(),
+                string: src.base.string,
+                fontName: src.base.fontName,
+                style: src.base.style,
+                color: src.base.color,
+                position: CGPoint(x: src.base.position.x + 16, y: src.base.position.y + 16),
+                scale: src.base.scale,
+                rotation: src.base.rotation,
+                zIndex: src.base.zIndex + 1
+            )
+            var dup = TimedTextOverlay(base: newBase, start: newStart, duration: src.duration)
+            dup.trimStart = src.trimStart
+            dup.trimEnd   = src.trimEnd
+            textOverlays.append(dup)
+            selectedTextId = dup.id
+            await rebuildCompositionForPreview()
+            followMode = .keepVisible
+            return
+        }
+
+        // AUDIO duplication
+        if let aid = selectedAudioId, let i = audioTracks.firstIndex(where: { $0.id == aid }) {
+            let src = audioTracks[i]
+            var dup = src
+            // Assign new identity via reinit
+            dup = AudioTrack(url: src.url, start: src.start, duration: src.duration, volume: src.volume)
+            dup.waveformSamples = src.waveformSamples
+            dup.titleOverride = src.titleOverride
+            dup.trimStart = src.trimStart
+            dup.trimEnd = src.trimEnd
+            dup.isExtracted = src.isExtracted
+            dup.sourceClipId = src.sourceClipId
+            // Place so visible start equals source visible end
+            let visibleEnd = src.start + src.trimStart + src.trimmedDuration
+            dup.start = max(.zero, visibleEnd - src.trimStart)
+            audioTracks.append(dup)
+            selectedAudioId = dup.id
+            await rebuildCompositionForPreview()
+            followMode = .keepVisible
+            return
+        }
+
+        // CLIP duplication
+        if let cid = selectedClipId, let idx = clips.firstIndex(where: { $0.id == cid }) {
+            let src = clips[idx]
+            var dup = src
+            // New identity and reset transient visuals so they regenerate
+            dup = Clip(url: src.url, asset: src.asset, duration: src.duration)
+            dup.hasOriginalAudio = src.hasOriginalAudio
+            dup.waveformSamples = src.waveformSamples
+            dup.muteOriginalAudio = src.muteOriginalAudio
+            dup.originalAudioVolume = src.originalAudioVolume
+            dup.trimStart = src.trimStart
+            dup.trimEnd = src.trimEnd
+            let insertIndex = idx + 1
+            clips.insert(dup, at: insertIndex)
+            await rebuildComposition()
+            await generateThumbnails(forClipAt: insertIndex)
+            selectedClipId = dup.id
+            followMode = .keepVisible
+            return
+        }
+    }
 }
 
 // MARK: - UI helpers
+// Log-scale mapping helpers used by the Speed dock
+private func unitToRate(_ t: Double) -> Double {
+    let minRate: Double = 0.2
+    let maxRate: Double = 100.0
+    let a = log10(minRate)
+    let b = log10(maxRate)
+    return pow(10, a + (b - a) * max(0, min(1, t)))
+}
+private func rateToUnit(_ r: Double) -> Double {
+    let minRate: Double = 0.2
+    let maxRate: Double = 100.0
+    let clamped = max(minRate, min(maxRate, r))
+    let a = log10(minRate)
+    let b = log10(maxRate)
+    return (log10(clamped) - a) / (b - a)
+}
 private struct PlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
     func makeUIView(context: Context) -> PlayerView { PlayerView() }
@@ -1210,6 +1377,63 @@ private struct TypingDock: View {
                 Button("Done", action: onDone)
             }
         }
+    }
+}
+
+// MARK: - Speed Dock (Standard)
+private struct SpeedDockView: View {
+    @Binding var speedUnit: Double // 0..1 mapped to 0.2..100
+    @Binding var preservePitch: Bool
+    let onApply: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Standard")
+                    .font(.system(size: 14, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.white)
+                    .foregroundColor(.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                Spacer()
+                Button(action: onApply) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(.white)
+                }
+            }
+            .padding(.horizontal, 4)
+
+            // Speed readout and slider
+            VStack(spacing: 8) {
+                Text(String(format: "%.2f×", unitToRate(speedUnit)))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.white)
+                Slider(value: $speedUnit, in: 0...1)
+                    .tint(Color(red: 247/255, green: 180/255, blue: 81/255))
+                HStack {
+                    Text("0.2"); Spacer(); Text("1"); Spacer(); Text("2"); Spacer(); Text("10"); Spacer(); Text("100")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.white.opacity(0.8))
+            }
+
+            HStack {
+                Spacer()
+                Button(action: { preservePitch.toggle() }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: preservePitch ? "largecircle.fill.circle" : "circle")
+                        Text("Original Pitch")
+                    }
+                    .foregroundColor(.white)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.black.opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

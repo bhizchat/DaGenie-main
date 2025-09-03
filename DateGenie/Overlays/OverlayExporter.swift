@@ -425,6 +425,107 @@ enum VideoOverlayExporter {
         exporter.outputFileType = .mp4
         exporter.exportAsynchronously { completion(exporter.status == .completed ? outURL : nil) }
     }
+
+    /// Export from an already-built AVAsset (e.g., an AVMutableComposition that already encodes
+    /// timeline edits like speed changes). Overlays are composited in the asset's render size.
+    static func export(from baseAsset: AVAsset,
+                       audioMix: AVAudioMix? = nil,
+                       timedTexts: [TimedTextOverlay],
+                       timedCaptions: [TimedCaption],
+                       canvasRect: CGRect,
+                       completion: @escaping (URL?) -> Void) {
+        // Derive a videoComposition from the asset to honor its timing/tracks.
+        let videoComposition = AVMutableVideoComposition(propertiesOf: baseAsset)
+        let size = videoComposition.renderSize
+
+        // Overlay layers sized to the asset's render size
+        let parentLayer = CALayer(); parentLayer.frame = CGRect(origin: .zero, size: size)
+        let videoLayer = CALayer(); videoLayer.frame = parentLayer.frame
+        parentLayer.addSublayer(videoLayer)
+
+        let exportScale = size.width / max(canvasRect.width, 1)
+
+        func addTimedOpacityAnimations(layer: CALayer, start: CMTime, duration: CMTime) {
+            let begin = CMTimeGetSeconds(start)
+            let end = CMTimeGetSeconds(start + duration)
+            let fadeIn = CABasicAnimation(keyPath: "opacity")
+            fadeIn.fromValue = 0.0
+            fadeIn.toValue = 1.0
+            fadeIn.beginTime = begin
+            fadeIn.duration = 0.1
+            fadeIn.fillMode = .forwards
+            fadeIn.isRemovedOnCompletion = false
+            let fadeOut = CABasicAnimation(keyPath: "opacity")
+            fadeOut.fromValue = 1.0
+            fadeOut.toValue = 0.0
+            fadeOut.beginTime = end
+            fadeOut.duration = 0.1
+            fadeOut.fillMode = .forwards
+            fadeOut.isRemovedOnCompletion = false
+            layer.add(fadeIn, forKey: "fadeIn")
+            layer.add(fadeOut, forKey: "fadeOut")
+        }
+
+        for tOverlay in timedTexts.sorted(by: { $0.base.zIndex < $1.base.zIndex }) {
+            let base = tOverlay.base
+            let font = UIFont.boldSystemFont(ofSize: 42)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: base.color.uiColor]
+            let ns = NSString(string: base.string.isEmpty ? " " : base.string)
+            let bounds = ns.size(withAttributes: attrs)
+
+            let textLayer = CATextLayer()
+            textLayer.contentsScale = UIScreen.main.scale
+            textLayer.alignmentMode = .center
+            textLayer.foregroundColor = base.color.uiColor.cgColor
+            textLayer.backgroundColor = UIColor.clear.cgColor
+            textLayer.string = ns
+            textLayer.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+
+            let px = base.position.x * exportScale
+            let py = base.position.y * exportScale
+            var transform = CATransform3DIdentity
+            transform = CATransform3DTranslate(transform, px, py, 0)
+            transform = CATransform3DRotate(transform, base.rotation, 0, 0, 1)
+            transform = CATransform3DScale(transform, base.scale * exportScale, base.scale * exportScale, 1)
+            textLayer.position = CGPoint(x: 0, y: 0)
+            textLayer.transform = transform
+
+            addTimedOpacityAnimations(layer: textLayer, start: tOverlay.start, duration: tOverlay.duration)
+            parentLayer.addSublayer(textLayer)
+        }
+
+        for cap in timedCaptions {
+            guard cap.base.isVisible else { continue }
+            let text = cap.base.text
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let captionLayer = CATextLayer()
+            captionLayer.contentsScale = UIScreen.main.scale
+            captionLayer.alignmentMode = .center
+            captionLayer.foregroundColor = cap.base.textColor.uiColor.cgColor
+            let font = UIFont.systemFont(ofSize: cap.base.fontSize * exportScale, weight: .semibold)
+            let attr = [NSAttributedString.Key.font: font,
+                        NSAttributedString.Key.foregroundColor: cap.base.textColor.uiColor]
+            let ns = NSString(string: text)
+            let width = size.width - 64 * exportScale
+            let rect = ns.boundingRect(with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attr, context: nil)
+            captionLayer.string = text
+            captionLayer.bounds = CGRect(x: 0, y: 0, width: width, height: rect.height)
+            let y = (canvasRect.minY + cap.base.verticalOffsetNormalized * canvasRect.height) * exportScale
+            captionLayer.position = CGPoint(x: size.width/2, y: y)
+            addTimedOpacityAnimations(layer: captionLayer, start: cap.start, duration: cap.duration)
+            parentLayer.addSublayer(captionLayer)
+        }
+
+        videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+
+        let outURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dg_video_\(UUID().uuidString).mp4")
+        guard let exporter = AVAssetExportSession(asset: baseAsset, presetName: AVAssetExportPresetHighestQuality) else { completion(nil); return }
+        exporter.videoComposition = videoComposition
+        if let mix = audioMix { exporter.audioMix = mix }
+        exporter.outputURL = outURL
+        exporter.outputFileType = .mp4
+        exporter.exportAsynchronously { completion(exporter.status == .completed ? outURL : nil) }
+    }
 }
 
 private extension Comparable {
