@@ -95,6 +95,8 @@ final class HighlightReelBuilder {
                 t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
                 t = t.concatenating(CGAffineTransform(translationX: tx, y: ty))
                 instruction.setTransform(t, at: cursor)
+                // Apply static clip opacity (defaults to opaque). Wire keyframes later if needed.
+                instruction.setOpacity(1.0, at: cursor)
                 layerInstructions.append(instruction)
 
                 cursor = cursor + duration

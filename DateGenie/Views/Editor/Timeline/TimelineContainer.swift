@@ -51,6 +51,10 @@ struct TimelineContainer: View {
     private let spacingAboveStrip: CGFloat = 8  // gap between ruler and filmstrip
     // Single source of truth to vertically lift the entire timeline stack (ruler, rows, buttons, HUD)
     private let verticalLift: CGFloat = 40
+    // Extra lift applied to the ruler only (moves time marks up without shifting rows)
+    private let rulerAdditionalLift: CGFloat = 10
+    // Extra lift for the trailing plus button
+    private let plusAdditionalLift: CGFloat = 0
     // Extend playhead/HUD upward; keep base consistent and add vertical lift so the HUD still clears the ruler
     private let basePlayheadExtension: CGFloat = 80
     private var extraPlayheadExtension: CGFloat { basePlayheadExtension + verticalLift }
@@ -566,7 +570,7 @@ struct TimelineContainer: View {
     }
 
     private var headerOffsetY: CGFloat {
-        -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
+        -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift - rulerAdditionalLift
     }
 
     // Shared rows vertical offset used by both the ScrollView rows and the selection overlay
@@ -965,7 +969,7 @@ struct TimelineContainer: View {
             .overlay(alignment: .trailing) {
                 // Vertically center on the video (filmstrip) row; when there is no clip, nudge the plus 20pt lower
                 let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
-                let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20)
+                let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20) - plusAdditionalLift
                 PhotosPicker(selection: $selectedVideoItem, matching: .videos, photoLibrary: .shared()) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
@@ -989,7 +993,7 @@ struct TimelineContainer: View {
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
                     .padding(.top, 0)
-                    .offset(y: -10 - verticalLift)
+                    .offset(y: -50 - verticalLift)
                     .zIndex(1000)
                     .allowsHitTesting(false)
             }

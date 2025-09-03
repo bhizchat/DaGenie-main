@@ -344,25 +344,28 @@ enum VideoOverlayExporter {
 
         let exportScale = size.width / max(canvasRect.width, 1)
 
-        func addTimedOpacityAnimations(layer: CALayer, start: CMTime, duration: CMTime) {
-            let begin = CMTimeGetSeconds(start)
-            let end = CMTimeGetSeconds(start + duration)
-            let fadeIn = CABasicAnimation(keyPath: "opacity")
-            fadeIn.fromValue = 0.0
-            fadeIn.toValue = 1.0
-            fadeIn.beginTime = begin
-            fadeIn.duration = 0.1
-            fadeIn.fillMode = .forwards
-            fadeIn.isRemovedOnCompletion = false
-            let fadeOut = CABasicAnimation(keyPath: "opacity")
-            fadeOut.fromValue = 1.0
-            fadeOut.toValue = 0.0
-            fadeOut.beginTime = end
-            fadeOut.duration = 0.1
-            fadeOut.fillMode = .forwards
-            fadeOut.isRemovedOnCompletion = false
-            layer.add(fadeIn, forKey: "fadeIn")
-            layer.add(fadeOut, forKey: "fadeOut")
+        /// General keyframe opacity animator for Core Animation layers.
+        func applyOpacity(to layer: CALayer,
+                          base: Float,
+                          keyframes: [OpacityKeyframe],
+                          itemStart: CMTime,
+                          itemDuration: CMTime) {
+            let base01 = max(0, min(1, base))
+            let durS = max(0.0, CMTimeGetSeconds(itemDuration))
+            layer.opacity = base01
+            let sorted = keyframes.sorted { CMTimeCompare($0.time, $1.time) < 0 }
+            guard !sorted.isEmpty, durS > 0 else { return }
+            var values: [Float] = []
+            var times: [NSNumber] = []
+            if CMTimeCompare(sorted.first!.time, .zero) > 0 { values.append(base01); times.append(0) }
+            for k in sorted { values.append(max(0, min(1, k.value))); times.append(NSNumber(value: CMTimeGetSeconds(k.time) / durS)) }
+            if CMTimeCompare(sorted.last!.time, itemDuration) < 0 { values.append(values.last ?? base01); times.append(1) }
+            let anim = CAKeyframeAnimation(keyPath: "opacity")
+            anim.values = values; anim.keyTimes = times
+            anim.beginTime = CMTimeGetSeconds(itemStart)
+            anim.duration = durS
+            anim.fillMode = .forwards; anim.isRemovedOnCompletion = false
+            layer.add(anim, forKey: "opacityKF")
         }
 
         for tOverlay in timedTexts.sorted(by: { $0.base.zIndex < $1.base.zIndex }) {
@@ -389,7 +392,11 @@ enum VideoOverlayExporter {
             textLayer.position = CGPoint(x: 0, y: 0)
             textLayer.transform = transform
 
-            addTimedOpacityAnimations(layer: textLayer, start: tOverlay.start, duration: tOverlay.duration)
+            applyOpacity(to: textLayer,
+                         base: tOverlay.opacityBase,
+                         keyframes: tOverlay.opacityKeyframes,
+                         itemStart: tOverlay.start,
+                         itemDuration: tOverlay.duration)
             parentLayer.addSublayer(textLayer)
         }
 
@@ -411,7 +418,11 @@ enum VideoOverlayExporter {
             captionLayer.bounds = CGRect(x: 0, y: 0, width: width, height: rect.height)
             let y = (canvasRect.minY + cap.base.verticalOffsetNormalized * canvasRect.height) * exportScale
             captionLayer.position = CGPoint(x: size.width/2, y: y)
-            addTimedOpacityAnimations(layer: captionLayer, start: cap.start, duration: cap.duration)
+            applyOpacity(to: captionLayer,
+                         base: cap.opacityBase,
+                         keyframes: cap.opacityKeyframes,
+                         itemStart: cap.start,
+                         itemDuration: cap.duration)
             parentLayer.addSublayer(captionLayer)
         }
 

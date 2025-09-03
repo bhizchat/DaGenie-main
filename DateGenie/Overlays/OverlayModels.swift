@@ -3,6 +3,32 @@ import SwiftUI
 import PencilKit
 import AVFoundation
 
+// MARK: - Opacity
+/// A single keyframe for opacity (0.0...1.0) in an item's local time.
+struct OpacityKeyframe: Codable, Equatable, Identifiable {
+    let id: UUID
+    var time: CMTime       // time relative to the item's own start
+    var value: Float       // 0.0 (transparent) ... 1.0 (opaque)
+    init(id: UUID = UUID(), time: CMTime, value: Float) {
+        self.id = id; self.time = time; self.value = value
+    }
+    // CMTime isn't Codable; encode seconds as Double
+    private enum CodingKeys: String, CodingKey { case id, timeSeconds, value }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        let secs = try c.decode(Double.self, forKey: .timeSeconds)
+        self.time = CMTime(seconds: secs, preferredTimescale: 600)
+        self.value = try c.decode(Float.self, forKey: .value)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(CMTimeGetSeconds(time), forKey: .timeSeconds)
+        try c.encode(value, forKey: .value)
+    }
+}
+
 enum OverlayMode: Equatable {
     case none
     case textInsert
@@ -102,6 +128,9 @@ struct TimedTextOverlay: Identifiable, Equatable {
     var base: TextOverlay
     var start: CMTime
     var duration: CMTime
+    /// Opacity track (0..1). If no keyframes, `opacityBase` is used.
+    var opacityBase: Float = 1.0
+    var opacityKeyframes: [OpacityKeyframe] = []
     // Local trims within the scheduled duration
     var trimStart: CMTime = .zero
     var trimEnd: CMTime? = nil
@@ -127,6 +156,9 @@ struct TimedCaption: Identifiable, Equatable {
     var base: CaptionModel
     var start: CMTime
     var duration: CMTime
+    /// Opacity track (0..1). If no keyframes, `opacityBase` is used.
+    var opacityBase: Float = 1.0
+    var opacityKeyframes: [OpacityKeyframe] = []
 }
 
 /// Simple representation of an added background audio track.

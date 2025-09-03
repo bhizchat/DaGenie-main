@@ -25,6 +25,9 @@ struct CapcutEditorView: View {
     @State private var showSpeedDock: Bool = false
     @State private var speedSliderUnit: Double = 0 // 0..1 mapped to 0.2..100
     @State private var preservePitchToggle: Bool = true
+    // Opacity dock state
+    @State private var showOpacityDock: Bool = false
+    @State private var opacitySliderValue: Double = 100
     
 
     init(url: URL) {
@@ -112,7 +115,7 @@ struct CapcutEditorView: View {
                                           dockFocused = true
                                           withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
                                       })
-                        .frame(height: 72 + 8 + 32 + 80)
+                        .frame(height: 72 + 8 + 32 + 80 + 70)
                     // Inline Volume dock sits between timeline and toolbar to avoid intercepting timeline gestures
                     if showVolumeDock {
                         HStack(spacing: 12) {
@@ -138,6 +141,38 @@ struct CapcutEditorView: View {
                                 .font(.system(size: 13, weight: .medium))
                         }
                         .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.black.opacity(0.9))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 12)
+                        .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    // Inline Opacity dock (clips & text) — clean slider + numeric (no diamond)
+                    if showOpacityDock {
+                        HStack(spacing: 12) {
+                            Text("Opacity")
+                                .foregroundColor(.white)
+                                .font(.system(size: 14, weight: .semibold))
+                            Slider(value: $opacitySliderValue, in: 0...100, step: 1)
+                                .tint(.white)
+                                .onChange(of: opacitySliderValue) { newVal in
+                                    let v01 = Float(max(0, min(100, newVal)) / 100.0)
+                                    // Apply to selection: text or clip base opacity
+                                    if let id = state.selectedTextId,
+                                       let i = state.textOverlays.firstIndex(where: { $0.id == id }) {
+                                        state.textOverlays[i].opacityBase = v01
+                                        Task { await state.rebuildCompositionForPreview() }
+                                    } else if let id = state.selectedClipId,
+                                              let i = state.clips.firstIndex(where: { $0.id == id }) {
+                                        // Persist on clip model if available; otherwise add a store in EditorState
+                                        state.setClipOpacity(clipId: state.clips[i].id, value: v01)
+                                    }
+                                }
+                            Text("\(Int(opacitySliderValue))")
+                                .foregroundColor(.white.opacity(0.9))
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .background(Color.black.opacity(0.9))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -170,7 +205,7 @@ struct CapcutEditorView: View {
                     }
                     if showEditBar {
                         EditToolsBar(state: state, onClose: {
-                            withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false }
+                            withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false; showOpacityDock = false }
                             // Ensure timeline scroll is re-enabled after closing tools
                             DispatchQueue.main.async {
                                 NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
@@ -190,7 +225,7 @@ struct CapcutEditorView: View {
                                 } else {
                                     volumeSliderValue = 50
                                 }
-                                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = true; showSpeedDock = false }
+                                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = true; showSpeedDock = false; showOpacityDock = false }
                                 DispatchQueue.main.async {
                                     NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
                                 }
@@ -214,7 +249,25 @@ struct CapcutEditorView: View {
                                     speedSliderUnit = rateToUnit(1.0)
                                     preservePitchToggle = true
                                 }
-                                withAnimation(.easeInOut(duration: 0.2)) { showSpeedDock = true; showVolumeDock = false }
+                                withAnimation(.easeInOut(duration: 0.2)) { showSpeedDock = true; showVolumeDock = false; showOpacityDock = false }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
+                            }
+                        }, onOpacity: {
+                            // Toggle opacity dock; seed from current selection
+                            if showOpacityDock {
+                                withAnimation(.easeInOut(duration: 0.2)) { showOpacityDock = false }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
+                            } else {
+                                if let id = state.selectedTextId, let i = state.textOverlays.firstIndex(where: { $0.id == id }) {
+                                    opacitySliderValue = Double(state.textOverlays[i].opacityBase * 100.0)
+                                } else if let id = state.selectedClipId {
+                                    opacitySliderValue = Double(state.clipOpacity(for: id) * 100.0)
+                                } else { opacitySliderValue = 100 }
+                                withAnimation(.easeInOut(duration: 0.2)) { showOpacityDock = true; showVolumeDock = false; showSpeedDock = false }
                                 DispatchQueue.main.async {
                                     NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
                                 }
@@ -485,6 +538,15 @@ final class EditorState: ObservableObject {
     @Published var selectedAudioId: UUID? = nil
     // Text selection for on-canvas and timeline linking
     @Published var selectedTextId: UUID? = nil
+    // Per-clip opacity 0..1 (defaults to 1.0 when missing)
+    @Published private(set) var clipOpacities: [UUID: Float] = [:]
+
+    func setClipOpacity(clipId: UUID, value: Float) {
+        clipOpacities[clipId] = max(0, min(1, value))
+        Task { await rebuildCompositionForPreview() }
+    }
+
+    func clipOpacity(for id: UUID) -> Float { clipOpacities[id] ?? 1.0 }
 
     private var timeObserver: Any?
     private var displayLink: CADisplayLink?
@@ -654,6 +716,33 @@ final class EditorState: ObservableObject {
 
         composition = comp
         let item = AVPlayerItem(asset: composition)
+
+        // Build a basic video composition to apply per-clip opacity in preview
+        if let vdst = comp.tracks(withMediaType: .video).first {
+            let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: vdst)
+            var cursor2: CMTime = .zero
+            for clip in clips {
+                let alpha = clipOpacities[clip.id] ?? 1.0
+                layerInstruction.setOpacity(alpha, at: cursor2)
+                cursor2 = cursor2 + clip.effectiveDuration
+            }
+            let mainInstruction = AVMutableVideoCompositionInstruction()
+            mainInstruction.timeRange = CMTimeRange(start: .zero, duration: cursor2)
+            mainInstruction.layerInstructions = [layerInstruction]
+            let vcomp = AVMutableVideoComposition()
+            // Render size and fps derived from first video track when available
+            if let first = clips.first?.asset.tracks(withMediaType: .video).first {
+                let oriented = first.naturalSize.applying(first.preferredTransform)
+                vcomp.renderSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
+                let fps = max(1, Int32(round(first.nominalFrameRate)))
+                vcomp.frameDuration = CMTime(value: 1, timescale: fps)
+            } else {
+                vcomp.renderSize = CGSize(width: 1080, height: 1920)
+                vcomp.frameDuration = CMTime(value: 1, timescale: 30)
+            }
+            vcomp.instructions = [mainInstruction]
+            item.videoComposition = vcomp
+        }
         // Global default: if any retimed audio requests pitch preservation, prefer spectral
         let wantsPitch = (clips.contains { $0.speed != 1.0 && $0.preserveOriginalPitch }) ||
                          (audioTracks.contains { $0.speed != 1.0 && $0.preservePitch })

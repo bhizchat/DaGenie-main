@@ -5,6 +5,7 @@ struct EditToolsBar: View {
     let onClose: () -> Void
     let onVolume: () -> Void
     let onSpeed: () -> Void
+    let onOpacity: () -> Void
 
     var body: some View {
         // Match the original bottom toolbar footprint so the timeline doesn't shift
@@ -35,9 +36,9 @@ struct EditToolsBar: View {
                         let um = UIApplication.shared.topMostViewController()?.undoManager
                         Task { await state.extractOriginalAudioFromSelectedClip(undoManager: um) }
                     }, isEnabled: (isClipSelected && !isAudioSelected) && (allowAll || allowForText("Extract_audio")))
-                    // Opacity is available for video clip and text only (not audio)
-                    let opacityEnabled = (isClipSelected || isTextSelected)
-                    EditToolsBarItem(assetName: "Opacity", title: "Opacity", action: { }, isEnabled: opacityEnabled)
+                    // Opacity is available for video clips only (not audio/text)
+                    let opacityEnabled = isClipSelected
+                    EditToolsBarItem(assetName: "Opacity", title: "Opacity", action: onOpacity, isEnabled: opacityEnabled)
                 }
                 .padding(.vertical, 6)
             }
