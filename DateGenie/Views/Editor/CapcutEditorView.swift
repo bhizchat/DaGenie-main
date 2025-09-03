@@ -18,6 +18,9 @@ struct CapcutEditorView: View {
     @State private var isTyping: Bool = false
     @FocusState private var dockFocused: Bool
     @StateObject private var keyboard = KeyboardObserver()
+    // Volume dock state
+    @State private var showVolumeDock: Bool = false
+    @State private var volumeSliderValue: Double = 50
     
 
     init(url: URL) {
@@ -61,13 +64,13 @@ struct CapcutEditorView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, max(0, safeTopInset() - 36))
-                .offset(y: -50) // raise X/Export vertically by ~50pt
+                .offset(y: -92) // nudge X/Export down by ~8pt from previous
 
                 // Track canvas
                 EditorTrackArea(state: state, canvasRect: $canvasRect)
                     .frame(height: 280)
-                    .padding(.top, -50)   // move canvas up by 50pt
-                    .padding(.bottom, 50) // compensate so overall layout height stays the same
+                    .padding(.top, -100)   // move canvas up further by 50pt
+                    .padding(.bottom, 100) // compensate so overall layout height stays the same
                     .padding(.horizontal, 0)
 
                 // Middle controls (play + time) centered in free space between canvas and bottom toolbar
@@ -86,9 +89,9 @@ struct CapcutEditorView: View {
                                 Spacer(minLength: 0)
                             }
                             .padding(.horizontal, 24)
-                            .offset(y: -50) // lift timecode to sit just under play button
+                            .offset(y: -70) // lift timecode further to sit just under play button
                         }
-                        .offset(y: -30) // move play button/time group up ~30pt
+                        .offset(y: -95) // move play button/time group up by ~35pt
                     }
 
             }
@@ -106,8 +109,53 @@ struct CapcutEditorView: View {
                                           withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
                                       })
                         .frame(height: 72 + 8 + 32 + 80)
+                    // Inline Volume dock sits between timeline and toolbar to avoid intercepting timeline gestures
+                    if showVolumeDock {
+                        HStack(spacing: 12) {
+                            Text("Volume")
+                                .foregroundColor(.white)
+                                .font(.system(size: 14, weight: .semibold))
+                            Slider(value: $volumeSliderValue, in: 0...100, step: 1)
+                                .tint(.white)
+                                .onChange(of: volumeSliderValue) { newVal in
+                                    let v = Float(max(0, min(100, newVal)) / 100.0)
+                                    if let id = state.selectedAudioId,
+                                       let idx = state.audioTracks.firstIndex(where: { $0.id == id }) {
+                                        state.audioTracks[idx].volume = v
+                                        Task { await state.rebuildCompositionForPreview() }
+                                    } else if let id = state.selectedClipId,
+                                              let idx = state.clips.firstIndex(where: { $0.id == id }) {
+                                        state.clips[idx].originalAudioVolume = v
+                                        Task { await state.rebuildCompositionForPreview() }
+                                    }
+                                }
+                            Text("\(Int(volumeSliderValue))")
+                                .foregroundColor(.white.opacity(0.9))
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.black.opacity(0.9))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 12)
+                        .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                    }
                     if showEditBar {
-                        EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false } })
+                        EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false } }, onVolume: {
+                            // Toggle the volume dock
+                            if showVolumeDock {
+                                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = false }
+                            } else {
+                                if let id = state.selectedAudioId, let i = state.audioTracks.firstIndex(where: { $0.id == id }) {
+                                    volumeSliderValue = Double(state.audioTracks[i].volume * 100.0)
+                                } else if let id = state.selectedClipId, let i = state.clips.firstIndex(where: { $0.id == id }) {
+                                    volumeSliderValue = Double(state.clips[i].originalAudioVolume * 100.0)
+                                } else {
+                                    volumeSliderValue = 50
+                                }
+                                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = true }
+                            }
+                        })
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     } else {
                         EditorBottomToolbar(
@@ -127,6 +175,7 @@ struct CapcutEditorView: View {
                 }
                 .ignoresSafeArea(.keyboard, edges: .bottom)
             }
+            // Volume dock overlay removed from global overlay to avoid intercepting timeline scroll
             // Typing dock rides above the keyboard without altering parent layout
             .overlay(alignment: .bottom) {
                 Group {
@@ -195,20 +244,25 @@ struct CapcutEditorView: View {
         .onChange(of: state.selectedClipId) { newValue in
             if newValue != nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+                // Do not auto-open volume dock; only open via Volume button
             } else if state.selectedAudioId == nil && state.selectedTextId == nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = false }
             }
         }
         .onChange(of: state.selectedAudioId) { newValue in
             if newValue != nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+                // Do not auto-open volume dock; only open via Volume button
             } else if state.selectedClipId == nil && state.selectedTextId == nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
+                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = false }
             }
         }
         .onChange(of: state.selectedTextId) { newValue in
             if newValue != nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+                withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = false }
             } else if state.selectedClipId == nil && state.selectedAudioId == nil {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
                 isTyping = false
@@ -299,6 +353,7 @@ struct CapcutEditorView: View {
                                     timedCaptions: state.captions,
                                     renderConfig: state.renderConfig,
                                     audioTracks: state.audioTracks,
+                                    originalClipVolume: state.clips.first?.originalAudioVolume, // single-asset path
                                     canvasRect: canvasRect) { out in
             guard let out = out else { return }
             // Save thumbnail + project persistence if available
@@ -352,6 +407,7 @@ final class EditorState: ObservableObject {
     @Published var textOverlays: [TimedTextOverlay] = []
     @Published var captions: [TimedCaption] = []
     @Published var audioTracks: [AudioTrack] = []
+    // (Reverted) Extracted audio lane not implemented yet; research pending
     // Multi-clip timeline
     @Published var clips: [Clip] = []
     // Legacy single-filmstrip fields are unused by the new multi-clip UI but kept for compatibility
@@ -488,22 +544,26 @@ final class EditorState: ObservableObject {
         }
 
         let videoTrack = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
-        let audioTrack = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
 
         var cursor: CMTime = .zero
+        // Collect audio mix params for both original clip audio and user-added audio tracks
+        var mixParams: [AVMutableAudioMixInputParameters] = []
         for clip in clips {
             let srcRange = CMTimeRange(start: clip.trimStart, duration: clip.trimmedDuration)
             if let v = clip.asset.tracks(withMediaType: .video).first {
                 try? videoTrack?.insertTimeRange(srcRange, of: v, at: cursor)
             }
-            if clip.hasOriginalAudio, let a = clip.asset.tracks(withMediaType: .audio).first {
-                try? audioTrack?.insertTimeRange(srcRange, of: a, at: cursor)
+            if clip.hasOriginalAudio && !clip.muteOriginalAudio,
+               let aSrc = clip.asset.tracks(withMediaType: .audio).first,
+               let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                try? aDst.insertTimeRange(srcRange, of: aSrc, at: cursor)
+                let p = AVMutableAudioMixInputParameters(track: aDst)
+                p.setVolume(clip.originalAudioVolume, at: .zero)
+                mixParams.append(p)
             }
             cursor = cursor + clip.trimmedDuration
         }
-
         // Include user-added audio tracks for preview
-        var mixParams: [AVMutableAudioMixInputParameters] = []
         for t in audioTracks {
             let aAsset = AVURLAsset(url: t.url)
             if let aSrc = aAsset.tracks(withMediaType: .audio).first,
@@ -636,7 +696,7 @@ final class EditorState: ObservableObject {
 
     // Convenience for adding an external audio track (duration probed automatically)
     @MainActor
-    func addAudio(url: URL, at start: CMTime, volume: Float = 1.0, displayName: String? = nil) async {
+    func addAudio(url: URL, at start: CMTime, volume: Float = 0.5, displayName: String? = nil) async {
         let aAsset = AVURLAsset(url: url)
         let dur = aAsset.duration
         // Load or generate waveform samples off-main; then update model on main
@@ -646,6 +706,49 @@ final class EditorState: ObservableObject {
         track.titleOverride = displayName
         audioTracks.append(track)
     }
+
+    // Extract original audio from the selected clip into audioTracks (periwinkle lane below video)
+    @MainActor
+    func extractOriginalAudioFromSelectedClip(undoManager: UndoManager?) async {
+        guard let clip = selectedClip else { return }
+        guard clip.hasOriginalAudio else { return }
+        guard let assetURL = (clip.asset as? AVURLAsset)?.url else { return }
+        let absStart = CMTime(seconds: selectedClipStartSeconds ?? 0, preferredTimescale: 600)
+        let range = CMTimeRange(start: clip.trimStart, duration: clip.trimmedDuration)
+
+        // Waveform samples (reuse cached per-asset samples). Slicing can be done at draw-time.
+        let samples = await WaveformGenerator.loadOrGenerate(for: clip.asset)
+
+        var track = AudioTrack(url: assetURL, start: absStart, duration: clip.duration, volume: 0.5)
+        track.trimStart = range.start
+        track.trimEnd   = range.start + range.duration
+        track.waveformSamples = samples
+        track.titleOverride = "Extracted audio"
+        track.isExtracted = true
+        track.sourceClipId = clip.id
+        audioTracks.append(track)
+
+        // Mute the original audio from the video clip to avoid doubling
+        if let i = clips.firstIndex(where: { $0.id == clip.id }) {
+            clips[i].muteOriginalAudio = true
+        }
+
+        await rebuildCompositionForPreview()
+
+        // Undo registration
+        undoManager?.registerUndo(withTarget: self) { target in
+            if let idx = target.audioTracks.firstIndex(where: { $0.id == track.id }) {
+                target.audioTracks.remove(at: idx)
+            }
+            if let ci = target.clips.firstIndex(where: { $0.id == clip.id }) {
+                target.clips[ci].muteOriginalAudio = false
+            }
+            Task { await target.rebuildCompositionForPreview() }
+        }
+        undoManager?.setActionName("Extract audio")
+    }
+
+    // (Reverted) extractOriginalAudioFromSelectedClip pending research
 
     // Public wrapper to rebuild composition after mutations that affect preview
     @MainActor
@@ -970,6 +1073,7 @@ extension EditorState {
         var right = max(0, CMTimeGetSeconds(t.trimEnd ?? t.duration))
         let project = max(0, CMTimeGetSeconds(totalDuration))
         let minLen: Double = 0.03
+        let eps: Double = 1.0 / 240.0
 
         if let dx = leftDeltaSeconds {
             if dx >= 0 {
@@ -993,9 +1097,10 @@ extension EditorState {
                 right = max(left + minLen, min(dur, right + dx))
             } else {
                 var newRight = right + dx
-                if newRight > dur {
+                // If approaching current duration boundary within tolerance, treat as an extension
+                if newRight > (dur - eps) {
                     let room = max(0, project - start - dur)
-                    let grow = min(newRight - dur, room)
+                    let grow = min(max(0, newRight - dur), room)
                     dur += grow
                 }
                 right = min(dur, newRight)
@@ -1011,6 +1116,36 @@ extension EditorState {
         t.trimStart = CMTime(seconds: left,  preferredTimescale: 600)
         t.trimEnd   = CMTime(seconds: right, preferredTimescale: 600)
         textOverlays[i] = t
+        // Keep preview state coherent when text overlays change timing
+        Task { await rebuildCompositionForPreview() }
+    }
+
+    // MARK: - Delete selection from timeline (clip, audio, or text)
+    @MainActor
+    func deleteSelected() async {
+        if let textId = selectedTextId {
+            if let idx = textOverlays.firstIndex(where: { $0.id == textId }) {
+                textOverlays.remove(at: idx)
+            }
+            selectedTextId = nil
+            return
+        }
+        if let audioId = selectedAudioId {
+            if let idx = audioTracks.firstIndex(where: { $0.id == audioId }) {
+                audioTracks.remove(at: idx)
+            }
+            selectedAudioId = nil
+            await rebuildCompositionForPreview()
+            return
+        }
+        if let clipId = selectedClipId {
+            if let idx = clips.firstIndex(where: { $0.id == clipId }) {
+                clips.remove(at: idx)
+                selectedClipId = nil
+                await rebuildComposition()
+                return
+            }
+        }
     }
 }
 

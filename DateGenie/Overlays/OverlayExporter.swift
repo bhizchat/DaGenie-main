@@ -278,6 +278,7 @@ enum VideoOverlayExporter {
                         timedCaptions: [TimedCaption],
                         renderConfig: VideoRenderConfig,
                         audioTracks: [AudioTrack],
+                        originalClipVolume: Float? = nil,
                         canvasRect: CGRect,
                         completion: @escaping (URL?) -> Void) {
         let asset = AVAsset(url: assetURL)
@@ -288,17 +289,22 @@ enum VideoOverlayExporter {
             try compTrack.insertTimeRange(CMTimeRange(start: .zero, duration: asset.duration), of: track, at: .zero)
         } catch { completion(nil); return }
 
-        // Include original audio tracks
+        // Include original audio tracks and collect mix params when a level is provided
+        var mixParams: [AVMutableAudioMixInputParameters] = []
         for src in asset.tracks(withMediaType: .audio) {
             if let dst = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 do {
                     try dst.insertTimeRange(CMTimeRange(start: .zero, duration: asset.duration), of: src, at: .zero)
+                    if let vol = originalClipVolume {
+                        let p = AVMutableAudioMixInputParameters(track: dst)
+                        p.setVolume(vol, at: .zero)
+                        mixParams.append(p)
+                    }
                 } catch { /* ignore */ }
             }
         }
 
         // Add extra audio tracks
-        var mixParams: [AVMutableAudioMixInputParameters] = []
         for t in audioTracks {
             let aAsset = AVURLAsset(url: t.url)
             if let aSrc = aAsset.tracks(withMediaType: .audio).first,

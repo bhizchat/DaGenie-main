@@ -18,6 +18,10 @@ struct Clip: Identifiable, Equatable {
     // Audio visualization and control
     var hasOriginalAudio: Bool = true
     var waveformSamples: [Float] = []
+    /// When true, the original audio embedded in the video is muted in preview/export composition
+    var muteOriginalAudio: Bool = false
+    /// Per-clip gain for original embedded audio. UI 50% defaults to 0.5 here.
+    var originalAudioVolume: Float = 0.5
 
     // Trimming (selection) – offsets within original asset duration
     // start offset in seconds from beginning of asset

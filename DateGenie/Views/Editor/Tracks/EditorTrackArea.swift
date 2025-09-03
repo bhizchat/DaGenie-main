@@ -19,7 +19,8 @@ struct EditorTrackArea: View {
         GeometryReader { geo in
             ZStack {
                 // Chrome-free playback surface (no system controls)
-                PlayerSurface(player: state.player, videoGravity: .resizeAspect)
+                // Fill horizontally to the phone edges, cropping if needed (industry-standard preview)
+                PlayerSurface(player: state.player, videoGravity: .resizeAspectFill)
                     .background(Color.black)
 
                 // Render visible text overlays in canvas coordinate space
@@ -108,6 +109,9 @@ struct EditorTrackArea: View {
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
             }
+            // Ensure timeline scrolling is re-enabled even if gestures were cancelled mid-flight
+            // by signalling the container to clear any drag gate.
+            NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
         }
         .frame(maxWidth: .infinity)
     }
