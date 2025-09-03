@@ -29,7 +29,7 @@ struct EditToolsBar: View {
                     EditToolsBarItem(assetName: "Delete", title: "Delete", action: {
                         Task { await state.deleteSelected() }
                     }, isEnabled: allowAll || allowForText("Delete"))
-                    EditToolsBarItem(assetName: "Duplicate", title: "Duplicate", action: { }, isEnabled: allowAll || allowForText("Duplicate"))
+                    EditToolsBarItem(assetName: "Duplicate", title: "Duplicate", action: { Task { await state.duplicateSelected() } }, isEnabled: allowAll || allowForText("Duplicate"))
                     EditToolsBarItem(assetName: "Extract_audio", title: "Extract\naudio", action: {
                         let um = UIApplication.shared.topMostViewController()?.undoManager
                         Task { await state.extractOriginalAudioFromSelectedClip(undoManager: um) }

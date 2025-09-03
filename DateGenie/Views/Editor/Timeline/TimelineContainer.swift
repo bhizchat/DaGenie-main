@@ -496,6 +496,7 @@ struct TimelineContainer: View {
             .offset(x: offsetX)
             .contentShape(Rectangle())
             .highPriorityGesture(TapGesture().onEnded { onTap() })
+            .simultaneousGesture(DragGesture(minimumDistance: 8)) // allow normal scroll when user drags without long-press
             .gesture(
                 LongPressGesture(minimumDuration: 0.25)
                     .sequenced(before: DragGesture(minimumDistance: 1))
@@ -546,6 +547,7 @@ struct TimelineContainer: View {
                 .offset(x: offsetX)
                 .contentShape(Rectangle())
                 .highPriorityGesture(TapGesture().onEnded { onTap() })
+                .simultaneousGesture(DragGesture(minimumDistance: 8))
                 .gesture(
                     LongPressGesture(minimumDuration: 0.25)
                         .sequenced(before: DragGesture(minimumDistance: 1))

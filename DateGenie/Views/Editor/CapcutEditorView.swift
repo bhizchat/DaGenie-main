@@ -141,10 +141,19 @@ struct CapcutEditorView: View {
                         .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
                     if showEditBar {
-                        EditToolsBar(state: state, onClose: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false } }, onVolume: {
+                        EditToolsBar(state: state, onClose: {
+                            withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false }
+                            // Ensure timeline scroll is re-enabled after closing tools
+                            DispatchQueue.main.async {
+                                NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                            }
+                        }, onVolume: {
                             // Toggle the volume dock
                             if showVolumeDock {
                                 withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = false }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
                             } else {
                                 if let id = state.selectedAudioId, let i = state.audioTracks.firstIndex(where: { $0.id == id }) {
                                     volumeSliderValue = Double(state.audioTracks[i].volume * 100.0)
@@ -154,6 +163,9 @@ struct CapcutEditorView: View {
                                     volumeSliderValue = 50
                                 }
                                 withAnimation(.easeInOut(duration: 0.2)) { showVolumeDock = true }
+                                DispatchQueue.main.async {
+                                    NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+                                }
                             }
                         })
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
@@ -1145,6 +1157,81 @@ extension EditorState {
                 await rebuildComposition()
                 return
             }
+        }
+    }
+
+    /// Duplicate the currently selected item and place the copy immediately to the right on the same lane/track.
+    @MainActor
+    func duplicateSelected() async {
+        // TEXT overlay duplication
+        if let tid = selectedTextId, let i = textOverlays.firstIndex(where: { $0.id == tid }) {
+            let src = textOverlays[i]
+            // Compute new placement so visible start = source visible end
+            let sourceEnd = src.effectiveStart + src.trimmedDuration
+            let newStart = max(.zero, sourceEnd - src.trimStart)
+            // Create a brand new base with a new id (since base.id is let)
+            let newBase = TextOverlay(
+                id: UUID(),
+                string: src.base.string,
+                fontName: src.base.fontName,
+                style: src.base.style,
+                color: src.base.color,
+                position: CGPoint(x: src.base.position.x + 16, y: src.base.position.y + 16),
+                scale: src.base.scale,
+                rotation: src.base.rotation,
+                zIndex: src.base.zIndex + 1
+            )
+            var dup = TimedTextOverlay(base: newBase, start: newStart, duration: src.duration)
+            dup.trimStart = src.trimStart
+            dup.trimEnd   = src.trimEnd
+            textOverlays.append(dup)
+            selectedTextId = dup.id
+            await rebuildCompositionForPreview()
+            followMode = .keepVisible
+            return
+        }
+
+        // AUDIO duplication
+        if let aid = selectedAudioId, let i = audioTracks.firstIndex(where: { $0.id == aid }) {
+            let src = audioTracks[i]
+            var dup = src
+            // Assign new identity via reinit
+            dup = AudioTrack(url: src.url, start: src.start, duration: src.duration, volume: src.volume)
+            dup.waveformSamples = src.waveformSamples
+            dup.titleOverride = src.titleOverride
+            dup.trimStart = src.trimStart
+            dup.trimEnd = src.trimEnd
+            dup.isExtracted = src.isExtracted
+            dup.sourceClipId = src.sourceClipId
+            // Place so visible start equals source visible end
+            let visibleEnd = src.start + src.trimStart + src.trimmedDuration
+            dup.start = max(.zero, visibleEnd - src.trimStart)
+            audioTracks.append(dup)
+            selectedAudioId = dup.id
+            await rebuildCompositionForPreview()
+            followMode = .keepVisible
+            return
+        }
+
+        // CLIP duplication
+        if let cid = selectedClipId, let idx = clips.firstIndex(where: { $0.id == cid }) {
+            let src = clips[idx]
+            var dup = src
+            // New identity and reset transient visuals so they regenerate
+            dup = Clip(url: src.url, asset: src.asset, duration: src.duration)
+            dup.hasOriginalAudio = src.hasOriginalAudio
+            dup.waveformSamples = src.waveformSamples
+            dup.muteOriginalAudio = src.muteOriginalAudio
+            dup.originalAudioVolume = src.originalAudioVolume
+            dup.trimStart = src.trimStart
+            dup.trimEnd = src.trimEnd
+            let insertIndex = idx + 1
+            clips.insert(dup, at: insertIndex)
+            await rebuildComposition()
+            await generateThumbnails(forClipAt: insertIndex)
+            selectedClipId = dup.id
+            followMode = .keepVisible
+            return
         }
     }
 }
