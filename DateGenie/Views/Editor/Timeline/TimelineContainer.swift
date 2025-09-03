@@ -52,7 +52,7 @@ struct TimelineContainer: View {
     // Single source of truth to vertically lift the entire timeline stack (ruler, rows, buttons, HUD)
     private let verticalLift: CGFloat = 40
     // Extra lift applied to the ruler only (moves time marks up without shifting rows)
-    private let rulerAdditionalLift: CGFloat = 10
+    private let rulerAdditionalLift: CGFloat = 5
     // Extra lift for the trailing plus button
     private let plusAdditionalLift: CGFloat = 0
     // Extend playhead/HUD upward; keep base consistent and add vertical lift so the HUD still clears the ruler
@@ -993,7 +993,7 @@ struct TimelineContainer: View {
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
                     .padding(.top, 0)
-                    .offset(y: -50 - verticalLift)
+                    .offset(y: 5 - verticalLift)
                     .zIndex(1000)
                     .allowsHitTesting(false)
             }

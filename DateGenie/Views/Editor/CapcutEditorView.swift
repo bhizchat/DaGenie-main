@@ -76,8 +76,8 @@ struct CapcutEditorView: View {
                 // Track canvas
                 EditorTrackArea(state: state, canvasRect: $canvasRect)
                     .frame(height: 280)
-                    .padding(.top, -100)   // move canvas up further by 50pt
-                    .padding(.bottom, 100) // compensate so overall layout height stays the same
+                    .padding(.top, -120)   // move canvas up further by ~20pt more
+                    .padding(.bottom, 120) // compensate so overall layout height stays the same
                     .padding(.horizontal, 0)
 
                 // Middle controls (play + time) centered in free space between canvas and bottom toolbar
@@ -87,8 +87,9 @@ struct CapcutEditorView: View {
                             Button(action: { state.isPlaying ? state.pause() : state.play() }) {
                                 Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
                                     .foregroundColor(.white)
-                                    .font(.system(size: 28, weight: .bold))
+                                    .font(.system(size: 18, weight: .bold))
                             }
+                            .offset(y: -8) // nudge play button up ~8pt
                             HStack {
                                 Text(timeLabel(state.displayTime, duration: state.duration))
                                     .font(.system(size: 16, weight: .semibold))
@@ -98,7 +99,7 @@ struct CapcutEditorView: View {
                             .padding(.horizontal, 24)
                             .offset(y: -70) // lift timecode further to sit just under play button
                         }
-                        .offset(y: -95) // move play button/time group up by ~35pt
+                        .offset(y: -115) // move play button/time group up by ~20pt more
                     }
 
             }
