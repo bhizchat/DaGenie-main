@@ -506,6 +506,24 @@ final class EditorState: ObservableObject {
         self.asset = asset
     }
 
+    // MARK: - Frame quantization helpers
+    /// Approximate frame duration in seconds based on the first video track's nominal frame rate.
+    /// Falls back to 1/30s if the track does not expose a positive frame rate.
+    func frameDurationSeconds() -> Double {
+        if let track = player.currentItem?.asset.tracks(withMediaType: .video).first,
+           track.nominalFrameRate > 0 {
+            return 1.0 / Double(track.nominalFrameRate)
+        }
+        return 1.0 / 30.0
+    }
+
+    /// Quantize a time value in seconds to the nearest frame based on `frameDurationSeconds`.
+    func quantizeToFrame(_ seconds: Double) -> Double {
+        let step = frameDurationSeconds()
+        guard step > 0 else { return seconds }
+        return (seconds / step).rounded() * step
+    }
+
     func preparePlayer() {
         // Seed the timeline with the initial asset as the first clip
         let first = Clip(url: (asset as? AVURLAsset)?.url ?? URL(fileURLWithPath: "/dev/null"), asset: asset, duration: asset.duration)
@@ -534,6 +552,154 @@ final class EditorState: ObservableObject {
         isPlaying = false
         followMode = .off
         stopDisplayLink()
+    }
+
+    // MARK: - Trim session for text overlays (gesture-scoped)
+    struct TrimSession {
+        var baseStart: Double
+        var baseDuration: Double
+        var baseLeft: Double
+        var baseRight: Double
+        var minLen: Double = 0.03
+        var eps: Double = 1.0 / 240.0
+    }
+
+    @Published var activeTextTrimSession: TrimSession? = nil
+    @Published var activeAudioTrimSession: TrimSession? = nil
+
+    /// Begin a trim session for the currently selected text overlay.
+    @MainActor
+    func beginTextTrimGesture() {
+        guard let id = selectedTextId, let i = textOverlays.firstIndex(where: { $0.id == id }) else { return }
+        let t = textOverlays[i]
+        activeTextTrimSession = TrimSession(
+            baseStart: max(0, CMTimeGetSeconds(t.start)),
+            baseDuration: max(0, CMTimeGetSeconds(t.duration)),
+            baseLeft: max(0, CMTimeGetSeconds(t.trimStart)),
+            baseRight: max(0, CMTimeGetSeconds(t.trimEnd ?? t.duration))
+        )
+    }
+
+    /// Apply incremental trim changes during a drag gesture. Does not rebuild the composition.
+    @MainActor
+    func trimTextDuringGesture(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) {
+        guard var s = activeTextTrimSession,
+              let i = textOverlays.firstIndex(where: { $0.id == id }) else { return }
+
+        var start = s.baseStart
+        var dur   = s.baseDuration
+        var left  = s.baseLeft
+        var right = s.baseRight
+        let project = max(0, CMTimeGetSeconds(totalDuration))
+        let frame = max(frameDurationSeconds(), s.minLen)
+        let minLen = max(s.minLen, frame)
+
+        if let dx = leftDeltaSeconds {
+            var targetLeft = quantizeToFrame(left + dx)
+            if targetLeft >= 0 {
+                left = min(max(0, targetLeft), max(0, right - minLen))
+            } else {
+                let extend = -targetLeft
+                let allowed = min(extend, start)
+                start -= allowed
+                dur   += allowed
+                left = 0
+            }
+        }
+
+        if let dx = rightDeltaSeconds {
+            let targetRight = quantizeToFrame(right + dx)
+            if dx <= 0 {
+                right = max(left + minLen, min(dur, targetRight))
+            } else {
+                if targetRight >= (dur - s.eps) {
+                    let maxDur = max(0, project - start)
+                    dur = min(maxDur, max(dur, targetRight))
+                }
+                right = min(dur, max(left + minLen, targetRight))
+            }
+        }
+
+        // Clamp overall duration against project tail
+        let maxDur = max(0, project - start)
+        if dur > maxDur { dur = maxDur; right = min(right, dur) }
+        // Final frame-quantized normalization
+        start = quantizeToFrame(start)
+        dur   = max(minLen, quantizeToFrame(dur))
+        left  = max(0, min(quantizeToFrame(left), max(0, dur - minLen)))
+        right = max(left + minLen, min(quantizeToFrame(right), dur))
+
+        textOverlays[i].start     = CMTime(seconds: start, preferredTimescale: 600)
+        textOverlays[i].duration  = CMTime(seconds: dur,   preferredTimescale: 600)
+        textOverlays[i].trimStart = CMTime(seconds: left,  preferredTimescale: 600)
+        textOverlays[i].trimEnd   = CMTime(seconds: right, preferredTimescale: 600)
+
+        // Advance session baselines to make deltas cumulative-robust
+        s.baseStart = start
+        s.baseDuration = dur
+        s.baseLeft = left
+        s.baseRight = right
+        activeTextTrimSession = s
+    }
+
+    /// End a trim session and rebuild the preview composition once.
+    @MainActor
+    func endTextTrimGesture() {
+        guard activeTextTrimSession != nil else { return }
+        activeTextTrimSession = nil
+        Task { await rebuildCompositionForPreview() }
+    }
+
+    // MARK: - Trim session for audio (gesture-scoped)
+    @MainActor
+    func beginAudioTrimGesture() {
+        guard let id = selectedAudioId, let i = audioTracks.firstIndex(where: { $0.id == id }) else { return }
+        let t = audioTracks[i]
+        activeAudioTrimSession = TrimSession(
+            baseStart: max(0, CMTimeGetSeconds(t.start)),
+            baseDuration: max(0, CMTimeGetSeconds(t.duration)),
+            baseLeft: max(0, CMTimeGetSeconds(t.trimStart)),
+            baseRight: max(0, CMTimeGetSeconds(t.trimEnd ?? t.duration))
+        )
+    }
+
+    @MainActor
+    func trimAudioDuringGesture(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) {
+        guard var s = activeAudioTrimSession,
+              let i = audioTracks.firstIndex(where: { $0.id == id }) else { return }
+
+        var left  = s.baseLeft
+        var right = s.baseRight
+        let dur   = s.baseDuration
+        let frame = max(frameDurationSeconds(), s.minLen)
+        let minLen = max(s.minLen, frame)
+
+        // LEFT edge (cumulative, frame-quantized)
+        if let dx = leftDeltaSeconds {
+            let targetLeft = quantizeToFrame(left + dx)
+            left = min(max(0, targetLeft), max(0, right - minLen))
+        }
+        // RIGHT edge (cumulative, frame-quantized; clamped to source duration)
+        if let dx = rightDeltaSeconds {
+            let targetRight = quantizeToFrame(right + dx)
+            right = min(dur, max(left + minLen, targetRight))
+        }
+
+        // Write back
+        audioTracks[i].trimStart = CMTime(seconds: max(0, quantizeToFrame(left)), preferredTimescale: 600)
+        audioTracks[i].trimEnd   = CMTime(seconds: min(dur, quantizeToFrame(right)), preferredTimescale: 600)
+
+        // Advance baselines for rolling updates
+        s.baseLeft = max(0, left)
+        s.baseRight = min(dur, right)
+        activeAudioTrimSession = s
+    }
+
+    @MainActor
+    func endAudioTrimGesture() {
+        guard activeAudioTrimSession != nil else { return }
+        activeAudioTrimSession = nil
+        Task { await rebuildCompositionForPreview() }
     }
 
     func seek(to time: CMTime, precise: Bool = false) {

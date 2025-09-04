@@ -68,6 +68,21 @@ struct TimelineContainer: View {
     private let selectionPadV: CGFloat = 6
     private let selectionHandleWidth: CGFloat = 35
     private let selectionHandleCorner: CGFloat = 0
+    // Haptics for snapping
+    private let selectionHaptics: UISelectionFeedbackGenerator = UISelectionFeedbackGenerator()
+    // Snapshot state for text handle drags (stable math during gesture)
+    private struct TextHandleSnapshot { let start: Double; let pps: CGFloat }
+    @State private var textLeftSnapshot: TextHandleSnapshot? = nil
+    @State private var textRightSnapshot: TextHandleSnapshot? = nil
+    @State private var textLastSnapped: SnapTarget? = nil
+    // Auto-scroll while trimming near edges
+    @State private var autoScrollLink: CADisplayLink? = nil
+    @State private var autoScrollDir: CGFloat = 0
+    @State private var autoScrollStrength: CGFloat = 0
+    @State private var autoScrollLastTS: CFTimeInterval = 0
+    private let autoScrollEdge: CGFloat = 44
+    private let autoScrollMinSpeed: CGFloat = 120
+    private let autoScrollMaxSpeed: CGFloat = 600
     // MARK: - Fixed-playhead mapping helpers (single source of truth)
     private func screenScale() -> CGFloat { UIScreen.main.scale }
     private func leadingInset(for width: CGFloat) -> CGFloat {
@@ -272,32 +287,60 @@ struct TimelineContainer: View {
                     .position(x: startX + (endX - startX)/2, y: y)
                     .allowsHitTesting(false)
 
-                // Left handle
+                // Left handle — cumulative dx + snap-enter haptics + edge auto-scroll
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
-                    let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
+                    if !isDraggingLaneItem {
+                        isDraggingLaneItem = true
+                        state.beginAudioTrimGesture()
+                        selectionHaptics.prepare()
+                        // Reset prev to avoid stale buzz; we use cumulative dx model
+                        leftHandlePrevDX = 0
+                    }
+                    let deltaSec = Double(dx / max(1, pps))
+                    let proposedAbs = sA + deltaSec
+                    let snapped = nearestSnap(to: proposedAbs, pps: pps, excludeTextId: nil)
+                    if let _ = snapped.hit, leftHandlePrevDX == 0 { /* first snap prep done above */ }
+                    // Fire a soft haptic only when the snapped absolute time changes meaningfully
+                    // (simple edge: compare against last stored dx bucket)
+                    if abs(Double(leftHandlePrevDX) / Double(max(1, pps)) - deltaSec) > 0.001, snapped.hit != nil {
+                        selectionHaptics.selectionChanged()
+                    }
                     leftHandlePrevDX = dx
-                    Task { await state.trimAudio(id: a.id, leftDeltaSeconds: deltaSec) }
+                    state.trimAudioDuringGesture(id: a.id, leftDeltaSeconds: snapped.time - sA)
+                    updateAutoScroll(forHandleX: startX - selectionHandleWidth/2, viewWidth: geo.size.width)
                 }, onEnd: {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    state.endAudioTrimGesture()
+                    stopAutoScroll()
                 })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { leftHandlePrevDX = 0 }
 
-                // Right handle
+                // Right handle — cumulative dx + snap-enter haptics + edge auto-scroll
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
-                    let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
+                    if !isDraggingLaneItem {
+                        isDraggingLaneItem = true
+                        state.beginAudioTrimGesture()
+                        selectionHaptics.prepare()
+                        rightHandlePrevDX = 0
+                    }
+                    let deltaSec = Double(dx / max(1, pps))
+                    let proposedAbs = eA + deltaSec
+                    let snapped = nearestSnap(to: proposedAbs, pps: pps, excludeTextId: nil)
+                    if abs(Double(rightHandlePrevDX) / Double(max(1, pps)) - deltaSec) > 0.001, snapped.hit != nil {
+                        selectionHaptics.selectionChanged()
+                    }
                     rightHandlePrevDX = dx
-                    Task { await state.trimAudio(id: a.id, rightDeltaSeconds: deltaSec) }
+                    state.trimAudioDuringGesture(id: a.id, rightDeltaSeconds: snapped.time - eA)
+                    updateAutoScroll(forHandleX: endX + selectionHandleWidth/2, viewWidth: geo.size.width)
                 }, onEnd: {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    state.endAudioTrimGesture()
+                    stopAutoScroll()
                 })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { rightHandlePrevDX = 0 }
@@ -318,6 +361,7 @@ struct TimelineContainer: View {
                     + TimelineStyle.laneRowHeight
                     + TimelineStyle.rowSpacing
                     + (TimelineStyle.laneRowHeight / 2)
+                // (Snapshots are declared at view scope)
 
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .strokeBorder(Color.white, lineWidth: 2)
@@ -326,29 +370,80 @@ struct TimelineContainer: View {
                     .allowsHitTesting(false)
 
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
-                    let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
-                    leftHandlePrevDX = dx
-                    state.trimText(id: t.id, leftDeltaSeconds: deltaSec)
+                    if !isDraggingLaneItem {
+                        isDraggingLaneItem = true
+                        state.beginTextTrimGesture()
+                        selectionHaptics.prepare()
+                        // capture baseline
+                        let effStart = max(0, sT)
+                        textLeftSnapshot = TextHandleSnapshot(start: effStart, pps: pps)
+                        textLastSnapped = nil
+                    }
+                    let snapshotPPS = textLeftSnapshot?.pps ?? pps
+                    let effStart = (textLeftSnapshot?.start ?? max(0, sT))
+                    // Use cumulative translation (no prevDX)
+                    let deltaSec = Double(dx / max(1, snapshotPPS))
+                    let proposedAbs = effStart + deltaSec
+                    var snapped = nearestSnap(to: proposedAbs, pps: snapshotPPS, excludeTextId: t.id)
+                    // Frame-quantize the snapped time
+                    snapped = (time: state.quantizeToFrame(snapped.time), hit: snapped.hit)
+                    if let hit = snapped.hit, (textLastSnapped?.time != hit.time || textLastSnapped?.kind != hit.kind) {
+                        selectionHaptics.selectionChanged()
+                        textLastSnapped = hit
+                    } else if snapped.hit == nil {
+                        textLastSnapped = nil
+                    }
+                    let finalDelta = snapped.time - effStart
+                    state.trimTextDuringGesture(id: t.id, leftDeltaSeconds: finalDelta)
+                    // Edge auto-scroll
+                    let handleCenterX = startX - selectionHandleWidth/2
+                    updateAutoScroll(forHandleX: handleCenterX, viewWidth: geo.size.width)
                 }, onEnd: {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    textLeftSnapshot = nil
+                    textLastSnapped = nil
+                    state.endTextTrimGesture()
+                    stopAutoScroll()
                 })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { leftHandlePrevDX = 0; isDraggingLaneItem = false }
 
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
-                    let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
-                    rightHandlePrevDX = dx
-                    state.trimText(id: t.id, rightDeltaSeconds: deltaSec)
+                    if !isDraggingLaneItem {
+                        isDraggingLaneItem = true
+                        state.beginTextTrimGesture()
+                        selectionHaptics.prepare()
+                        let effEnd = max(0, eT)
+                        textRightSnapshot = TextHandleSnapshot(start: effEnd, pps: pps)
+                        textLastSnapped = nil
+                    }
+                    let snapshotPPS = textRightSnapshot?.pps ?? pps
+                    let effEnd = (textRightSnapshot?.start ?? max(0, eT))
+                    let deltaSec = Double(dx / max(1, snapshotPPS))
+                    let proposedAbs = effEnd + deltaSec
+                    var snapped = nearestSnap(to: proposedAbs, pps: snapshotPPS, excludeTextId: t.id)
+                    snapped = (time: state.quantizeToFrame(snapped.time), hit: snapped.hit)
+                    if let hit = snapped.hit, (textLastSnapped?.time != hit.time || textLastSnapped?.kind != hit.kind) {
+                        selectionHaptics.selectionChanged()
+                        textLastSnapped = hit
+                    } else if snapped.hit == nil {
+                        textLastSnapped = nil
+                    }
+                    let finalDelta = snapped.time - effEnd
+                    state.trimTextDuringGesture(id: t.id, rightDeltaSeconds: finalDelta)
+                    // Edge auto-scroll
+                    let handleCenterX = endX + selectionHandleWidth/2
+                    updateAutoScroll(forHandleX: handleCenterX, viewWidth: geo.size.width)
                 }, onEnd: {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    textRightSnapshot = nil
+                    textLastSnapped = nil
+                    state.endTextTrimGesture()
+                    stopAutoScroll()
                 })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { rightHandlePrevDX = 0; isDraggingLaneItem = false }
@@ -393,7 +488,7 @@ struct TimelineContainer: View {
                     )
             }
             .contentShape(Rectangle())
-            .gesture(
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
                     .updating($dx) { v, st, _ in st = v.translation.width }
                     .onChanged { v in
@@ -1173,12 +1268,14 @@ struct TimelineContainer: View {
     private func magnifyGesture(geo: GeometryProxy) -> some Gesture {
         MagnificationGesture(minimumScaleDelta: 0.01)
             .updating($pinchScale) { value, scale, _ in
+                guard !isDraggingLaneItem else { return }
                 scale = value
                 let newPPS = max(minPPS, min(maxPPS, state.pixelsPerSecond * value))
                 state.pixelsPerSecond = newPPS
                 applyProgrammaticScroll(offsetForTime(state.displayTime, width: geo.size.width, pps: newPPS))
             }
             .onEnded { value in
+                guard !isDraggingLaneItem else { return }
                 let newPPS = max(minPPS, min(maxPPS, state.pixelsPerSecond))
                 state.pixelsPerSecond = newPPS
                 applyProgrammaticScroll(offsetForTime(state.displayTime, width: geo.size.width, pps: newPPS))
@@ -1226,6 +1323,106 @@ struct TimelineContainer: View {
 }
 
 // MARK: - ScrollView content offset bridging
+// MARK: - Snapping helpers
+private struct SnapTarget: Hashable {
+    enum Kind: Hashable { case playhead, second, itemEdge }
+    let time: Double
+    let kind: Kind
+}
+
+private extension TimelineContainer {
+    /// Compute nearest snap in seconds given a proposed absolute time.
+    /// Tolerance is points-based (~12pt) converted to seconds via current PPS.
+    func nearestSnap(to proposed: Double, pps: CGFloat, excludeTextId: UUID?) -> (time: Double, hit: SnapTarget?) {
+        let pxThreshold: CGFloat = 12
+        let tol = Double(pxThreshold / max(1, pps))
+        var anchors: [SnapTarget] = []
+        // Playhead
+        anchors.append(SnapTarget(time: max(0, CMTimeGetSeconds(state.displayTime)), kind: .playhead))
+        // Neighbor text edges
+        for t in state.textOverlays where t.id != excludeTextId {
+            let s = max(0, CMTimeGetSeconds(t.effectiveStart))
+            let e = s + max(0, CMTimeGetSeconds(t.trimmedDuration))
+            anchors.append(SnapTarget(time: s, kind: .itemEdge))
+            anchors.append(SnapTarget(time: e, kind: .itemEdge))
+        }
+        // Video clip edges
+        for c in state.clips {
+            let s = max(0, state.startSeconds(for: c.id) ?? 0)
+            let e = s + max(0, CMTimeGetSeconds(c.trimmedDuration))
+            anchors.append(SnapTarget(time: s, kind: .itemEdge))
+            anchors.append(SnapTarget(time: e, kind: .itemEdge))
+        }
+        // Whole seconds around proposed
+        let base = floor(proposed)
+        // Quantize second marks to frame boundaries to avoid near-second jitter
+        let sec0 = state.quantizeToFrame(base)
+        let sec1 = state.quantizeToFrame(base + 1)
+        anchors.append(SnapTarget(time: sec0, kind: .second))
+        anchors.append(SnapTarget(time: sec1, kind: .second))
+        // Project tail as a snap target
+        anchors.append(SnapTarget(time: max(0, CMTimeGetSeconds(state.totalDuration)), kind: .itemEdge))
+        // Find nearest within tolerance
+        var best: (SnapTarget, Double)? = nil
+        for a in anchors {
+            let d = abs(a.time - proposed)
+            if d <= tol && (best == nil || d < best!.1) { best = (a, d) }
+        }
+        if let (hit, _) = best { return (hit.time, hit) }
+        return (proposed, nil)
+    }
+
+    // MARK: - Auto-scroll helpers
+    private func startAutoScroll(direction: CGFloat, strength: CGFloat) {
+        autoScrollDir = direction
+        autoScrollStrength = max(0, min(1, strength))
+        if autoScrollLink == nil {
+            let link = CADisplayLink(target: AutoScrollProxy { l in self.tickAutoScroll(l) }, selector: #selector(AutoScrollProxy.tick(_:)))
+            link.add(to: .main, forMode: .common)
+            autoScrollLink = link
+            autoScrollLastTS = 0
+        }
+    }
+
+    private func stopAutoScroll() {
+        autoScrollLink?.invalidate()
+        autoScrollLink = nil
+        autoScrollDir = 0
+        autoScrollStrength = 0
+        autoScrollLastTS = 0
+    }
+
+    private func updateAutoScroll(forHandleX handleXInView: CGFloat, viewWidth: CGFloat) {
+        let leftDist  = handleXInView
+        let rightDist = viewWidth - handleXInView
+        if leftDist < autoScrollEdge {
+            let s = 1 - max(0, leftDist / autoScrollEdge)
+            startAutoScroll(direction: -1, strength: s)
+        } else if rightDist < autoScrollEdge {
+            let s = 1 - max(0, rightDist / autoScrollEdge)
+            startAutoScroll(direction: +1, strength: s)
+        } else {
+            stopAutoScroll()
+        }
+    }
+
+    private func tickAutoScroll(_ link: CADisplayLink) {
+        guard autoScrollDir != 0 else { return }
+        let now = link.timestamp
+        let dt = (autoScrollLastTS == 0) ? link.duration : now - autoScrollLastTS
+        autoScrollLastTS = now
+        let speed = autoScrollMinSpeed + (autoScrollMaxSpeed - autoScrollMinSpeed) * autoScrollStrength
+        let dx = autoScrollDir * speed * CGFloat(dt)
+        applyProgrammaticScroll(observedOffsetX + dx)
+    }
+}
+
+private final class AutoScrollProxy: NSObject {
+    let handler: (CADisplayLink) -> Void
+    init(_ h: @escaping (CADisplayLink) -> Void) { handler = h }
+    @objc func tick(_ l: CADisplayLink) { handler(l) }
+}
+
 private struct ContentOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
