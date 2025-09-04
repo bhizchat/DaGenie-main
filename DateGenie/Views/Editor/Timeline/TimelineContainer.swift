@@ -80,9 +80,9 @@ struct TimelineContainer: View {
     @State private var autoScrollDir: CGFloat = 0
     @State private var autoScrollStrength: CGFloat = 0
     @State private var autoScrollLastTS: CFTimeInterval = 0
-    private let autoScrollEdge: CGFloat = 44
-    private let autoScrollMinSpeed: CGFloat = 120
-    private let autoScrollMaxSpeed: CGFloat = 600
+    @State private var autoScrollEdgeEnteredAt: CFTimeInterval = 0
+    private let autoScrollEdgeMin: CGFloat = 48
+    private let autoScrollEdgeMax: CGFloat = 120
     // MARK: - Fixed-playhead mapping helpers (single source of truth)
     private func screenScale() -> CGFloat { UIScreen.main.scale }
     private func leadingInset(for width: CGFloat) -> CGFloat {
@@ -396,8 +396,10 @@ struct TimelineContainer: View {
                     let finalDelta = snapped.time - effStart
                     state.trimTextDuringGesture(id: t.id, leftDeltaSeconds: finalDelta)
                     // Edge auto-scroll
-                    let handleCenterX = startX - selectionHandleWidth/2
-                    updateAutoScroll(forHandleX: handleCenterX, viewWidth: geo.size.width)
+                    // Recompute live handle X using current timeline state
+                    let liveStart = state.selectedTextStartSeconds ?? sT
+                    let liveStartX = (offsetForTime(CMTime(seconds: liveStart, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                    updateAutoScroll(forHandleX: liveStartX - selectionHandleWidth/2, viewWidth: geo.size.width)
                 }, onEnd: {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
@@ -434,8 +436,9 @@ struct TimelineContainer: View {
                     let finalDelta = snapped.time - effEnd
                     state.trimTextDuringGesture(id: t.id, rightDeltaSeconds: finalDelta)
                     // Edge auto-scroll
-                    let handleCenterX = endX + selectionHandleWidth/2
-                    updateAutoScroll(forHandleX: handleCenterX, viewWidth: geo.size.width)
+                    let liveEnd = state.selectedTextEndSeconds ?? eT
+                    let liveEndX = (offsetForTime(CMTime(seconds: liveEnd, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                    updateAutoScroll(forHandleX: liveEndX + selectionHandleWidth/2, viewWidth: geo.size.width)
                 }, onEnd: {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
@@ -1222,7 +1225,10 @@ struct TimelineContainer: View {
 
     // One-shot programmatic scroll target. Sets programmaticX then clears next runloop.
     private func applyProgrammaticScroll(_ x: CGFloat) {
-        programmaticX = x
+        let clamped = max(0, x)
+        // Keep overlay math in lockstep with programmatic scroll
+        observedOffsetX = clamped
+        programmaticX = clamped
         DispatchQueue.main.async { programmaticX = nil }
     }
 
@@ -1373,14 +1379,22 @@ private extension TimelineContainer {
     }
 
     // MARK: - Auto-scroll helpers
+    private func currentEdgeThreshold(for viewWidth: CGFloat) -> CGFloat {
+        // Scale edge zone with zoom (pps) and clamp to sensible touch sizes
+        let z = max(0, min(1, (state.pixelsPerSecond - minPPS) / max(1, (maxPPS - minPPS))))
+        return autoScrollEdgeMin + (autoScrollEdgeMax - autoScrollEdgeMin) * z
+    }
+
     private func startAutoScroll(direction: CGFloat, strength: CGFloat) {
         autoScrollDir = direction
         autoScrollStrength = max(0, min(1, strength))
         if autoScrollLink == nil {
             let link = CADisplayLink(target: AutoScrollProxy { l in self.tickAutoScroll(l) }, selector: #selector(AutoScrollProxy.tick(_:)))
+            link.preferredFramesPerSecond = 0
             link.add(to: .main, forMode: .common)
             autoScrollLink = link
             autoScrollLastTS = 0
+            autoScrollEdgeEnteredAt = CACurrentMediaTime()
         }
     }
 
@@ -1390,16 +1404,20 @@ private extension TimelineContainer {
         autoScrollDir = 0
         autoScrollStrength = 0
         autoScrollLastTS = 0
+        autoScrollEdgeEnteredAt = 0
     }
 
     private func updateAutoScroll(forHandleX handleXInView: CGFloat, viewWidth: CGFloat) {
+        let edge = currentEdgeThreshold(for: viewWidth)
         let leftDist  = handleXInView
         let rightDist = viewWidth - handleXInView
-        if leftDist < autoScrollEdge {
-            let s = 1 - max(0, leftDist / autoScrollEdge)
+        if leftDist < edge {
+            let s = 1 - max(0, leftDist / edge)
+            if autoScrollDir != -1 { autoScrollEdgeEnteredAt = CACurrentMediaTime() }
             startAutoScroll(direction: -1, strength: s)
-        } else if rightDist < autoScrollEdge {
-            let s = 1 - max(0, rightDist / autoScrollEdge)
+        } else if rightDist < edge {
+            let s = 1 - max(0, rightDist / edge)
+            if autoScrollDir != +1 { autoScrollEdgeEnteredAt = CACurrentMediaTime() }
             startAutoScroll(direction: +1, strength: s)
         } else {
             stopAutoScroll()
@@ -1411,8 +1429,17 @@ private extension TimelineContainer {
         let now = link.timestamp
         let dt = (autoScrollLastTS == 0) ? link.duration : now - autoScrollLastTS
         autoScrollLastTS = now
-        let speed = autoScrollMinSpeed + (autoScrollMaxSpeed - autoScrollMinSpeed) * autoScrollStrength
-        let dx = autoScrollDir * speed * CGFloat(dt)
+
+        // cubic ease near the edge + dwell ramp
+        let prox = max(0, min(1, autoScrollStrength))
+        let eased = prox * prox * prox
+        let dwell = min(1.0, max(0.0, (now - autoScrollEdgeEnteredAt) / 0.75))
+        let dwellBoost: CGFloat = 1.0 + dwell
+
+        // seconds/sec mapped to px/sec using current zoom
+        let secPerSec: CGFloat = 1.5 + (8.0 - 1.5) * eased
+        let pxPerSec: CGFloat  = secPerSec * state.pixelsPerSecond * dwellBoost
+        let dx = autoScrollDir * pxPerSec * CGFloat(dt)
         applyProgrammaticScroll(observedOffsetX + dx)
     }
 }
@@ -1452,6 +1479,9 @@ private struct ScrollViewOffsetApplier: UIViewRepresentable {
             if let scrollView = uiView.enclosingScrollView() {
                 let target = CGPoint(x: max(0, x), y: 0)
                 if scrollView.contentOffset != target {
+                    // Reduce friction while programmatically scrolling during trims
+                    scrollView.decelerationRate = .fast
+                    scrollView.bounces = false
                     scrollView.setContentOffset(target, animated: false)
                 }
             }
