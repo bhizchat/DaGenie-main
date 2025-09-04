@@ -220,11 +220,19 @@ struct TimelineContainer: View {
                         // Explicitly close the Edit toolbar on global deselection
                         DispatchQueue.main.async {
                             NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
+                            NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
                         }
                     }
                     didTapClip = false
                 }
             )
+            // Ensure scroll is re-enabled immediately on selection changes
+            .onChange(of: state.selectedAudioId) { _ in
+                if isDraggingLaneItem { isDraggingLaneItem = false }
+            }
+            .onChange(of: state.selectedTextId) { _ in
+                if isDraggingLaneItem { isDraggingLaneItem = false }
+            }
 
             // Selection overlay (frame + handles) positioned in the SAME coordinate space as rows
             if let s = state.selectedClipStartSeconds,
@@ -319,7 +327,6 @@ struct TimelineContainer: View {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
                 }, onBegin: { isDraggingLaneItem = true })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { leftHandlePrevDX = 0 }
@@ -333,7 +340,6 @@ struct TimelineContainer: View {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
                 }, onBegin: { isDraggingLaneItem = true })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { rightHandlePrevDX = 0 }
@@ -369,7 +375,6 @@ struct TimelineContainer: View {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
                 }, onBegin: { isDraggingLaneItem = true })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { leftHandlePrevDX = 0; isDraggingLaneItem = false }
@@ -382,7 +387,6 @@ struct TimelineContainer: View {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
                 }, onBegin: { isDraggingLaneItem = true })
-                .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { rightHandlePrevDX = 0; isDraggingLaneItem = false }
@@ -436,6 +440,8 @@ struct TimelineContainer: View {
                     }
                     .onEnded { _ in onEnd() }
             )
+            // Ensure cleanup even if the handle view disappears mid-gesture
+            .onDisappear { onEnd() }
         }
     }
 
