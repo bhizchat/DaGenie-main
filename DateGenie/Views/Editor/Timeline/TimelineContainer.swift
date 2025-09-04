@@ -50,7 +50,7 @@ struct TimelineContainer: View {
     private let rulerHeight: CGFloat = 32       // header/ruler height above filmstrip
     private let spacingAboveStrip: CGFloat = 8  // gap between ruler and filmstrip
     // Single source of truth to vertically lift the entire timeline stack (ruler, rows, buttons, HUD)
-    private let verticalLift: CGFloat = 40
+    private let verticalLift: CGFloat = 80
     // Extend playhead/HUD upward; keep base consistent and add vertical lift so the HUD still clears the ruler
     private let basePlayheadExtension: CGFloat = 80
     private var extraPlayheadExtension: CGFloat { basePlayheadExtension + verticalLift }
@@ -965,7 +965,8 @@ struct TimelineContainer: View {
             .overlay(alignment: .trailing) {
                 // Vertically center on the video (filmstrip) row; when there is no clip, nudge the plus 20pt lower
                 let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
-                let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20)
+                // Push the plus button down by an additional ~15pt
+                let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20) + 15
                 PhotosPicker(selection: $selectedVideoItem, matching: .videos, photoLibrary: .shared()) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
@@ -989,7 +990,7 @@ struct TimelineContainer: View {
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
                     .padding(.top, 0)
-                    .offset(y: -10 - verticalLift)
+                    .offset(y: -verticalLift) // moved down by ~10pt
                     .zIndex(1000)
                     .allowsHitTesting(false)
             }

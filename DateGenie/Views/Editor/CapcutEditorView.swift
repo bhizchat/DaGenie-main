@@ -73,8 +73,8 @@ struct CapcutEditorView: View {
                 // Track canvas
                 EditorTrackArea(state: state, canvasRect: $canvasRect)
                     .frame(height: 280)
-                    .padding(.top, -100)   // move canvas up further by 50pt
-                    .padding(.bottom, 100) // compensate so overall layout height stays the same
+                    .padding(.top, -120)   // move canvas up further by an additional ~20pt
+                    .padding(.bottom, 120) // compensate so overall layout height stays the same
                     .padding(.horizontal, 0)
 
                 // Middle controls (play + time) centered in free space between canvas and bottom toolbar
@@ -84,8 +84,9 @@ struct CapcutEditorView: View {
                             Button(action: { state.isPlaying ? state.pause() : state.play() }) {
                                 Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
                                     .foregroundColor(.white)
-                                    .font(.system(size: 28, weight: .bold))
+                                    .font(.system(size: 18, weight: .bold))
                             }
+                            .offset(y: -20)
                             HStack {
                                 Text(timeLabel(state.displayTime, duration: state.duration))
                                     .font(.system(size: 16, weight: .semibold))
@@ -93,7 +94,7 @@ struct CapcutEditorView: View {
                                 Spacer(minLength: 0)
                             }
                             .padding(.horizontal, 24)
-                            .offset(y: -70) // lift timecode further to sit just under play button
+                            .offset(y: -95) // lowered by ~15pt
                         }
                         .offset(y: -95) // move play button/time group up by ~35pt
                     }
@@ -112,7 +113,7 @@ struct CapcutEditorView: View {
                                           dockFocused = true
                                           withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
                                       })
-                        .frame(height: 72 + 8 + 32 + 80)
+                        .frame(height: 72 + 8 + 32 + 120)
                     // Inline Volume dock sits between timeline and toolbar to avoid intercepting timeline gestures
                     if showVolumeDock {
                         HStack(spacing: 12) {
