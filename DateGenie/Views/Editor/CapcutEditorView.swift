@@ -232,8 +232,7 @@ struct CapcutEditorView: View {
                                 dockFocused = true
                             },
                             onOverlay: {},
-                            onAspect: { showAspectSheet = true },
-                            onEffects: {}
+                            onAspect: { showAspectSheet = true }
                         )
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }

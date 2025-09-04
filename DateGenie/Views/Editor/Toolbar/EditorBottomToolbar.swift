@@ -6,7 +6,6 @@ struct EditorBottomToolbar: View {
     let onText: () -> Void
     let onOverlay: () -> Void
     let onAspect: () -> Void
-    let onEffects: () -> Void
 
     var body: some View {
         VStack(spacing: 8) {
@@ -16,7 +15,6 @@ struct EditorBottomToolbar: View {
                 item(letter: "T", label: "Text", action: onText)
                 item(icon: "square.on.square", label: "Overlay", action: onOverlay)
                 item(icon: "rectangle.portrait", label: "Aspect", action: onAspect)
-                item(icon: "sparkles", label: "Effects", action: onEffects)
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
