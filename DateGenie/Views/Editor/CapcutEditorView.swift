@@ -285,8 +285,7 @@ struct CapcutEditorView: View {
                                 dockFocused = true
                             },
                             onOverlay: {},
-                            onAspect: { showAspectSheet = true },
-                            onEffects: {}
+                            onAspect: { showAspectSheet = true }
                         )
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
@@ -535,10 +534,44 @@ final class EditorState: ObservableObject {
     @Published var pixelsPerSecond: CGFloat = 60
     @Published var isScrubbing: Bool = false
     @Published var followMode: FollowMode = .off
-    @Published var selectedClipId: UUID? = nil
-    @Published var selectedAudioId: UUID? = nil
+    // Unified selection (authoritative; newer API). Legacy selected*Id remain for compat.
+    enum Selection: Equatable { case clip(UUID), audio(UUID), text(UUID) }
+    @Published var selection: Selection? = nil
+    // Centralize selection so only one kind can be active at a time
+    @Published var selectedClipId: UUID? = nil { didSet {
+        if selectedClipId != nil { if selectedAudioId != nil { selectedAudioId = nil }; if selectedTextId != nil { selectedTextId = nil } }
+    }}
+    @Published var selectedAudioId: UUID? = nil { didSet {
+        if selectedAudioId != nil { if selectedClipId != nil { selectedClipId = nil }; if selectedTextId != nil { selectedTextId = nil } }
+    }}
     // Text selection for on-canvas and timeline linking
-    @Published var selectedTextId: UUID? = nil
+    @Published var selectedTextId: UUID? = nil { didSet {
+        if selectedTextId != nil { if selectedClipId != nil { selectedClipId = nil }; if selectedAudioId != nil { selectedAudioId = nil } }
+    }}
+    
+    // Preferred API for setting selection consistently
+    @MainActor
+    func select(_ s: Selection?) {
+        selection = s
+        switch s {
+        case .clip(let id):
+            selectedClipId = id
+            selectedAudioId = nil
+            selectedTextId = nil
+        case .audio(let id):
+            selectedAudioId = id
+            selectedClipId = nil
+            selectedTextId = nil
+        case .text(let id):
+            selectedTextId = id
+            selectedClipId = nil
+            selectedAudioId = nil
+        case .none:
+            selectedClipId = nil
+            selectedAudioId = nil
+            selectedTextId = nil
+        }
+    }
     // Per-clip opacity 0..1 (defaults to 1.0 when missing)
     @Published private(set) var clipOpacities: [UUID: Float] = [:]
 
@@ -632,7 +665,19 @@ final class EditorState: ObservableObject {
     }
 
     var totalDuration: CMTime {
-        clips.reduce(.zero) { $0 + $1.effectiveDuration }
+        // Base: concatenated video clip timeline
+        let videoTail = clips.reduce(.zero) { $0 + $1.effectiveDuration }
+        // Longest audio tail considering trim and speed
+        let audioTail: CMTime = audioTracks.reduce(.zero) { acc, t in
+            let end = t.start + t.trimStart + t.effectiveTrimmedDuration
+            return CMTimeMaximum(acc, end)
+        }
+        // Longest text tail
+        let textTail: CMTime = textOverlays.reduce(.zero) { acc, t in
+            let end = t.effectiveStart + t.trimmedDuration
+            return CMTimeMaximum(acc, end)
+        }
+        return [videoTail, audioTail, textTail].reduce(.zero, { CMTimeMaximum($0, $1) })
     }
 
     // Append a new clip and rebuild the composition + thumbnails
@@ -703,7 +748,7 @@ final class EditorState: ObservableObject {
                let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 // Trim-aware insertion from source time range
                 let srcRange = CMTimeRange(start: t.trimStart, duration: t.trimmedDuration)
-                // Desired output duration after retime; clamp to project tail
+                // Desired output duration after retime; clamp to project tail (now includes audio/text)
                 let maxOut = max(.zero, totalDuration - (t.start))
                 let outDur = CMTimeMinimum(t.effectiveTrimmedDuration, maxOut)
                 try? aDst.insertTimeRange(srcRange, of: aSrc, at: t.start)
@@ -728,7 +773,10 @@ final class EditorState: ObservableObject {
                 cursor2 = cursor2 + clip.effectiveDuration
             }
             let mainInstruction = AVMutableVideoCompositionInstruction()
-            mainInstruction.timeRange = CMTimeRange(start: .zero, duration: cursor2)
+            // Extend the instruction to the overall project end so audio beyond the last
+            // video frame still previews and the timeline can scroll/select at the tail.
+            let overall = totalDuration
+            mainInstruction.timeRange = CMTimeRange(start: .zero, duration: overall)
             mainInstruction.layerInstructions = [layerInstruction]
             let vcomp = AVMutableVideoComposition()
             // Render size and fps derived from first video track when available
@@ -771,7 +819,7 @@ final class EditorState: ObservableObject {
     }
 
     // Generate filmstrip thumbnails for a single clip (progressive & cancellable)
-    private func generateThumbnails(forClipAt index: Int) async {
+    private func generateThumbnails(forClipAt index: Int, expectedCount: Int? = nil) async {
         guard clips.indices.contains(index) else { return }
         let clip = clips[index]
         let total = CMTimeGetSeconds(clip.effectiveDuration)
@@ -779,7 +827,7 @@ final class EditorState: ObservableObject {
         // Determine number of tiles needed to span the clip's on-screen width at current zoom
         let tileWidth = max(24, self.pixelsPerSecond)
         let clipWidthPoints = CGFloat(total) * self.pixelsPerSecond
-        let count = max(1, Int(ceil(clipWidthPoints / tileWidth)))
+        let count = expectedCount ?? max(1, Int(ceil(clipWidthPoints / tileWidth)))
         let times: [CMTime] = (0..<count).map { i in
             let t = Double(i) / Double(max(count - 1, 1)) * total
             return CMTime(seconds: t, preferredTimescale: 600)
@@ -842,9 +890,26 @@ final class EditorState: ObservableObject {
             for idx in self.clips.indices {
                 let prev = self.clips[idx].thumbnailPPS
                 if abs(prev - self.pixelsPerSecond) > 12 {
-                    Task { await self.generateThumbnails(forClipAt: idx) }
+                    Task { await self.generateThumbnails(forClipAt: idx, expectedCount: nil) }
                 }
             }
+        }
+    }
+
+    // Opportunistic refresh to keep filmstrip grid sized for current PPS/width
+    @MainActor
+    func ensureFilmstripFreshness(forClipAt index: Int) {
+        guard clips.indices.contains(index) else { return }
+        let c = clips[index]
+        let seconds = max(0, CMTimeGetSeconds(c.effectiveDuration))
+        guard seconds > 0 else { return }
+        let tileW = max(24, pixelsPerSecond)
+        let clipWidth = CGFloat(seconds) * pixelsPerSecond
+        let desiredCount = max(1, Int(ceil(clipWidth / tileW)))
+        let needsZoomRefresh = abs(c.thumbnailPPS - pixelsPerSecond) > 0.5
+        let undersupplied = c.thumbnails.count < desiredCount
+        if needsZoomRefresh || undersupplied {
+            Task { await generateThumbnails(forClipAt: index, expectedCount: desiredCount) }
         }
     }
 
@@ -1317,8 +1382,15 @@ extension EditorState {
     /// Duplicate the currently selected item and place the copy immediately to the right on the same lane/track.
     @MainActor
     func duplicateSelected() async {
-        // TEXT overlay duplication
-        if let tid = selectedTextId, let i = textOverlays.firstIndex(where: { $0.id == tid }) {
+        guard let sel = selection ?? (
+            selectedTextId.map { Selection.text($0) } ??
+            selectedAudioId.map { Selection.audio($0) } ??
+            selectedClipId.map { Selection.clip($0) }
+        ) else { return }
+
+        switch sel {
+        case .text(let tid):
+            guard let i = textOverlays.firstIndex(where: { $0.id == tid }) else { return }
             let src = textOverlays[i]
             // Compute new placement so visible start = source visible end
             let sourceEnd = src.effectiveStart + src.trimmedDuration
@@ -1338,15 +1410,13 @@ extension EditorState {
             var dup = TimedTextOverlay(base: newBase, start: newStart, duration: src.duration)
             dup.trimStart = src.trimStart
             dup.trimEnd   = src.trimEnd
-            textOverlays.append(dup)
-            selectedTextId = dup.id
+            withAnimation(.none) { textOverlays.append(dup) }
+            DispatchQueue.main.async { self.select(.text(dup.id)) }
             await rebuildCompositionForPreview()
             followMode = .keepVisible
             return
-        }
-
-        // AUDIO duplication
-        if let aid = selectedAudioId, let i = audioTracks.firstIndex(where: { $0.id == aid }) {
+        case .audio(let aid):
+            guard let i = audioTracks.firstIndex(where: { $0.id == aid }) else { return }
             let src = audioTracks[i]
             var dup = src
             // Assign new identity via reinit
@@ -1359,16 +1429,15 @@ extension EditorState {
             dup.sourceClipId = src.sourceClipId
             // Place so visible start equals source visible end
             let visibleEnd = src.start + src.trimStart + src.trimmedDuration
-            dup.start = max(.zero, visibleEnd - src.trimStart)
-            audioTracks.append(dup)
-            selectedAudioId = dup.id
+            let eps = CMTime(seconds: 1.0/600.0, preferredTimescale: 600)
+            dup.start = max(.zero, (visibleEnd - src.trimStart) + eps)
+            withAnimation(.none) { audioTracks.append(dup) }
+            DispatchQueue.main.async { self.select(.audio(dup.id)) }
             await rebuildCompositionForPreview()
             followMode = .keepVisible
             return
-        }
-
-        // CLIP duplication
-        if let cid = selectedClipId, let idx = clips.firstIndex(where: { $0.id == cid }) {
+        case .clip(let cid):
+            guard let idx = clips.firstIndex(where: { $0.id == cid }) else { return }
             let src = clips[idx]
             var dup = src
             // New identity and reset transient visuals so they regenerate
@@ -1380,10 +1449,10 @@ extension EditorState {
             dup.trimStart = src.trimStart
             dup.trimEnd = src.trimEnd
             let insertIndex = idx + 1
-            clips.insert(dup, at: insertIndex)
+            withAnimation(.none) { clips.insert(dup, at: insertIndex) }
             await rebuildComposition()
             await generateThumbnails(forClipAt: insertIndex)
-            selectedClipId = dup.id
+            DispatchQueue.main.async { self.select(.clip(dup.id)) }
             followMode = .keepVisible
             return
         }

@@ -17,6 +17,9 @@ struct ScrollViewBridge: UIViewRepresentable {
             if context.coordinator.scrollView !== scrollView {
                 scrollView.delegate = context.coordinator
                 context.coordinator.scrollView = scrollView
+                // Keep UIScrollView defaults for its internal pan delegate; do not override
+                scrollView.panGestureRecognizer.cancelsTouchesInView = false
+                scrollView.panGestureRecognizer.delaysTouchesBegan = false
             }
             // No runtime contentInset centering. We use spacer views inside content for centering.
             let _ = scrollView.bounds.width / 2
@@ -57,6 +60,7 @@ struct ScrollViewBridge: UIViewRepresentable {
         weak var scrollView: UIScrollView?
         var suppressNextDidScroll: Bool = false
         init(onScroll: @escaping (CGFloat, Bool, Bool, Bool) -> Void) { self.onScroll = onScroll }
+        // (No gesture delegate overrides; let UIScrollView manage its pan recognizer)
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard !suppressNextDidScroll else { return }
             onScroll(scrollView.contentOffset.x, scrollView.isTracking, scrollView.isDragging, scrollView.isDecelerating)

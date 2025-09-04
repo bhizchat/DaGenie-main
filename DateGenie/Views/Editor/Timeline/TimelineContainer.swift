@@ -21,6 +21,42 @@ struct TimelineContainer: View {
         self.onAddEnding = onAddEnding
     }
 
+    // Render-time filmstrip that never exceeds clip bounds
+    private struct FilmstripView: View {
+        let thumbnails: [UIImage]
+        let duration: CMTime
+        let pps: CGFloat
+        let rowHeight: CGFloat
+
+        private func floorToPixel(_ x: CGFloat) -> CGFloat {
+            let s = UIScreen.main.scale
+            return (x * s).rounded(.down) / s
+        }
+
+        var body: some View {
+            let seconds = max(0, CMTimeGetSeconds(duration))
+            let clipWidth = floorToPixel(CGFloat(seconds) * pps)
+            let tileW = floorToPixel(max(24, pps))
+            let columns = max(1, Int(ceil(clipWidth / max(1, tileW))))
+
+            ZStack(alignment: .leading) {
+                LazyHStack(spacing: 0) {
+                    ForEach(0..<columns, id: \.self) { i in
+                        let img = (i < thumbnails.count) ? thumbnails[i] : UIImage()
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: tileW, height: rowHeight)
+                            .clipped()
+                    }
+                }
+                .frame(width: clipWidth, height: rowHeight, alignment: .leading)
+            }
+            .frame(width: clipWidth, height: rowHeight, alignment: .leading)
+            .mask(Rectangle().frame(width: clipWidth, height: rowHeight))
+            .accessibilityHidden(true)
+        }
+    }
     // View-local scroll state
     // Programmatic scroll target should be opt-in; nil means "do not touch scroll view"
     @State private var programmaticX: CGFloat? = nil
@@ -134,7 +170,8 @@ struct TimelineContainer: View {
                 let showVertical = hasExtractedAudio || hasClip
                 Group {
                     if showVertical {
-                        let visibleLanes: CGFloat = 2
+                        // Show all active lanes without hiding the text lane when extracted audio exists
+                        let visibleLanes: CGFloat = 2 + (hasExtractedAudio ? 1 : 0)
                         let visibleHeight = TimelineStyle.videoRowHeight
                             + visibleLanes * TimelineStyle.laneRowHeight
                             + visibleLanes * TimelineStyle.rowSpacing
@@ -179,9 +216,7 @@ struct TimelineContainer: View {
             .simultaneousGesture(
                 TapGesture().onEnded {
                     if !didTapClip {
-                        state.selectedClipId = nil
-                        state.selectedAudioId = nil
-                        state.selectedTextId = nil
+                        state.select(nil)
                         // Explicitly close the Edit toolbar on global deselection
                         DispatchQueue.main.async {
                             NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
@@ -277,14 +312,13 @@ struct TimelineContainer: View {
 
                 // Left handle
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
                     let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
                     leftHandlePrevDX = dx
                     Task { await state.trimAudio(id: a.id, leftDeltaSeconds: deltaSec) }
                 }, onEnd: {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
-                })
+                }, onBegin: { isDraggingLaneItem = true })
                 .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
@@ -292,14 +326,13 @@ struct TimelineContainer: View {
 
                 // Right handle
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
                     let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
                     rightHandlePrevDX = dx
                     Task { await state.trimAudio(id: a.id, rightDeltaSeconds: deltaSec) }
                 }, onEnd: {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
-                })
+                }, onBegin: { isDraggingLaneItem = true })
                 .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
@@ -313,7 +346,14 @@ struct TimelineContainer: View {
                 let pps = state.pixelsPerSecond
                 let startX = (offsetForTime(CMTime(seconds: sT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
                 let endX   = (offsetForTime(CMTime(seconds: eT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + TimelineStyle.laneRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
+                // If an extracted lane is present, the text lane shifts one row down
+                let extra = hasExtractedAudio ? (extractedLaneHeight + TimelineStyle.rowSpacing) : 0
+                let y = TimelineStyle.videoRowHeight
+                    + TimelineStyle.rowSpacing
+                    + extra
+                    + TimelineStyle.laneRowHeight
+                    + TimelineStyle.rowSpacing
+                    + (TimelineStyle.laneRowHeight / 2)
 
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .strokeBorder(Color.white, lineWidth: 2)
@@ -322,28 +362,26 @@ struct TimelineContainer: View {
                     .allowsHitTesting(false)
 
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
                     let deltaSec = Double((dx - leftHandlePrevDX) / max(1, pps))
                     leftHandlePrevDX = dx
                     state.trimText(id: t.id, leftDeltaSeconds: deltaSec)
                 }, onEnd: {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
-                })
+                }, onBegin: { isDraggingLaneItem = true })
                 .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
                 .onDisappear { leftHandlePrevDX = 0; isDraggingLaneItem = false }
 
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
-                    if !isDraggingLaneItem { isDraggingLaneItem = true }
                     let deltaSec = Double((dx - rightHandlePrevDX) / max(1, pps))
                     rightHandlePrevDX = dx
                     state.trimText(id: t.id, rightDeltaSeconds: deltaSec)
                 }, onEnd: {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
-                })
+                }, onBegin: { isDraggingLaneItem = true })
                 .highPriorityGesture(DragGesture(minimumDistance: 0))
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
@@ -499,8 +537,9 @@ struct TimelineContainer: View {
             )
             .offset(x: offsetX)
             .contentShape(Rectangle())
-            .highPriorityGesture(TapGesture().onEnded { onTap() })
-            .simultaneousGesture(DragGesture(minimumDistance: 8)) // allow normal scroll when user drags without long-press
+            .highPriorityGesture(
+                TapGesture().onEnded(onTap)
+            )
             .gesture(
                 LongPressGesture(minimumDuration: 0.25)
                     .sequenced(before: DragGesture(minimumDistance: 1))
@@ -550,8 +589,9 @@ struct TimelineContainer: View {
                 )
                 .offset(x: offsetX)
                 .contentShape(Rectangle())
-                .highPriorityGesture(TapGesture().onEnded { onTap() })
-                .simultaneousGesture(DragGesture(minimumDistance: 8))
+                .highPriorityGesture(
+                    TapGesture().onEnded(onTap)
+                )
                 .gesture(
                     LongPressGesture(minimumDuration: 0.25)
                         .sequenced(before: DragGesture(minimumDistance: 1))
@@ -653,19 +693,12 @@ struct TimelineContainer: View {
                             RoundedRectangle(cornerRadius: 4)
                                 .stroke(Color.clear, lineWidth: 0)
                         )
-                    HStack(spacing: 0) {
-                        let count = max(1, clip.thumbnails.count)
-                        ForEach(0..<count, id: \.self) { i in
-                            let img = i < clip.thumbnails.count ? clip.thumbnails[i] : UIImage()
-                            Image(uiImage: img)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: max(24, state.pixelsPerSecond), height: TimelineStyle.videoRowHeight)
-                                .clipped()
-                        }
-                    }
-                    .frame(width: clipWidth, height: TimelineStyle.videoRowHeight, alignment: .leading)
-                    .clipped()
+                    FilmstripView(
+                        thumbnails: clip.thumbnails,
+                        duration: clip.effectiveDuration,
+                        pps: state.pixelsPerSecond,
+                        rowHeight: TimelineStyle.videoRowHeight
+                    )
                     // Blue bottom bar to match CapCut visual
                     if state.selectedClipId == clip.id {
                         Rectangle()
@@ -681,18 +714,20 @@ struct TimelineContainer: View {
                 .contentShape(Rectangle())
                 .highPriorityGesture(
                     TapGesture().onEnded {
-                        let wasSelected = (state.selectedClipId == clip.id)
-                        state.selectedClipId = wasSelected ? nil : clip.id
-                        if !wasSelected {
-                            state.selectedAudioId = nil
-                            state.selectedTextId = nil
-                            // Ensure toolbar opens immediately on first selection
+                        let isSelected = (state.selectedClipId == clip.id)
+                        let newSel: EditorState.Selection? = isSelected ? nil : .clip(clip.id)
+                        state.select(newSel)
+                        if newSel != nil {
                             DispatchQueue.main.async {
                                 NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
                             }
                         }
                         didTapClip = true
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        // Opportunistically refresh grid if needed for this clip
+                        if let idx = state.clips.firstIndex(where: { $0.id == clip.id }) {
+                            state.ensureFilmstripFreshness(forClipAt: idx)
+                        }
                     }
                 )
             }
@@ -731,7 +766,10 @@ struct TimelineContainer: View {
                             .contentShape(Rectangle())
                             .onTapGesture { onAddAudio?() }
                     } else {
-                        ForEach(Array(state.audioTracks.enumerated()).filter { !$0.element.isExtracted }, id: \.element.id) { _, t in
+                        let regularTracks = state.audioTracks
+                            .filter { !$0.isExtracted }
+                            .sorted { CMTimeGetSeconds($0.start + $0.trimStart) < CMTimeGetSeconds($1.start + $1.trimStart) }
+                        ForEach(regularTracks, id: \.id) { t in
                             let startX: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.start + t.trimStart))) * state.pixelsPerSecond
                             let width: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.trimmedDuration))) * state.pixelsPerSecond
                             AudioStripPill(
@@ -743,16 +781,18 @@ struct TimelineContainer: View {
                                 isSelected: state.selectedAudioId == t.id,
                                 pps: state.pixelsPerSecond,
                                 onTap: {
-                                    let was = (state.selectedAudioId == t.id)
-                                    state.selectedAudioId = was ? nil : t.id
-                                    if !was {
-                                        state.selectedClipId = nil
-                                        state.selectedTextId = nil
+                                    didTapClip = true
+                                    let isSel = (state.selectedAudioId == t.id)
+                                    state.select(isSel ? nil : .audio(t.id))
+                                    if !isSel {
                                         DispatchQueue.main.async {
                                             NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
                                         }
+                                    } else {
+                                        DispatchQueue.main.async {
+                                            NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
+                                        }
                                     }
-                                    didTapClip = true
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                 },
                                 onBeginMove: {
@@ -778,6 +818,7 @@ struct TimelineContainer: View {
                                     Task { await state.trimAudio(id: t.id, rightDeltaSeconds: dxSec) }
                                 }
                             )
+                            .zIndex(Double(CMTimeGetSeconds(t.start + t.trimStart)))
                         }
                     }
                 }
@@ -833,7 +874,7 @@ struct TimelineContainer: View {
                             .contentShape(Rectangle())
                             .onTapGesture { onAddText?() }
                     } else {
-                        ForEach(state.textOverlays, id: \.id) { t in
+                        ForEach(state.textOverlays.sorted { CMTimeGetSeconds($0.effectiveStart) < CMTimeGetSeconds($1.effectiveStart) }, id: \.id) { t in
                             let startX: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.effectiveStart))) * state.pixelsPerSecond
                             let width: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.trimmedDuration))) * state.pixelsPerSecond
                             TextStripPill(
@@ -844,16 +885,15 @@ struct TimelineContainer: View {
                                 isSelected: state.selectedTextId == t.id,
                                 pps: state.pixelsPerSecond,
                                 onTap: {
-                                    let was = (state.selectedTextId == t.id)
-                                    state.selectedTextId = was ? nil : t.id
-                                    if !was {
-                                        state.selectedClipId = nil
-                                        state.selectedAudioId = nil
-                                        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
-                                    }
                                     didTapClip = true
+                                    let isSel = (state.selectedTextId == t.id)
+                                    state.select(isSel ? nil : .text(t.id))
+                                    if !isSel {
+                                        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                                    } else {
+                                        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) }
+                                    }
                                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    if was { DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) } }
                                 },
                                 onBeginMove: {
                                     if draggingTextId != t.id {
@@ -870,6 +910,7 @@ struct TimelineContainer: View {
                                 onTrimLeft: { dxSec in state.trimText(id: t.id, leftDeltaSeconds: dxSec) },
                                 onTrimRight: { dxSec in state.trimText(id: t.id, rightDeltaSeconds: dxSec) }
                             )
+                            .zIndex(Double(CMTimeGetSeconds(t.effectiveStart)))
                         }
                     }
                 }
@@ -905,6 +946,7 @@ struct TimelineContainer: View {
                     headerRuler(geo)
                     scrollerAndOverlays(geo)
                 }
+                
 
                 // Centered playhead + HUD
                 Rectangle()
@@ -993,7 +1035,7 @@ struct TimelineContainer: View {
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
                     .padding(.top, 0)
-                    .offset(y: 5 - verticalLift)
+                    .offset(y: 10 - verticalLift)
                     .zIndex(1000)
                     .allowsHitTesting(false)
             }
@@ -1054,7 +1096,10 @@ struct TimelineContainer: View {
             Rectangle().fill(Color.clear)
                 .frame(width: timelineWidth, height: extractedLaneHeight)
                 .overlay(alignment: .topLeading) {
-                    ForEach(state.audioTracks.filter { $0.isExtracted }, id: \.id) { t in
+                    let extractedTracks = state.audioTracks
+                        .filter { $0.isExtracted }
+                        .sorted { CMTimeGetSeconds($0.start + $0.trimStart) < CMTimeGetSeconds($1.start + $1.trimStart) }
+                    ForEach(extractedTracks, id: \.id) { t in
                         let startX: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.start + t.trimStart))) * state.pixelsPerSecond
                         let width: CGFloat = CGFloat(max(0, CMTimeGetSeconds(t.trimmedDuration))) * state.pixelsPerSecond
                         ExtractedAudioStrip(width: width,
@@ -1063,18 +1108,21 @@ struct TimelineContainer: View {
                                             title: t.displayName,
                                             samples: t.waveformSamples,
                                             onTap: {
-                                                let was = (state.selectedAudioId == t.id)
-                                                state.selectedAudioId = was ? nil : t.id
-                                                if !was {
-                                                    state.selectedClipId = nil
-                                                    state.selectedTextId = nil
+                                                didTapClip = true
+                                                let isSel = (state.selectedAudioId == t.id)
+                                                state.select(isSel ? nil : .audio(t.id))
+                                                if !isSel {
                                                     DispatchQueue.main.async {
                                                         NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
                                                     }
+                                                } else {
+                                                    DispatchQueue.main.async {
+                                                        NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
+                                                    }
                                                 }
-                                                didTapClip = true
                                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                             })
+                        .zIndex(Double(CMTimeGetSeconds(t.start + t.trimStart)))
                     }
                 }
 
@@ -1114,7 +1162,9 @@ struct TimelineContainer: View {
             )
             .offset(x: offsetX)
             .contentShape(Rectangle())
-            .highPriorityGesture(TapGesture().onEnded { onTap() })
+            .highPriorityGesture(
+                TapGesture().onEnded(onTap)
+            )
         }
     }
 
