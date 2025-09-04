@@ -130,10 +130,11 @@ struct TimelineContainer: View {
                 let showVertical = hasExtractedAudio || hasClip
                 Group {
                     if showVertical {
-                        let visibleLanes: CGFloat = 2
+                        // Include extracted audio lane when present so the text lane stays visible
+                        let belowCount: CGFloat = 2 + (hasExtractedAudio ? 1 : 0)
                         let visibleHeight = TimelineStyle.videoRowHeight
-                            + visibleLanes * TimelineStyle.laneRowHeight
-                            + visibleLanes * TimelineStyle.rowSpacing
+                            + belowCount * TimelineStyle.laneRowHeight
+                            + belowCount * TimelineStyle.rowSpacing
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(spacing: TimelineStyle.rowSpacing) {
                                 videoRow(geo)
@@ -309,7 +310,14 @@ struct TimelineContainer: View {
                 let pps = state.pixelsPerSecond
                 let startX = (offsetForTime(CMTime(seconds: sT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
                 let endX   = (offsetForTime(CMTime(seconds: eT, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
-                let y = TimelineStyle.videoRowHeight + TimelineStyle.rowSpacing + TimelineStyle.laneRowHeight + TimelineStyle.rowSpacing + (TimelineStyle.laneRowHeight / 2)
+                // If an extracted audio lane exists, the text lane is one row lower
+                let extra = hasExtractedAudio ? (extractedLaneHeight + TimelineStyle.rowSpacing) : 0
+                let y = TimelineStyle.videoRowHeight
+                    + TimelineStyle.rowSpacing
+                    + extra
+                    + TimelineStyle.laneRowHeight
+                    + TimelineStyle.rowSpacing
+                    + (TimelineStyle.laneRowHeight / 2)
 
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .strokeBorder(Color.white, lineWidth: 2)
