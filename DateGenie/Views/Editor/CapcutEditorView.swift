@@ -6,8 +6,10 @@ import PhotosUI
 
 struct CapcutEditorView: View {
     let url: URL
+    let initialGenerating: Bool
 
     @StateObject private var state: EditorState
+    @State private var isGeneratingAd: Bool
     @State private var canvasRect: CGRect = .zero
     @State private var showTextPanel: Bool = false
     @State private var showCaptionPanel: Bool = false
@@ -31,9 +33,15 @@ struct CapcutEditorView: View {
     @State private var preservePitchToggle: Bool = true
     
 
-    init(url: URL) {
+    init(url: URL, initialGenerating: Bool = false) {
         self.url = url
-        _state = StateObject(wrappedValue: EditorState(asset: AVURLAsset(url: url)))
+        self.initialGenerating = initialGenerating
+        let asset: AVAsset = {
+            if url.isFileURL, url.path == "/dev/null" { return AVMutableComposition() }
+            return AVURLAsset(url: url)
+        }()
+        _state = StateObject(wrappedValue: EditorState(asset: asset))
+        _isGeneratingAd = State(initialValue: initialGenerating || (url.isFileURL && url.path == "/dev/null"))
     }
 
     // MARK: - Overlay media import
@@ -112,14 +120,30 @@ struct CapcutEditorView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, max(0, safeTopInset() - 36))
-                .offset(y: -92) // nudge X/Export down by ~8pt from previous
+                .offset(y: -52) // moved ~40pt down from previous position
 
-                // Track canvas
-                EditorTrackArea(state: state, canvasRect: $canvasRect)
-                    .frame(height: 280)
-                    .padding(.top, -120)   // move canvas up further by an additional ~20pt
-                    .padding(.bottom, 120) // compensate so overall layout height stays the same
-                    .padding(.horizontal, 0)
+                // Track canvas + generating overlay
+                ZStack {
+                    EditorTrackArea(state: state, canvasRect: $canvasRect)
+                    if isGeneratingAd && state.clips.isEmpty {
+                        VStack(spacing: 10) {
+                            GIFView(dataAssetName: "kettle_thinking")
+                                .frame(width: 160, height: 160)
+                            HStack(spacing: 6) {
+                                Text("Generating Ad Clip")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+                                ThreeDotsLoading()
+                            }
+                        }
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                    }
+                }
+                .frame(height: 280)
+                .padding(.top, -75)
+                .padding(.bottom, 75)
+                .padding(.horizontal, 0)
 
                 // Middle controls (play + time) centered in free space between canvas and bottom toolbar
                 Spacer()
@@ -130,7 +154,7 @@ struct CapcutEditorView: View {
                                     .foregroundColor(.white)
                                     .font(.system(size: 18, weight: .bold))
                             }
-                            .offset(y: -20)
+                            .offset(y: 10) // moved play button ~30pt lower
                             HStack {
                                 Text(timeLabel(state.displayTime, duration: state.duration))
                                     .font(.system(size: 16, weight: .semibold))
@@ -149,15 +173,18 @@ struct CapcutEditorView: View {
             // Bottom overlay: timeline above toolbar (keyboard should cover this)
             .overlay(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    TimelineContainer(state: state,
-                                      onAddAudio: { showAudioImporter = true },
-                                      onAddText: {
-                                          state.insertCenteredTextAndSelect(canvasRect: canvasRect)
-                                          isTyping = true
-                                          dockFocused = true
-                                          withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
-                                      })
-                        .frame(height: 72 + 8 + 32 + 120)
+                    ZStack(alignment: .leading) {
+                        TimelineContainer(state: state,
+                                          onAddAudio: { showAudioImporter = true },
+                                          onAddText: {
+                                              state.insertCenteredTextAndSelect(canvasRect: canvasRect)
+                                              isTyping = true
+                                              dockFocused = true
+                                              withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+                                          })
+                        // Timeline no longer shows the generating pill; canvas overlay handles it
+                    }
+                    .frame(height: 72 + 8 + 32 + 120)
                     // Inline Volume dock sits between timeline and toolbar to avoid intercepting timeline gestures
                     if showVolumeDock {
                         HStack(spacing: 12) {
@@ -350,6 +377,18 @@ struct CapcutEditorView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("CloseEditToolbarForDeselection"))) { _ in
             withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
         }
+        // New: AI ad generation lifecycle
+        .onReceive(NotificationCenter.default.publisher(for: .AdGenBegin)) { _ in
+            isGeneratingAd = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AdGenComplete)) { note in
+            if let u = (note.userInfo?["url"] as? URL) {
+                Task {
+                    await state.appendClip(url: u)
+                    await MainActor.run { isGeneratingAd = false }
+                }
+            }
+        }
         // Device audio file importer
         .fileImporter(isPresented: $showAudioImporter,
                       allowedContentTypes: [.audio],
@@ -514,6 +553,20 @@ struct CapcutEditorView: View {
     }
 }
 
+// Simple three-dot loading indicator (white)
+private struct ThreeDotsLoading: View {
+    @State private var phase: Int = 0
+    private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(Color.white).frame(width: 5, height: 5).opacity(phase == 0 ? 1 : 0.3)
+            Circle().fill(Color.white).frame(width: 5, height: 5).opacity(phase == 1 ? 1 : 0.3)
+            Circle().fill(Color.white).frame(width: 5, height: 5).opacity(phase == 2 ? 1 : 0.3)
+        }
+        .onReceive(timer) { _ in phase = (phase + 1) % 3 }
+    }
+}
+
 // EditorTrackArea is defined in Views/Editor/Tracks/EditorTrackArea.swift
 
 // MARK: - EditorState (minimal for playback)
@@ -593,9 +646,13 @@ final class EditorState: ObservableObject {
     }
 
     func preparePlayer() {
-        // Seed the timeline with the initial asset as the first clip
-        let first = Clip(url: (asset as? AVURLAsset)?.url ?? URL(fileURLWithPath: "/dev/null"), asset: asset, duration: asset.duration)
-        clips = [first]
+        // Seed timeline only if asset has duration (> 0). Placeholder uses empty composition.
+        if let urlAsset = asset as? AVURLAsset, CMTimeGetSeconds(urlAsset.duration) > 0.0001 {
+            let first = Clip(url: urlAsset.url, asset: asset, duration: asset.duration)
+            clips = [first]
+        } else {
+            clips = []
+        }
         Task {
             await rebuildComposition()
             await generateThumbnails(forClipAt: 0)
@@ -1662,6 +1719,8 @@ extension EditorState {
             selectedTextId = dup.id
             await rebuildCompositionForPreview()
             followMode = .keepVisible
+            // Center timeline near the duplicate's start for immediate accessibility
+            displayTime = CMTime(seconds: max(0, CMTimeGetSeconds(dup.effectiveStart)), preferredTimescale: 600)
             return
         }
 
@@ -1685,6 +1744,7 @@ extension EditorState {
             selectedMediaId = dup.id
             await rebuildCompositionForPreview()
             followMode = .keepVisible
+            displayTime = CMTime(seconds: max(0, CMTimeGetSeconds(dup.effectiveStart)), preferredTimescale: 600)
             return
         }
 
@@ -1707,6 +1767,7 @@ extension EditorState {
             selectedAudioId = dup.id
             await rebuildCompositionForPreview()
             followMode = .keepVisible
+            displayTime = CMTime(seconds: max(0, CMTimeGetSeconds(dup.start + dup.trimStart)), preferredTimescale: 600)
             return
         }
 
@@ -1728,6 +1789,7 @@ extension EditorState {
             await generateThumbnails(forClipAt: insertIndex)
             selectedClipId = dup.id
             followMode = .keepVisible
+            displayTime = CMTime(seconds: max(0, CMTimeGetSeconds(dup.trimStart)), preferredTimescale: 600)
             return
         }
     }

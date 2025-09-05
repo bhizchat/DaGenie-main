@@ -66,7 +66,7 @@ struct TimelineContainer: View {
     // Selection styling (CapCut-like)
     private let selectionPadH: CGFloat = 8
     private let selectionPadV: CGFloat = 6
-    private let selectionHandleWidth: CGFloat = 35
+    private let selectionHandleWidth: CGFloat = 24
     private let selectionHandleCorner: CGFloat = 0
     // Haptics for snapping
     private let selectionHaptics: UISelectionFeedbackGenerator = UISelectionFeedbackGenerator()
@@ -83,6 +83,12 @@ struct TimelineContainer: View {
     // Media drag helpers
     @State private var draggingMediaId: UUID? = nil
     @State private var mediaDragStartSeconds: Double = 0
+    // Media move gesture (pickup → drag) helpers
+    @GestureState private var mediaDragDX: CGFloat = 0
+    @State private var mediaPickup: (start: Double, pps: CGFloat)? = nil
+    @State private var mediaSnapHint: SnapTarget? = nil
+    // Trim gating: keep handles non-blocking unless actively trimming
+    @State private var isTrimming: Bool = false
     // Auto-scroll while trimming near edges
     @State private var autoScrollLink: CADisplayLink? = nil
     @State private var autoScrollDir: CGFloat = 0
@@ -187,6 +193,7 @@ struct TimelineContainer: View {
                                           geo: geo)
                     }
                 )
+                .scrollDisabled(isDraggingLaneItem)
                 // Keep overlay alignment coherent during programmatic follow while playing
                 .onChange(of: state.displayTime) { _ in
                     if !isScrollInteracting {
@@ -198,7 +205,7 @@ struct TimelineContainer: View {
                 }
             }
             .coordinateSpace(name: "timelineScroll")
-            .simultaneousGesture(
+            .gesture(
                 TapGesture().onEnded {
                     if !didTapClip {
                         state.selectedClipId = nil
@@ -224,50 +231,38 @@ struct TimelineContainer: View {
                 let endX   = (offsetForTime(CMTime(seconds: e, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
                 let selW   = endX - startX
 
-                Group {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.white, lineWidth: 3)
-                        .frame(width: selW, height: TimelineStyle.videoRowHeight)
-                        .position(x: startX + selW / 2,
-                                  y: TimelineStyle.videoRowHeight / 2)
-                        .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+                // Frame stroke should not intercept taps
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.white, lineWidth: 3)
+                    .frame(width: selW, height: TimelineStyle.videoRowHeight)
+                    .position(x: startX + selW / 2,
+                              y: TimelineStyle.videoRowHeight / 2)
+                    .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+                    .allowsHitTesting(false)
 
-                    if !state.isPlaying {
-                        // Left handle
-                        ZStack {
-                            RoundedRectangle(cornerRadius: selectionHandleCorner)
-                                .fill(Color.white)
-                                .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.black.opacity(0.9))
-                                        .frame(width: selectionHandleWidth * 0.35,
-                                               height: max(8, TimelineStyle.videoRowHeight - 12))
-                                )
-                        }
+                if !state.isPlaying {
+                    // Left handle (tap selects previous neighbor ending at s)
+                    EdgeHandle(height: TimelineStyle.videoRowHeight,
+                               width: selectionHandleWidth,
+                               onDrag: { _ in },
+                               onEnd: { },
+                               onBegin: nil,
+                               onTap: { selectClipNeighbor(atEdgeTime: s, isRightEdge: false) })
                         .position(x: startX - selectionHandleWidth / 2,
                                   y: TimelineStyle.videoRowHeight / 2)
                         .zIndex(200)
 
-                        // Right handle
-                        ZStack {
-                            RoundedRectangle(cornerRadius: selectionHandleCorner)
-                                .fill(Color.white)
-                                .frame(width: selectionHandleWidth, height: TimelineStyle.videoRowHeight - 4)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.black.opacity(0.9))
-                                        .frame(width: selectionHandleWidth * 0.35,
-                                               height: max(8, TimelineStyle.videoRowHeight - 12))
-                                )
-                        }
+                    // Right handle (tap selects next neighbor starting at e)
+                    EdgeHandle(height: TimelineStyle.videoRowHeight,
+                               width: selectionHandleWidth,
+                               onDrag: { _ in },
+                               onEnd: { },
+                               onBegin: nil,
+                               onTap: { selectClipNeighbor(atEdgeTime: e, isRightEdge: true) })
                         .position(x: endX + selectionHandleWidth / 2,
                                   y: TimelineStyle.videoRowHeight / 2)
                         .zIndex(200)
-                    }
                 }
-                // Ensure overlay does not intercept timeline gestures
-                .allowsHitTesting(false)
             }
 
             // Global overlay for AUDIO selection (absolute coordinates)
@@ -302,6 +297,7 @@ struct TimelineContainer: View {
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
                     if !isDraggingLaneItem {
                         isDraggingLaneItem = true
+                        isTrimming = true
                         state.beginAudioTrimGesture()
                         selectionHaptics.prepare()
                         // Reset prev to avoid stale buzz; we use cumulative dx model
@@ -322,17 +318,20 @@ struct TimelineContainer: View {
                 }, onEnd: {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    isTrimming = false
                     state.endAudioTrimGesture()
                     stopAutoScroll()
-                })
+                }, onBegin: nil, onTap: { selectAudioNeighbor(atEdgeTime: sA, isRightEdge: false, isExtracted: a.isExtracted) })
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
+                .allowsHitTesting(isTrimming)
                 .onDisappear { leftHandlePrevDX = 0 }
 
                 // Right handle — cumulative dx + snap-enter haptics + edge auto-scroll
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
                     if !isDraggingLaneItem {
                         isDraggingLaneItem = true
+                        isTrimming = true
                         state.beginAudioTrimGesture()
                         selectionHaptics.prepare()
                         rightHandlePrevDX = 0
@@ -349,11 +348,13 @@ struct TimelineContainer: View {
                 }, onEnd: {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    isTrimming = false
                     state.endAudioTrimGesture()
                     stopAutoScroll()
-                })
+                }, onBegin: nil, onTap: { selectAudioNeighbor(atEdgeTime: eA, isRightEdge: true, isExtracted: a.isExtracted) })
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
+                .allowsHitTesting(isTrimming)
                 .onDisappear { rightHandlePrevDX = 0 }
             }
 
@@ -383,6 +384,7 @@ struct TimelineContainer: View {
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
                     if !isDraggingLaneItem {
                         isDraggingLaneItem = true
+                        isTrimming = true
                         state.beginTextTrimGesture()
                         selectionHaptics.prepare()
                         // capture baseline
@@ -414,18 +416,21 @@ struct TimelineContainer: View {
                 }, onEnd: {
                     leftHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    isTrimming = false
                     textLeftSnapshot = nil
                     textLastSnapped = nil
                     state.endTextTrimGesture()
                     stopAutoScroll()
-                })
+                }, onBegin: nil, onTap: { selectTextNeighbor(atEdgeTime: sT, isRightEdge: false) })
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
+                .allowsHitTesting(isTrimming)
                 .onDisappear { leftHandlePrevDX = 0; isDraggingLaneItem = false }
 
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
                     if !isDraggingLaneItem {
                         isDraggingLaneItem = true
+                        isTrimming = true
                         state.beginTextTrimGesture()
                         selectionHaptics.prepare()
                         let effEnd = max(0, eT)
@@ -453,13 +458,15 @@ struct TimelineContainer: View {
                 }, onEnd: {
                     rightHandlePrevDX = 0
                     isDraggingLaneItem = false
+                    isTrimming = false
                     textRightSnapshot = nil
                     textLastSnapped = nil
                     state.endTextTrimGesture()
                     stopAutoScroll()
-                })
+                }, onBegin: nil, onTap: { selectTextNeighbor(atEdgeTime: eT, isRightEdge: true) })
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
+                .allowsHitTesting(isTrimming)
                 .onDisappear { rightHandlePrevDX = 0; isDraggingLaneItem = false }
             }
 
@@ -488,6 +495,7 @@ struct TimelineContainer: View {
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
                     if !isDraggingLaneItem {
                         isDraggingLaneItem = true
+                        isTrimming = true
                         state.beginMediaTrimGesture()
                         selectionHaptics.prepare()
                         mediaLeftSnapshot = MediaHandleSnapshot(start: sM, pps: pps)
@@ -509,17 +517,20 @@ struct TimelineContainer: View {
                     updateAutoScroll(forHandleX: liveStartX - selectionHandleWidth/2, viewWidth: geo.size.width)
                 }, onEnd: {
                     isDraggingLaneItem = false
+                    isTrimming = false
                     mediaLeftSnapshot = nil
                     mediaLastSnapped = nil
                     state.endMediaTrimGesture()
                     stopAutoScroll()
-                })
+                }, onBegin: nil, onTap: { selectMediaNeighbor(atEdgeTime: sM, isRightEdge: false) })
                 .position(x: startX - selectionHandleWidth/2, y: y)
                 .zIndex(220)
+                .allowsHitTesting(isTrimming)
 
                 EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
                     if !isDraggingLaneItem {
                         isDraggingLaneItem = true
+                        isTrimming = true
                         state.beginMediaTrimGesture()
                         selectionHaptics.prepare()
                         mediaRightSnapshot = MediaHandleSnapshot(start: eM, pps: pps)
@@ -540,13 +551,15 @@ struct TimelineContainer: View {
                     updateAutoScroll(forHandleX: liveEndX + selectionHandleWidth/2, viewWidth: geo.size.width)
                 }, onEnd: {
                     isDraggingLaneItem = false
+                    isTrimming = false
                     mediaRightSnapshot = nil
                     mediaLastSnapped = nil
                     state.endMediaTrimGesture()
                     stopAutoScroll()
-                })
+                }, onBegin: nil, onTap: { selectMediaNeighbor(atEdgeTime: eM, isRightEdge: true) })
                 .position(x: endX + selectionHandleWidth/2, y: y)
                 .zIndex(220)
+                .allowsHitTesting(isTrimming)
             }
         }
         // Align stacked rows (and overlay) with playhead like before
@@ -562,18 +575,22 @@ struct TimelineContainer: View {
         let onDrag: (CGFloat) -> Void // dx in points
         let onEnd: () -> Void         // reset bookkeeping per gesture
         let onBegin: (() -> Void)?
+        let onTap: (() -> Void)?
         @GestureState private var dx: CGFloat = 0
         @State private var didBegin: Bool = false
+        @State private var maxAbsTranslation: CGFloat = 0
         init(height: CGFloat,
              width: CGFloat,
              onDrag: @escaping (CGFloat) -> Void,
              onEnd: @escaping () -> Void,
-             onBegin: (() -> Void)? = nil) {
+             onBegin: (() -> Void)? = nil,
+             onTap: (() -> Void)? = nil) {
             self.height = height
             self.width = width
             self.onDrag = onDrag
             self.onEnd = onEnd
             self.onBegin = onBegin
+            self.onTap = onTap
         }
         var body: some View {
             ZStack {
@@ -593,9 +610,16 @@ struct TimelineContainer: View {
                     .updating($dx) { v, st, _ in st = v.translation.width }
                     .onChanged { v in
                         if !didBegin { didBegin = true; onBegin?() }
+                        maxAbsTranslation = max(maxAbsTranslation, abs(v.translation.width))
                         onDrag(v.translation.width)
                     }
-                    .onEnded { _ in onEnd() }
+                    .onEnded { _ in
+                        // Treat a very small translation as a tap to enable neighbor selection
+                        if maxAbsTranslation < 6 { onTap?() }
+                        maxAbsTranslation = 0
+                        didBegin = false
+                        onEnd()
+                    }
             )
         }
     }
@@ -1381,66 +1405,12 @@ struct TimelineContainer: View {
                 .frame(width: timelineWidth, height: TimelineStyle.laneRowHeight)
                 .overlay(alignment: .topLeading) {
                     ForEach(Array(state.mediaOverlays.enumerated()), id: \.element.id) { _, m in
-                        let pps = state.pixelsPerSecond
-                        let s = max(0, CMTimeGetSeconds(m.effectiveStart))
-                        let w = max(0, CMTimeGetSeconds(m.trimmedDuration))
+                        let pps: CGFloat = state.pixelsPerSecond
+                        let s: Double = max(0, CMTimeGetSeconds(m.effectiveStart))
+                        let w: Double = max(0, CMTimeGetSeconds(m.trimmedDuration))
                         let startX: CGFloat = CGFloat(s) * pps
                         let width: CGFloat  = CGFloat(w) * pps
-
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.green.opacity(0.18))
-                            .frame(width: max(12, width), height: TimelineStyle.laneRowHeight)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(state.selectedMediaId == m.id ? Color.white : Color.clear, lineWidth: 2)
-                            )
-                            .offset(x: startX)
-                            .contentShape(Rectangle())
-                            .highPriorityGesture(TapGesture().onEnded {
-                                let was = (state.selectedMediaId == m.id)
-                                state.selectedMediaId = was ? nil : m.id
-                                if !was {
-                                    state.selectedClipId = nil
-                                    state.selectedAudioId = nil
-                                    state.selectedTextId = nil
-                                    DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
-                                } else {
-                                    DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) }
-                                }
-                                didTapClip = true
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            })
-                            .simultaneousGesture(DragGesture(minimumDistance: 8))
-                            .gesture(
-                                LongPressGesture(minimumDuration: 0.25)
-                                    .sequenced(before: DragGesture(minimumDistance: 1))
-                                    .onChanged { value in
-                                        switch value {
-                                        case .first(true):
-                                            if draggingMediaId != m.id {
-                                                draggingMediaId = m.id
-                                                mediaDragStartSeconds = s
-                                                isDraggingLaneItem = true
-                                                state.selectedMediaId = m.id
-                                                state.selectedClipId = nil
-                                                state.selectedAudioId = nil
-                                                state.selectedTextId = nil
-                                                DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
-                                            }
-                                        case .second(true, let drag?):
-                                            let deltaSec = Double(drag.translation.width / max(1, pps))
-                                            let proposed = mediaDragStartSeconds + deltaSec
-                                            let snapped = nearestSnap(to: proposed, pps: pps, excludeTextId: nil)
-                                            state.moveMedia(id: m.id, toStartSeconds: snapped.time)
-                                        default: break
-                                        }
-                                    }
-                                    .onEnded { _ in
-                                        draggingMediaId = nil
-                                        isDraggingLaneItem = false
-                                    }
-                            )
-
+                        mediaPill(m: m, s: s, width: width, startX: startX, pps: pps, geo: geo)
                         // Trim handles for media are rendered in the global overlay below (consistent with text)
                     }
                 }
@@ -1514,6 +1484,112 @@ struct TimelineContainer: View {
     }
 }
 
+// MARK: - Media overlay pill helpers (extracted to reduce type-check depth)
+private extension TimelineContainer {
+    @ViewBuilder
+    func mediaPill(m: TimedMediaOverlay,
+                   s: Double,
+                   width: CGFloat,
+                   startX: CGFloat,
+                   pps: CGFloat,
+                   geo: GeometryProxy) -> some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(Color.green.opacity(0.18))
+            .frame(width: max(12, width), height: TimelineStyle.laneRowHeight)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(state.selectedMediaId == m.id ? Color.white : Color.clear, lineWidth: 2)
+            )
+            .offset(x: startX)
+            .contentShape(Rectangle())
+            .gesture(TapGesture().onEnded { handleMediaTap(m.id) })
+            .highPriorityGesture(mediaMoveGesture(for: m, startSeconds: s, pps: pps, geo: geo))
+    }
+
+    func handleMediaTap(_ id: UUID) {
+        let was = (state.selectedMediaId == id)
+        state.selectedMediaId = was ? nil : id
+        if !was {
+            state.selectedClipId = nil
+            state.selectedAudioId = nil
+            state.selectedTextId = nil
+            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+        } else {
+            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) }
+        }
+        didTapClip = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    func mediaMoveGesture(for m: TimedMediaOverlay,
+                          startSeconds s: Double,
+                          pps: CGFloat,
+                          geo: GeometryProxy) -> AnyGesture<Void> {
+        let pickup = LongPressGesture(minimumDuration: 0.18)
+        let drag = DragGesture(minimumDistance: 0, coordinateSpace: .named("timelineScroll"))
+            .updating($mediaDragDX) { v, st, _ in st = v.translation.width }
+            .onChanged { v in handleMediaMoveChanged(v, start: s, pps: pps, id: m.id, geo: geo) }
+            .onEnded { v in handleMediaMoveEnded(v, start: s, pps: pps, id: m.id) }
+        let seq = pickup.sequenced(before: drag).map { _ in () }
+        return AnyGesture(seq)
+    }
+
+    func handleMediaMoveChanged(_ v: DragGesture.Value,
+                                start s: Double,
+                                pps: CGFloat,
+                                id: UUID,
+                                geo: GeometryProxy) {
+        if mediaPickup == nil {
+            mediaPickup = (start: s, pps: pps)
+            isDraggingLaneItem = true
+            state.selectedMediaId = id
+            state.selectedClipId = nil
+            state.selectedAudioId = nil
+            state.selectedTextId = nil
+        }
+        guard let pu = mediaPickup else { return }
+        let dx: CGFloat = v.translation.width
+        let invPPS: CGFloat = 1 / max(1, pu.pps)
+        let proposed: Double = pu.start + Double(dx * invPPS)
+        withAnimation(nil) {
+            state.moveMedia(id: id, toStartSeconds: proposed)
+        }
+        // Snap hint
+        let snap = nearestSnap(to: proposed, pps: pu.pps, excludeTextId: nil)
+        if let hit = snap.hit {
+            if hit.time != mediaSnapHint?.time || hit.kind != mediaSnapHint?.kind {
+                selectionHaptics.selectionChanged()
+                mediaSnapHint = hit
+            }
+        } else {
+            mediaSnapHint = nil
+        }
+        // Edge auto-scroll
+        let ox: CGFloat = offsetForTime(CMTime(seconds: proposed, preferredTimescale: 600), width: geo.size.width, pps: pu.pps)
+        let itemX: CGFloat = (ox + geo.size.width/2) - observedOffsetX
+        updateAutoScroll(forHandleX: itemX, viewWidth: geo.size.width)
+    }
+
+    func handleMediaMoveEnded(_ v: DragGesture.Value,
+                              start s: Double,
+                              pps: CGFloat,
+                              id: UUID) {
+        let pu = mediaPickup ?? (start: s, pps: pps)
+        let dx: CGFloat = v.translation.width
+        let invPPS: CGFloat = 1 / max(1, pu.pps)
+        let proposed: Double = pu.start + Double(dx * invPPS)
+        let snapped = nearestSnap(to: proposed, pps: pu.pps, excludeTextId: nil)
+        withAnimation(nil) {
+            state.moveMedia(id: id, toStartSeconds: state.quantizeToFrame(snapped.time))
+        }
+        mediaPickup = nil
+        mediaSnapHint = nil
+        draggingMediaId = nil
+        isDraggingLaneItem = false
+        stopAutoScroll()
+    }
+}
+
 // MARK: - ScrollView content offset bridging
 // MARK: - Snapping helpers
 private struct SnapTarget: Hashable {
@@ -1569,6 +1645,110 @@ private extension TimelineContainer {
         }
         if let (hit, _) = best { return (hit.time, hit) }
         return (proposed, nil)
+    }
+
+    // MARK: - Neighbor selection helpers (enable tapping handles to select adjacent items)
+    private func approximatelyEquals(_ a: Double, _ b: Double, tol: Double = 1.0/300.0) -> Bool {
+        abs(a - b) <= tol
+    }
+
+    private func selectClipNeighbor(atEdgeTime edge: Double, isRightEdge: Bool) {
+        let edgeQ = state.quantizeToFrame(edge)
+        if isRightEdge {
+            // Next clip whose start equals current end
+            if let next = state.clips.first(where: { c in
+                let s = state.startSeconds(for: c.id) ?? 0
+                return approximatelyEquals(state.quantizeToFrame(s), edgeQ)
+            }) {
+                state.selectedClipId = next.id
+                state.selectedAudioId = nil; state.selectedTextId = nil; state.selectedMediaId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        } else {
+            // Previous clip whose end equals current start
+            if let prev = state.clips.first(where: { c in
+                let s = state.startSeconds(for: c.id) ?? 0
+                let e = s + max(0, CMTimeGetSeconds(c.trimmedDuration))
+                return approximatelyEquals(state.quantizeToFrame(e), edgeQ)
+            }) {
+                state.selectedClipId = prev.id
+                state.selectedAudioId = nil; state.selectedTextId = nil; state.selectedMediaId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
+    }
+
+    private func selectTextNeighbor(atEdgeTime edge: Double, isRightEdge: Bool) {
+        let edgeQ = state.quantizeToFrame(edge)
+        if isRightEdge {
+            if let n = state.textOverlays.first(where: { t in
+                let s = max(0, CMTimeGetSeconds(t.effectiveStart))
+                return approximatelyEquals(state.quantizeToFrame(s), edgeQ)
+            }) {
+                state.selectedTextId = n.id
+                state.selectedClipId = nil; state.selectedAudioId = nil; state.selectedMediaId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        } else {
+            if let p = state.textOverlays.first(where: { t in
+                let s = max(0, CMTimeGetSeconds(t.effectiveStart))
+                let e = s + max(0, CMTimeGetSeconds(t.trimmedDuration))
+                return approximatelyEquals(state.quantizeToFrame(e), edgeQ)
+            }) {
+                state.selectedTextId = p.id
+                state.selectedClipId = nil; state.selectedAudioId = nil; state.selectedMediaId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
+    }
+
+    private func selectMediaNeighbor(atEdgeTime edge: Double, isRightEdge: Bool) {
+        let edgeQ = state.quantizeToFrame(edge)
+        if isRightEdge {
+            if let n = state.mediaOverlays.first(where: { m in
+                let s = max(0, CMTimeGetSeconds(m.effectiveStart))
+                return approximatelyEquals(state.quantizeToFrame(s), edgeQ)
+            }) {
+                state.selectedMediaId = n.id
+                state.selectedClipId = nil; state.selectedAudioId = nil; state.selectedTextId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        } else {
+            if let p = state.mediaOverlays.first(where: { m in
+                let s = max(0, CMTimeGetSeconds(m.effectiveStart))
+                let e = s + max(0, CMTimeGetSeconds(m.trimmedDuration))
+                return approximatelyEquals(state.quantizeToFrame(e), edgeQ)
+            }) {
+                state.selectedMediaId = p.id
+                state.selectedClipId = nil; state.selectedAudioId = nil; state.selectedTextId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
+    }
+
+    private func selectAudioNeighbor(atEdgeTime edge: Double, isRightEdge: Bool, isExtracted: Bool) {
+        let edgeQ = state.quantizeToFrame(edge)
+        let tracks = state.audioTracks.filter { $0.isExtracted == isExtracted }
+        if isRightEdge {
+            if let n = tracks.first(where: { t in
+                let s = max(0, CMTimeGetSeconds(t.start + t.trimStart))
+                return approximatelyEquals(state.quantizeToFrame(s), edgeQ)
+            }) {
+                state.selectedAudioId = n.id
+                state.selectedClipId = nil; state.selectedTextId = nil; state.selectedMediaId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        } else {
+            if let p = tracks.first(where: { t in
+                let s = max(0, CMTimeGetSeconds(t.start + t.trimStart))
+                let e = s + max(0, CMTimeGetSeconds(t.trimmedDuration))
+                return approximatelyEquals(state.quantizeToFrame(e), edgeQ)
+            }) {
+                state.selectedAudioId = p.id
+                state.selectedClipId = nil; state.selectedTextId = nil; state.selectedMediaId = nil
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
     }
 
     // MARK: - Auto-scroll helpers

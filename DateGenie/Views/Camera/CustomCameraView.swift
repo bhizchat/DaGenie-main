@@ -7,8 +7,7 @@ import FirebaseCore
 struct CustomCameraView: View {
 	// Removed onComplete; view uses voice assistant only
 
-    @State private var showProfile: Bool = false
-    @EnvironmentObject private var userRepo: UserRepository
+    // Profile UI removed for this phase
 	@StateObject private var voiceVM = VoiceAssistantVM()
 	@State private var isHoldingMic: Bool = false
 	@State private var showImagePicker: Bool = false
@@ -31,45 +30,11 @@ struct CustomCameraView: View {
 
             VStack {
                 HStack {
-                    Button(action: { showProfile = true }) {
-                        ZStack {
-                            Circle().stroke(Color.white, lineWidth: 2).frame(width: 36, height: 36)
-                            if let urlStr = userRepo.profile.photoURL, let url = URL(string: urlStr) {
-                                AsyncImage(url: url) { phase in
-                                    switch phase {
-                                    case .empty:
-                                        Image(systemName: "person.circle")
-                                            .resizable()
-                                            .scaledToFit()
-                                            .padding(6)
-                                            .foregroundColor(.white)
-                                    case .success(let img):
-                                        img.resizable().scaledToFill()
-                                    case .failure:
-                                        Image(systemName: "person.circle")
-                                            .resizable()
-                                            .scaledToFit()
-                                            .padding(6)
-                                            .foregroundColor(.white)
-                                    @unknown default:
-                                        Image(systemName: "person.circle")
-                                            .resizable()
-                                            .scaledToFit()
-                                            .padding(6)
-                                            .foregroundColor(.white)
-                                    }
-                                }
-                                .frame(width: 36, height: 36)
-                                .clipShape(Circle())
-                            } else {
-                                Image(systemName: "person.circle")
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 24, height: 24)
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .padding(6)
+                    Button(action: { UIApplication.shared.topMostViewController()?.dismiss(animated: true) }) {
+                        Image("back_arrow")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 28, height: 28)
                     }
                     Spacer()
                 }
@@ -85,7 +50,8 @@ struct CustomCameraView: View {
                 .offset(y: 300)
             }
 		}
-		.onAppear { voiceVM.speakIntroOnFirstOpen() }
+		// Voice intro disabled for now – we'll revisit later
+		.onAppear { /* voiceVM.speakIntroOnFirstOpen() */ }
 		.onChange(of: pickedImage) { newValue in
 			if let img = newValue {
 				voiceVM.clearAttachmentPaths()
@@ -101,38 +67,9 @@ struct CustomCameraView: View {
 			}
 		}
 		.onChange(of: voiceVM.uiState) { _ in }
-		// Top streaming banner overlay (kept fixed when keyboard appears)
-		.overlay(alignment: .top) {
-			if voiceVM.showBanner || !voiceVM.assistantStreamingText.isEmpty {
-				ZStack(alignment: .topTrailing) {
-					Text(voiceVM.assistantStreamingText.isEmpty ? voiceVM.partialTranscript : voiceVM.assistantStreamingText)
-						.font(.system(size: 18, weight: .semibold))
-						.foregroundColor(.white)
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.padding(.horizontal, 16)
-						.padding(.vertical, 14)
-						.background(RoundedRectangle(cornerRadius: 30).fill(Color.black.opacity(0.5)))
-					Button(action: {
-						voiceVM.assistantStreamingText = ""
-						voiceVM.partialTranscript = ""
-						voiceVM.showBanner = false
-					}) {
-						Image(systemName: "xmark.circle.fill")
-							.font(.system(size: 18, weight: .bold))
-							.foregroundColor(.black.opacity(0.75))
-					}
-					.offset(x: 8, y: -8)
-				}
-				.padding(.top, 60)
-				.padding(.horizontal, 24)
-				.ignoresSafeArea(.keyboard, edges: .bottom)
-				.zIndex(10)
-			}
-		}
+		// Streaming banner removed in this phase
+		.overlay(alignment: .top) { EmptyView() }
 		// Style picker removed
-		.sheet(isPresented: $showProfile) {
-			ProfileView().environmentObject(AuthViewModel()).environmentObject(userRepo)
-		}
 		.sheet(isPresented: $showImagePicker, onDismiss: {
 			if let img = pickedImage {
 				voiceVM.clearAttachmentPaths()
@@ -142,33 +79,11 @@ struct CustomCameraView: View {
 		}) {
 			ImagePicker(image: $pickedImage, sourceType: .photoLibrary)
 		}
-		// New confirmation popup driven by overlayState
-		.alert("Ready to create your ad?", isPresented: Binding(get: {
-			if case .confirming = voiceVM.overlayState { return true }
-			return false
-		}, set: { newVal in
-			if !newVal { voiceVM.transitionOverlay(to: .none) }
-		})) {
-			Button("Cancel", role: .cancel) { voiceVM.cancelAndAddDetails() }
-			Button("Confirm") { Task { await voiceVM.confirmCreation() } }
-		} message: {
-			Text(voiceVM.confirmationSummary.isEmpty ? voiceVM.confirmationSubtitleText : voiceVM.confirmationSummary)
-		}
-		// Full-screen generating overlay driven by overlayState
-		.fullScreenCover(isPresented: Binding(get: {
-			if case .generating = voiceVM.overlayState { return true } else { return false }
-		}, set: { newVal in
-			if !newVal { voiceVM.transitionOverlay(to: .none) }
-		})) {
-			GeneratingView()
-				.environmentObject(voiceVM)
-		}
 		// Present immediate preview when a final video URL arrives
 		.onChange(of: voiceVM.generatedVideoURL) { url in
 			guard let url else { return }
-			let host = UIHostingController(rootView: CapcutEditorView(url: url))
-			host.modalPresentationStyle = .overFullScreen
-			UIApplication.shared.topMostViewController()?.present(host, animated: true)
+			// Notify any editor to insert the finished clip
+			NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: ["url": url])
 		}
 		// Visual style picker removed
 		.safeAreaInset(edge: .bottom) {
@@ -187,6 +102,13 @@ struct CustomCameraView: View {
 					voiceVM.submitText(text)
 					UIImpactFeedbackGenerator(style: .light).impactOccurred()
 					UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+					// Present editor immediately in generating mode with placeholder
+					let placeholderURL = URL(fileURLWithPath: "/dev/null")
+					let host = UIHostingController(rootView: CapcutEditorView(url: placeholderURL, initialGenerating: true))
+					host.modalPresentationStyle = .overFullScreen
+					UIApplication.shared.topMostViewController()?.present(host, animated: true) {
+						NotificationCenter.default.post(name: .AdGenBegin, object: nil)
+					}
 				},
 				isUploading: voiceVM.isUploadingAttachment
 			)

@@ -243,7 +243,8 @@ extension EditorTrackArea {
                     commitRotationDelta(value)
                 }
 
-            let drag = DragGesture(minimumDistance: 0)
+            // Match text overlay drag semantics exactly: zero-distance, canvas coordinate space
+            let drag = DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
                 .updating($canvasDragTranslation) { value, state, _ in
                     state = value.translation
                     applyDragLive(translation: value.translation)
@@ -270,7 +271,7 @@ extension EditorTrackArea {
                 .updating($canvasRotate) { value, state, _ in state = value }
                 .onEnded { value in commitRotationDelta(value) }
 
-            let drag = DragGesture(minimumDistance: 0)
+            let drag = DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
                 .updating($canvasDragTranslation) { value, state, _ in
                     state = value.translation
                     applyDragLive(translation: value.translation)

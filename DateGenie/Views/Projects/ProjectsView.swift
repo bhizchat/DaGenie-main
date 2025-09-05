@@ -4,6 +4,7 @@ import FirebaseAuth
 struct ProjectsView: View {
     @StateObject private var repo = ProjectsRepository.shared
     @State private var isCreating = false
+    @State private var showCreationOptions = false
 
     private var userId: String? { Auth.auth().currentUser?.uid }
 
@@ -12,7 +13,7 @@ struct ProjectsView: View {
             Spacer().frame(height: 24)
             HStack { Spacer(); Image("Logo_DG").resizable().scaledToFit().frame(width: 120, height: 120); Spacer() }
 
-            Button(action: newProject) {
+            Button(action: { showCreationOptions = true }) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 16)
                         .fill(Color(red: 249/255, green: 210/255, blue: 161/255))
@@ -33,6 +34,9 @@ struct ProjectsView: View {
                 .padding(.horizontal, 20)
             }
             .disabled(isCreating)
+            .fullScreenCover(isPresented: $showCreationOptions) {
+                NewVideoChoiceView()
+            }
 
             Text("\(repo.projects.count) Projects")
                 .font(.system(size: 20, weight: .bold))
