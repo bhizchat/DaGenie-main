@@ -30,7 +30,29 @@ struct AddClipChoiceView: View {
                     Button(action: { onChooseAI(); dismiss() }) {
                         RoundedRectangle(cornerRadius: 16).fill(Color.white)
                             .frame(width: 220, height: 220)
-                            .overlay(Image("welcome_genie").resizable().scaledToFit().frame(width: 140, height: 140))
+                            .overlay(
+                                Group {
+                                    if UIImage(named: "welcome_genie") != nil {
+                                        Image("welcome_genie")
+                                            .renderingMode(.original)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 140, height: 140)
+                                    } else if UIImage(named: "Logo_DG") != nil {
+                                        Image("Logo_DG")
+                                            .renderingMode(.original)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 140, height: 140)
+                                    } else {
+                                        Image(systemName: "wand.and.stars")
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 120, height: 120)
+                                            .foregroundColor(.yellow)
+                                    }
+                                }
+                            )
                     }.buttonStyle(.plain)
                     Text("GENERATE AD CLIP WITH AI")
                         .font(.system(size: 16, weight: .bold))

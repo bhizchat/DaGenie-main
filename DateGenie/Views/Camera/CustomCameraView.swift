@@ -19,15 +19,12 @@ struct CustomCameraView: View {
 		ZStack {
 			Color.white.ignoresSafeArea()
 
-			VStack(spacing: 24) {
-				Image("Logo_DG")
-					.resizable()
-					.scaledToFit()
-					.frame(width: 120, height: 120)
-					.padding(.top, 28)
-				// Large attachment preview removed; chips are shown in the composer
+			// Header content: Coca image and descriptive copy
+			ScrollView {
+				AdHeaderView()
+					.padding(.horizontal, 24)
+					.frame(maxWidth: .infinity)
 			}
-			.offset(y: -50)
 
             VStack {
                 HStack {
@@ -219,6 +216,40 @@ struct GIFView: UIViewRepresentable {
 private extension CustomCameraView {}
 
 // MARK: - Subviews
+private struct AdHeaderView: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            Image("Coca")
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(height: 160)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 6)
+                .padding(.top, 12)
+
+            Text("Commercial ads")
+                .font(.title3.weight(.semibold))
+                .foregroundColor(.black)
+                .multilineTextAlignment(.center)
+                .padding(.top, 12)
+
+            Text("Create engaging videos for your products, best used to give a premium feel for your brand either as a video Visual or Outro. Start by uploading a photo  and typing a basic prompt")
+                .font(.callout)
+                .foregroundColor(.black)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .padding(.top, 8)
+
+            Text("e.g “Create a cinematic video ad for my coffee brand”")
+                .font(.footnote)
+                .italic()
+                .foregroundColor(.black)
+                .multilineTextAlignment(.center)
+                .padding(.top, 8)
+        }
+    }
+}
 struct MicrophoneButton: View {
 	let isActive: Bool
 	let onTap: () -> Void
