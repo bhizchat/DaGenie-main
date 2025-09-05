@@ -9,6 +9,8 @@ struct MediaOverlayView: View {
     var externalRotationDelta: Angle = .zero
     var externalAnchor: UnitPoint = .center
     var enableInternalTransformGesture: Bool = true
+    // Allow reuse for non-selected render path while preserving identical sizing
+    var showSelectionChips: Bool = true
 
     // Transient gesture states
     @GestureState private var drag: CGSize = .zero
@@ -26,7 +28,9 @@ struct MediaOverlayView: View {
             let base = fittedBaseSize()
             content
                 .frame(width: base.width, height: base.height)
-            selectionRectWithChips(width: base.width, height: base.height)
+            if showSelectionChips {
+                selectionRectWithChips(width: base.width, height: base.height)
+            }
         }
         .position(livePosition)
         .animation(nil, value: drag)

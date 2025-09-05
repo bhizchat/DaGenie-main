@@ -1665,12 +1665,9 @@ extension EditorState {
             return
         }
 
-        // MEDIA overlay duplication
+        // MEDIA overlay duplication (unify with EditorTrackArea behavior: duplicate in place + nudge)
         if let mid = selectedMediaId, let i = mediaOverlays.firstIndex(where: { $0.id == mid }) {
             let src = mediaOverlays[i]
-            // Place so visible start equals source visible end
-            let sourceEnd = src.effectiveStart + src.trimmedDuration
-            let newStart = max(.zero, sourceEnd - src.trimStart)
             let dup = TimedMediaOverlay(
                 url: src.url,
                 kind: src.kind,
@@ -1679,7 +1676,7 @@ extension EditorState {
                 rotation: src.rotation,
                 alpha: src.alpha,
                 zIndex: src.zIndex + 1,
-                start: newStart,
+                start: src.start,
                 duration: src.duration,
                 trimStart: src.trimStart,
                 trimEnd: src.trimEnd

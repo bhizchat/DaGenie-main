@@ -25,48 +25,41 @@ struct EditorTrackArea: View {
 
                 // Render visible text overlays in canvas coordinate space
                 ZStack {
-                    // Media overlays: selected shows interactive view; otherwise render lightweight preview
+                    // Media overlays: selected shows interactive view; otherwise reuse MediaOverlayView without chips
                     ForEach(state.mediaOverlays, id: \.id) { m in
                         if isVisible(m, at: state.displayTime) {
                             if state.selectedMediaId == m.id {
                                 if let i = state.mediaOverlays.firstIndex(where: { $0.id == m.id }) {
-                                    MediaOverlayView(model: $state.mediaOverlays[i], canvasSize: geo.size)
+                                    MediaOverlayView(
+                                        model: $state.mediaOverlays[i],
+                                        canvasSize: geo.size,
+                                        externalScaleDelta: canvasMagnify,
+                                        externalRotationDelta: canvasRotate,
+                                        externalAnchor: canvasAnchor,
+                                        enableInternalTransformGesture: false,
+                                        showSelectionChips: true
+                                    )
                                         .allowsHitTesting(true)
                                 }
                             } else {
-                                if m.kind == .photo, let img = UIImage(contentsOfFile: m.url.path) {
-                                    Image(uiImage: img)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .position(x: m.position.x, y: m.position.y)
-                                        .scaleEffect(m.scale)
-                                        .rotationEffect(Angle(radians: Double(m.rotation)))
-                                        .opacity(Double(m.alpha))
-                                        .contentShape(Rectangle())
-                                        .onTapGesture {
-                                            state.selectedMediaId = m.id
-                                            state.selectedTextId = nil
-                                            state.selectedClipId = nil
-                                            state.selectedAudioId = nil
-                                            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
-                                        }
-                                } else {
-                                    // Video placeholder when not selected
-                                    Rectangle()
-                                        .fill(Color.white.opacity(0.05))
-                                        .frame(width: 120, height: 80)
-                                        .position(x: m.position.x, y: m.position.y)
-                                        .scaleEffect(m.scale)
-                                        .rotationEffect(Angle(radians: Double(m.rotation)))
-                                        .opacity(Double(m.alpha))
-                                        .contentShape(Rectangle())
-                                        .onTapGesture {
-                                            state.selectedMediaId = m.id
-                                            state.selectedTextId = nil
-                                            state.selectedClipId = nil
-                                            state.selectedAudioId = nil
-                                            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
-                                        }
+                                if let i = state.mediaOverlays.firstIndex(where: { $0.id == m.id }) {
+                                    MediaOverlayView(
+                                        model: $state.mediaOverlays[i],
+                                        canvasSize: geo.size,
+                                        externalScaleDelta: 1,
+                                        externalRotationDelta: .zero,
+                                        externalAnchor: .center,
+                                        enableInternalTransformGesture: false,
+                                        showSelectionChips: false
+                                    )
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        state.selectedMediaId = m.id
+                                        state.selectedTextId = nil
+                                        state.selectedClipId = nil
+                                        state.selectedAudioId = nil
+                                        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                                    }
                                 }
                             }
                         }
@@ -118,7 +111,7 @@ struct EditorTrackArea: View {
             }
             // Make the entire canvas area the gesture target (not just over the text)
             .contentShape(Rectangle())
-            .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil, gestureProvider: { canvasTransformGesture() }))
+            .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil || state.selectedMediaId != nil, gestureProvider: { canvasTransformGesture() }))
             .coordinateSpace(name: "canvas")
             .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
             .onChange(of: geo.size) { newSize in
@@ -161,13 +154,13 @@ struct EditorTrackArea: View {
             guard let id = note.object as? UUID,
                   let idx = state.mediaOverlays.firstIndex(where: { $0.id == id }) else { return }
             let src = state.mediaOverlays[idx]
-            // Place duplicate so its visible start equals source visible end (no overlap)
-            let sourceEnd = src.effectiveStart + src.trimmedDuration
-            let newStart = max(.zero, sourceEnd - src.trimStart)
+            // Duplicate in-place (common editor behavior) with a slight canvas nudge
+            let newStart = src.start
             let dup = TimedMediaOverlay(
                 url: src.url,
                 kind: src.kind,
-                position: src.position, // keep same canvas position
+                position: CGPoint(x: min(src.position.x + 16, canvasRect.width),
+                                  y: min(src.position.y + 16, canvasRect.height)),
                 scale: src.scale,
                 rotation: src.rotation,
                 alpha: src.alpha,
@@ -295,30 +288,58 @@ extension EditorTrackArea {
     }
 
     private func commitScaleDelta(_ scaleDelta: CGFloat) {
-        guard let id = state.selectedTextId,
-              let i = state.textOverlays.firstIndex(where: { $0.id == id }),
-              scaleDelta.isFinite, scaleDelta > 0.001 else { return }
-        let clamped = max(0.2, min(6.0, state.textOverlays[i].base.scale * scaleDelta))
-        state.textOverlays[i].base.scale = clamped
+        guard scaleDelta.isFinite, scaleDelta > 0.001 else { return }
+        if let id = state.selectedTextId,
+           let i = state.textOverlays.firstIndex(where: { $0.id == id }) {
+            let clamped = max(0.2, min(6.0, state.textOverlays[i].base.scale * scaleDelta))
+            state.textOverlays[i].base.scale = clamped
+            return
+        }
+        if let id = state.selectedMediaId,
+           let i = state.mediaOverlays.firstIndex(where: { $0.id == id }) {
+            let clamped = max(0.2, min(6.0, state.mediaOverlays[i].scale * scaleDelta))
+            state.mediaOverlays[i].scale = clamped
+            return
+        }
     }
 
     private func commitRotationDelta(_ delta: Angle) {
-        guard let id = state.selectedTextId,
-              let i = state.textOverlays.firstIndex(where: { $0.id == id }),
-              delta.radians.isFinite else { return }
-        state.textOverlays[i].base.rotation += CGFloat(delta.radians)
+        guard delta.radians.isFinite else { return }
+        if let id = state.selectedTextId,
+           let i = state.textOverlays.firstIndex(where: { $0.id == id }) {
+            state.textOverlays[i].base.rotation += CGFloat(delta.radians)
+            return
+        }
+        if let id = state.selectedMediaId,
+           let i = state.mediaOverlays.firstIndex(where: { $0.id == id }) {
+            state.mediaOverlays[i].rotation += CGFloat(delta.radians)
+            return
+        }
     }
 
     private func applyDragLive(translation: CGSize) {
-        guard let id = state.selectedTextId,
-              let i = state.textOverlays.firstIndex(where: { $0.id == id }) else { return }
-        let start = dragStartPosition ?? state.textOverlays[i].base.position
-        if dragStartPosition == nil { dragStartPosition = start }
-        let newX = start.x + translation.width
-        let newY = start.y + translation.height
-        let clampedX = min(max(0, newX), canvasRect.width)
-        let clampedY = min(max(0, newY), canvasRect.height)
-        state.textOverlays[i].base.position = CGPoint(x: clampedX, y: clampedY)
+        if let id = state.selectedTextId,
+           let i = state.textOverlays.firstIndex(where: { $0.id == id }) {
+            let start = dragStartPosition ?? state.textOverlays[i].base.position
+            if dragStartPosition == nil { dragStartPosition = start }
+            let newX = start.x + translation.width
+            let newY = start.y + translation.height
+            let clampedX = min(max(0, newX), canvasRect.width)
+            let clampedY = min(max(0, newY), canvasRect.height)
+            state.textOverlays[i].base.position = CGPoint(x: clampedX, y: clampedY)
+            return
+        }
+        if let id = state.selectedMediaId,
+           let i = state.mediaOverlays.firstIndex(where: { $0.id == id }) {
+            let start = dragStartPosition ?? state.mediaOverlays[i].position
+            if dragStartPosition == nil { dragStartPosition = start }
+            let newX = start.x + translation.width
+            let newY = start.y + translation.height
+            let clampedX = min(max(0, newX), canvasRect.width)
+            let clampedY = min(max(0, newY), canvasRect.height)
+            state.mediaOverlays[i].position = CGPoint(x: clampedX, y: clampedY)
+            return
+        }
     }
 }
 
