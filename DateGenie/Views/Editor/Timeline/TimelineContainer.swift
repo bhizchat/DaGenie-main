@@ -14,11 +14,13 @@ struct TimelineContainer: View {
     init(state: EditorState,
          onAddAudio: (() -> Void)? = nil,
          onAddText: (() -> Void)? = nil,
-         onAddEnding: (() -> Void)? = nil) {
+         onAddEnding: (() -> Void)? = nil,
+         onPlusTapped: (() -> Void)? = nil) {
         self.state = state
         self.onAddAudio = onAddAudio
         self.onAddText = onAddText
         self.onAddEnding = onAddEnding
+        self.onPlusTapped = onPlusTapped
     }
 
     // View-local scroll state
@@ -62,6 +64,9 @@ struct TimelineContainer: View {
     private let leftGap: CGFloat = 0.0
     // Horizontal nudge for empty-lane placeholders ("+ Add audio/text") to move the entire strip
     private let lanePlaceholderShiftX: CGFloat = 50
+
+    // Hook to override plus behavior
+    var onPlusTapped: (() -> Void)? = nil
 
     // Selection styling (CapCut-like)
     private let selectionPadH: CGFloat = 8
@@ -1198,7 +1203,7 @@ struct TimelineContainer: View {
                 let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
                 // Push the plus button down by an additional ~15pt
                 let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20) + 15
-                PhotosPicker(selection: $selectedVideoItem, matching: .videos, photoLibrary: .shared()) {
+                Button(action: { onPlusTapped?() }) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
                         .frame(width: 36, height: 36)

@@ -11,6 +11,7 @@ struct CapcutEditorView: View {
     @StateObject private var state: EditorState
     @State private var isGeneratingAd: Bool
     @State private var canvasRect: CGRect = .zero
+    @State private var showAddClipChoice: Bool = false
     @State private var showTextPanel: Bool = false
     @State private var showCaptionPanel: Bool = false
     @State private var showAspectSheet: Bool = false
@@ -181,7 +182,9 @@ struct CapcutEditorView: View {
                                               isTyping = true
                                               dockFocused = true
                                               withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
-                                          })
+                                          },
+                                          onAddEnding: nil,
+                                          onPlusTapped: { showAddClipChoice = true })
                         // Timeline no longer shows the generating pill; canvas overlay handles it
                     }
                     .frame(height: 72 + 8 + 32 + 120)
@@ -388,6 +391,18 @@ struct CapcutEditorView: View {
                     await MainActor.run { isGeneratingAd = false }
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showAddClipChoice) {
+            AddClipChoiceView(
+                onPickedVideo: { url in Task { await state.insertClipAtPlayhead(url: url) } },
+                onChooseAI: {
+                    // Do not present another editor; current editor listens for events
+                    NotificationCenter.default.post(name: .AdGenBegin, object: nil)
+                    let host = UIHostingController(rootView: CustomCameraView(presentEditorOnSend: false))
+                    host.modalPresentationStyle = .overFullScreen
+                    UIApplication.shared.topMostViewController()?.present(host, animated: true)
+                }
+            )
         }
         // Device audio file importer
         .fileImporter(isPresented: $showAudioImporter,

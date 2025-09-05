@@ -13,6 +13,7 @@ struct CustomCameraView: View {
 	@State private var showImagePicker: Bool = false
 	@State private var pickedImage: UIImage? = nil
     @State private var composerText: String = ""
+    var presentEditorOnSend: Bool = true
 
 	var body: some View {
 		ZStack {
@@ -102,11 +103,15 @@ struct CustomCameraView: View {
 					voiceVM.submitText(text)
 					UIImpactFeedbackGenerator(style: .light).impactOccurred()
 					UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-					// Present editor immediately in generating mode with placeholder
-					let placeholderURL = URL(fileURLWithPath: "/dev/null")
-					let host = UIHostingController(rootView: CapcutEditorView(url: placeholderURL, initialGenerating: true))
-					host.modalPresentationStyle = .overFullScreen
-					UIApplication.shared.topMostViewController()?.present(host, animated: true) {
+					// Present editor immediately in generating mode with placeholder (or keep current editor)
+					if presentEditorOnSend {
+						let placeholderURL = URL(fileURLWithPath: "/dev/null")
+						let host = UIHostingController(rootView: CapcutEditorView(url: placeholderURL, initialGenerating: true))
+						host.modalPresentationStyle = .overFullScreen
+						UIApplication.shared.topMostViewController()?.present(host, animated: true) {
+							NotificationCenter.default.post(name: .AdGenBegin, object: nil)
+						}
+					} else {
 						NotificationCenter.default.post(name: .AdGenBegin, object: nil)
 					}
 				},
