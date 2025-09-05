@@ -172,3 +172,39 @@ struct AudioTrack: Identifiable, Equatable {
 }
 
 
+// MARK: - Timed Media Overlays (Photo/Video)
+enum MediaOverlayKind: String, Codable {
+    case photo
+    case video
+}
+
+struct TimedMediaOverlay: Identifiable, Equatable {
+    let id: UUID = UUID()
+    var url: URL
+    var kind: MediaOverlayKind
+
+    // Canvas-space transform (mirror TextOverlay conventions)
+    var position: CGPoint
+    var scale: CGFloat
+    var rotation: CGFloat
+    var alpha: Float = 1.0
+    var zIndex: Int = 0
+
+    // Timeline scheduling
+    var start: CMTime
+    var duration: CMTime
+
+    // Local trims within the scheduled duration (primarily for video)
+    var trimStart: CMTime = .zero
+    var trimEnd: CMTime? = nil
+
+    // Derived helpers
+    var effectiveStart: CMTime { start + trimStart }
+    var trimmedDuration: CMTime {
+        let end = trimEnd ?? duration
+        let d = end - trimStart
+        return d >= .zero ? d : .zero
+    }
+}
+
+

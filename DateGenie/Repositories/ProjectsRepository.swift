@@ -31,7 +31,7 @@ final class ProjectsRepository: ObservableObject {
         }
     }
 
-    func create(userId: String, name: String = "New Project") async -> Project? {
+    func create(userId: String, name: String = "New Video") async -> Project? {
         let id = UUID().uuidString
         let doc = db.collection("users").document(userId).collection("projects").document(id)
         let now = Date()

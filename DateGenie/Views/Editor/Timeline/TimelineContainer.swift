@@ -75,6 +75,14 @@ struct TimelineContainer: View {
     @State private var textLeftSnapshot: TextHandleSnapshot? = nil
     @State private var textRightSnapshot: TextHandleSnapshot? = nil
     @State private var textLastSnapped: SnapTarget? = nil
+    // Snapshot state for media overlay handle drags
+    private struct MediaHandleSnapshot { let start: Double; let pps: CGFloat }
+    @State private var mediaLeftSnapshot: MediaHandleSnapshot? = nil
+    @State private var mediaRightSnapshot: MediaHandleSnapshot? = nil
+    @State private var mediaLastSnapped: SnapTarget? = nil
+    // Media drag helpers
+    @State private var draggingMediaId: UUID? = nil
+    @State private var mediaDragStartSeconds: Double = 0
     // Auto-scroll while trimming near edges
     @State private var autoScrollLink: CADisplayLink? = nil
     @State private var autoScrollDir: CGFloat = 0
@@ -146,7 +154,8 @@ struct TimelineContainer: View {
                 Group {
                     if showVertical {
                         // Include extracted audio lane when present so the text lane stays visible
-                        let belowCount: CGFloat = 2 + (hasExtractedAudio ? 1 : 0)
+                        let hasMediaOverlays = !state.mediaOverlays.isEmpty
+                        let belowCount: CGFloat = 2 + (hasExtractedAudio ? 1 : 0) + (hasMediaOverlays ? 1 : 0)
                         let visibleHeight = TimelineStyle.videoRowHeight
                             + belowCount * TimelineStyle.laneRowHeight
                             + belowCount * TimelineStyle.rowSpacing
@@ -156,6 +165,7 @@ struct TimelineContainer: View {
                                 if hasExtractedAudio { extractedAudioRow(geo) }
                                 if hasClip {
                                     extraAudioRow(geo)
+                                    if hasMediaOverlays { mediaOverlayRow(geo) }
                                     textRow(geo)
                                 }
                             }
@@ -194,6 +204,7 @@ struct TimelineContainer: View {
                         state.selectedClipId = nil
                         state.selectedAudioId = nil
                         state.selectedTextId = nil
+                        state.selectedMediaId = nil
                         // Explicitly close the Edit toolbar on global deselection
                         DispatchQueue.main.async {
                             NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
@@ -699,7 +710,11 @@ struct TimelineContainer: View {
     }
 
     // Computed rows height used for layout and publishing preferred height
-    private var lanesCount: CGFloat { hasClip ? 2 : 0 }
+    private var lanesCount: CGFloat {
+        // When overlays exist, include an extra lane row to reserve vertical space
+        let hasMediaOverlays = !state.mediaOverlays.isEmpty
+        return (hasClip ? 2 : 0) + (hasMediaOverlays ? 1 : 0)
+    }
     private var stackedRowsHeight: CGFloat {
         TimelineStyle.videoRowHeight
         + lanesCount * TimelineStyle.laneRowHeight
@@ -1264,6 +1279,116 @@ struct TimelineContainer: View {
 
     // (Track row helpers removed during revert)
 
+    // MARK: - Media Overlay Row (appears only when overlays exist)
+    @ViewBuilder
+    private func mediaOverlayRow(_ geo: GeometryProxy) -> some View {
+        let pps = state.pixelsPerSecond
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(state.mediaOverlays.enumerated()), id: \.element.id) { _, m in
+                let s = max(0, CMTimeGetSeconds(m.effectiveStart))
+                let w = max(0, CMTimeGetSeconds(m.trimmedDuration))
+                let startX = leadingInset(for: geo.size.width) + CGFloat(s) * pps - observedOffsetX
+                let width  = CGFloat(w) * pps
+
+                // Selection pill
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.green.opacity(0.18))
+                    .frame(width: max(12, width), height: TimelineStyle.laneRowHeight)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(state.selectedMediaId == m.id ? Color.white : Color.clear, lineWidth: 2)
+                    )
+                    .position(x: startX + width / 2, y: TimelineStyle.laneRowHeight / 2)
+                    .contentShape(Rectangle())
+                    .highPriorityGesture(TapGesture().onEnded {
+                        let was = (state.selectedMediaId == m.id)
+                        state.selectedMediaId = was ? nil : m.id
+                        if !was {
+                            state.selectedClipId = nil
+                            state.selectedAudioId = nil
+                            state.selectedTextId = nil
+                            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                        } else {
+                            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil) }
+                        }
+                        didTapClip = true
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    })
+                    .simultaneousGesture(DragGesture(minimumDistance: 8))
+                    .gesture(
+                        LongPressGesture(minimumDuration: 0.25)
+                            .sequenced(before: DragGesture(minimumDistance: 1))
+                            .onChanged { value in
+                                switch value {
+                                case .first(true):
+                                    if draggingMediaId != m.id {
+                                        draggingMediaId = m.id
+                                        mediaDragStartSeconds = s
+                                        isDraggingLaneItem = true
+                                        state.selectedMediaId = m.id
+                                        state.selectedClipId = nil
+                                        state.selectedAudioId = nil
+                                        state.selectedTextId = nil
+                                        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                                    }
+                                case .second(true, let drag?):
+                                    let deltaSec = Double(drag.translation.width / max(1, pps))
+                                    let proposed = mediaDragStartSeconds + deltaSec
+                                    let snapped = nearestSnap(to: proposed, pps: pps, excludeTextId: nil)
+                                    state.moveMedia(id: m.id, toStartSeconds: snapped.time)
+                                default: break
+                                }
+                            }
+                            .onEnded { _ in
+                                draggingMediaId = nil
+                                isDraggingLaneItem = false
+                            }
+                    )
+
+                // Handles (only when this strip is selected)
+                if state.selectedMediaId == m.id {
+                    // LEFT
+                    EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
+                        if !isDraggingLaneItem { isDraggingLaneItem = true; state.beginMediaTrimGesture(); selectionHaptics.prepare(); mediaLeftSnapshot = MediaHandleSnapshot(start: s, pps: pps); mediaLastSnapped = nil }
+                        let snapshotPPS = mediaLeftSnapshot?.pps ?? pps
+                        let effStart = mediaLeftSnapshot?.start ?? s
+                        let deltaSec = Double(dx / max(1, snapshotPPS))
+                        let proposedAbs = effStart + deltaSec
+                        var snapped = nearestSnap(to: proposedAbs, pps: snapshotPPS, excludeTextId: nil)
+                        snapped = (time: state.quantizeToFrame(snapped.time), hit: snapped.hit)
+                        if let hit = snapped.hit, (mediaLastSnapped?.time != hit.time || mediaLastSnapped?.kind != hit.kind) { selectionHaptics.selectionChanged(); mediaLastSnapped = hit } else if snapped.hit == nil { mediaLastSnapped = nil }
+                        state.trimMediaDuringGesture(id: m.id, leftDeltaSeconds: snapped.time - effStart)
+                        let liveStart = state.selectedMediaStartSeconds ?? s
+                        let liveStartX = (offsetForTime(CMTime(seconds: liveStart, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                        updateAutoScroll(forHandleX: liveStartX - selectionHandleWidth/2, viewWidth: geo.size.width)
+                    }, onEnd: { isDraggingLaneItem = false; mediaLeftSnapshot = nil; mediaLastSnapped = nil; state.endMediaTrimGesture(); stopAutoScroll() })
+                    .position(x: startX - selectionHandleWidth/2, y: TimelineStyle.laneRowHeight / 2)
+                    .zIndex(220)
+
+                    // RIGHT
+                    let endX = startX + width
+                    EdgeHandle(height: TimelineStyle.laneRowHeight, width: selectionHandleWidth, onDrag: { dx in
+                        if !isDraggingLaneItem { isDraggingLaneItem = true; state.beginMediaTrimGesture(); selectionHaptics.prepare(); mediaRightSnapshot = MediaHandleSnapshot(start: s + w, pps: pps); mediaLastSnapped = nil }
+                        let snapshotPPS = mediaRightSnapshot?.pps ?? pps
+                        let effEnd = mediaRightSnapshot?.start ?? (s + w)
+                        let deltaSec = Double(dx / max(1, snapshotPPS))
+                        let proposedAbs = effEnd + deltaSec
+                        var snapped = nearestSnap(to: proposedAbs, pps: snapshotPPS, excludeTextId: nil)
+                        snapped = (time: state.quantizeToFrame(snapped.time), hit: snapped.hit)
+                        if let hit = snapped.hit, (mediaLastSnapped?.time != hit.time || mediaLastSnapped?.kind != hit.kind) { selectionHaptics.selectionChanged(); mediaLastSnapped = hit } else if snapped.hit == nil { mediaLastSnapped = nil }
+                        state.trimMediaDuringGesture(id: m.id, rightDeltaSeconds: snapped.time - effEnd)
+                        let liveEnd = state.selectedMediaEndSeconds ?? (s + w)
+                        let liveEndX = (offsetForTime(CMTime(seconds: liveEnd, preferredTimescale: 600), width: geo.size.width, pps: pps) + geo.size.width/2) - observedOffsetX
+                        updateAutoScroll(forHandleX: liveEndX + selectionHandleWidth/2, viewWidth: geo.size.width)
+                    }, onEnd: { isDraggingLaneItem = false; mediaRightSnapshot = nil; mediaLastSnapped = nil; state.endMediaTrimGesture(); stopAutoScroll() })
+                    .position(x: endX + selectionHandleWidth/2, y: TimelineStyle.laneRowHeight / 2)
+                    .zIndex(220)
+                }
+            }
+        }
+        .frame(height: TimelineStyle.laneRowHeight)
+    }
+
     private func dragGesture(geo: GeometryProxy) -> some Gesture {
         // Deprecated: let UIScrollView own horizontal pan; we keep function to avoid breaking calls
         DragGesture(minimumDistance: 1)
@@ -1349,6 +1474,13 @@ private extension TimelineContainer {
         for t in state.textOverlays where t.id != excludeTextId {
             let s = max(0, CMTimeGetSeconds(t.effectiveStart))
             let e = s + max(0, CMTimeGetSeconds(t.trimmedDuration))
+            anchors.append(SnapTarget(time: s, kind: .itemEdge))
+            anchors.append(SnapTarget(time: e, kind: .itemEdge))
+        }
+        // Neighbor media overlay edges
+        for m in state.mediaOverlays {
+            let s = max(0, CMTimeGetSeconds(m.effectiveStart))
+            let e = s + max(0, CMTimeGetSeconds(m.trimmedDuration))
             anchors.append(SnapTarget(time: s, kind: .itemEdge))
             anchors.append(SnapTarget(time: e, kind: .itemEdge))
         }

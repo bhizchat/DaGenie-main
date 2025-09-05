@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 import FirebaseAuth
 import UniformTypeIdentifiers
+import PhotosUI
 
 struct CapcutEditorView: View {
     let url: URL
@@ -12,6 +13,9 @@ struct CapcutEditorView: View {
     @State private var showCaptionPanel: Bool = false
     @State private var showAspectSheet: Bool = false
     @State private var showEditBar: Bool = false
+    @State private var showOverlayBar: Bool = false
+    @State private var showOverlayPicker: Bool = false
+    @State private var overlayPickerItems: [PhotosPickerItem] = []
     // Audio importer presentation state
     @State private var showAudioImporter: Bool = false
     // Phase 2B: typing dock state
@@ -30,6 +34,46 @@ struct CapcutEditorView: View {
     init(url: URL) {
         self.url = url
         _state = StateObject(wrappedValue: EditorState(asset: AVURLAsset(url: url)))
+    }
+
+    // MARK: - Overlay media import
+    @MainActor
+    private func handlePickedOverlays() async {
+        guard !overlayPickerItems.isEmpty else { return }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        for item in overlayPickerItems {
+            do {
+                if item.supportedContentTypes.contains(where: { $0.conforms(to: .image) }) {
+                    if let data = try await item.loadTransferable(type: Data.self) {
+                        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+                        let dest = docs.appendingPathComponent("overlay_\(UUID().uuidString).\(ext)")
+                        try data.write(to: dest, options: .atomic)
+                        // Center on current canvas
+                        let center = CGPoint(x: canvasRect.width/2, y: canvasRect.height/2)
+                        state.addPhotoOverlay(imageURL: dest, at: state.displayTime, position: center)
+                    }
+                } else if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                    if let data = try await item.loadTransferable(type: Data.self) {
+                        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "mov"
+                        let dest = docs.appendingPathComponent("overlay_\(UUID().uuidString).\(ext)")
+                        try data.write(to: dest, options: .atomic)
+                        let center = CGPoint(x: canvasRect.width/2, y: canvasRect.height/2)
+                        state.addVideoOverlay(videoURL: dest, at: state.displayTime, position: center)
+                    }
+                }
+            } catch {
+                print("[OverlayPicker] error: \(error.localizedDescription)")
+            }
+        }
+        overlayPickerItems.removeAll()
+        showOverlayPicker = false
+        // Ensure overlay lane becomes visible
+        withAnimation(.easeInOut(duration: 0.2)) { }
+        // Close the Overlay toolbar and open the Edit toolbar focused on the new selection
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showOverlayBar = false
+            showEditBar = true
+        }
     }
 
     // Helper to find selected text index
@@ -222,6 +266,12 @@ struct CapcutEditorView: View {
                             }
                         })
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
+                    } else if showOverlayBar {
+                        OverlayToolsBar(state: state,
+                                        onClose: { withAnimation(.easeInOut(duration: 0.2)) { showOverlayBar = false } },
+                                        onAddMedia: { showOverlayPicker = true },
+                                        onShowLogoPicker: { })
+                            .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     } else {
                         EditorBottomToolbar(
                             onEdit: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true } },
@@ -231,7 +281,7 @@ struct CapcutEditorView: View {
                                 isTyping = true
                                 dockFocused = true
                             },
-                            onOverlay: {},
+                            onOverlay: { withAnimation(.easeInOut(duration: 0.2)) { showOverlayBar = true } },
                             onAspect: { showAspectSheet = true }
                         )
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
@@ -263,6 +313,13 @@ struct CapcutEditorView: View {
         }
         // Keep bottom UI static; allow keyboard to cover it
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .photosPicker(isPresented: $showOverlayPicker,
+                       selection: $overlayPickerItems,
+                       maxSelectionCount: 5,
+                       matching: .any(of: [.images, .videos]))
+        .onChange(of: overlayPickerItems) { _ in
+            Task { await handlePickedOverlays() }
+        }
         .onAppear {
             print("[CapcutEditorView] open with url=\(url.lastPathComponent)")
             AnalyticsManager.shared.logEvent("capcut_editor_opened", parameters: [
@@ -331,6 +388,14 @@ struct CapcutEditorView: View {
                 withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
                 isTyping = false
                 dockFocused = false
+            }
+        }
+        // Auto-open/close Edit toolbar when media overlay selection changes
+        .onChange(of: state.selectedMediaId) { newValue in
+            if newValue != nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
+            } else if state.selectedClipId == nil && state.selectedAudioId == nil && state.selectedTextId == nil {
+                withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
             }
         }
         .sheet(isPresented: $showTextPanel) { TextToolPanel(state: state, canvasRect: canvasRect) }
@@ -419,6 +484,7 @@ struct CapcutEditorView: View {
                                     audioMix: mix,
                                     timedTexts: state.textOverlays,
                                     timedCaptions: state.captions,
+                                    timedMedia: state.mediaOverlays,
                                     canvasRect: canvasRect) { out in
             guard let out = out else { return }
             // Save thumbnail + project persistence if available
@@ -470,6 +536,7 @@ final class EditorState: ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var renderConfig: VideoRenderConfig = VideoRenderConfig()
     @Published var textOverlays: [TimedTextOverlay] = []
+    @Published var mediaOverlays: [TimedMediaOverlay] = []
     @Published var captions: [TimedCaption] = []
     @Published var audioTracks: [AudioTrack] = []
     // (Reverted) Extracted audio lane not implemented yet; research pending
@@ -485,6 +552,7 @@ final class EditorState: ObservableObject {
     @Published var selectedAudioId: UUID? = nil
     // Text selection for on-canvas and timeline linking
     @Published var selectedTextId: UUID? = nil
+    @Published var selectedMediaId: UUID? = nil
 
     private var timeObserver: Any?
     private var displayLink: CADisplayLink?
@@ -566,6 +634,7 @@ final class EditorState: ObservableObject {
 
     @Published var activeTextTrimSession: TrimSession? = nil
     @Published var activeAudioTrimSession: TrimSession? = nil
+    @Published var activeMediaTrimSession: TrimSession? = nil
 
     /// Begin a trim session for the currently selected text overlay.
     @MainActor
@@ -578,6 +647,52 @@ final class EditorState: ObservableObject {
             baseLeft: max(0, CMTimeGetSeconds(t.trimStart)),
             baseRight: max(0, CMTimeGetSeconds(t.trimEnd ?? t.duration))
         )
+    }
+
+    // MARK: - Media overlay add/move helpers
+    @MainActor
+    func addPhotoOverlay(imageURL: URL, at start: CMTime, defaultSeconds: Double = 3.0, position: CGPoint? = nil) {
+        let pos = position ?? CGPoint(x: 0.5, y: 0.5)
+        let item = TimedMediaOverlay(url: imageURL,
+                                     kind: .photo,
+                                     position: pos,
+                                     scale: 1.0,
+                                     rotation: 0,
+                                     start: start,
+                                     duration: CMTime(seconds: defaultSeconds, preferredTimescale: 600))
+        mediaOverlays.append(item)
+        selectedMediaId = item.id
+        selectedTextId = nil
+        selectedAudioId = nil
+        selectedClipId = nil
+    }
+
+    @MainActor
+    func addVideoOverlay(videoURL: URL, at start: CMTime, position: CGPoint? = nil) {
+        let asset = AVURLAsset(url: videoURL)
+        let d = asset.duration
+        var item = TimedMediaOverlay(url: videoURL,
+                                     kind: .video,
+                                     position: position ?? CGPoint(x: 0.5, y: 0.5),
+                                     scale: 1.0,
+                                     rotation: 0,
+                                     start: start,
+                                     duration: d)
+        item.trimEnd = d
+        mediaOverlays.append(item)
+        selectedMediaId = item.id
+        selectedTextId = nil
+        selectedAudioId = nil
+        selectedClipId = nil
+    }
+
+    @MainActor
+    func moveMedia(id: UUID, toStartSeconds seconds: Double) {
+        guard let i = mediaOverlays.firstIndex(where: { $0.id == id }) else { return }
+        let visibleLen = max(0, CMTimeGetSeconds(mediaOverlays[i].trimmedDuration))
+        let project = max(0, CMTimeGetSeconds(totalDuration))
+        let clamped = min(max(0, seconds), max(0, project - visibleLen))
+        mediaOverlays[i].start = CMTime(seconds: clamped, preferredTimescale: 600)
     }
 
     /// Apply incremental trim changes during a drag gesture. Does not rebuild the composition.
@@ -647,6 +762,104 @@ final class EditorState: ObservableObject {
     func endTextTrimGesture() {
         guard activeTextTrimSession != nil else { return }
         activeTextTrimSession = nil
+        Task { await rebuildCompositionForPreview() }
+    }
+
+    // MARK: - Media trim session (photo/video behaviors)
+    @MainActor
+    func beginMediaTrimGesture() {
+        guard let id = selectedMediaId, let i = mediaOverlays.firstIndex(where: { $0.id == id }) else { return }
+        let m = mediaOverlays[i]
+        activeMediaTrimSession = TrimSession(
+            baseStart: max(0, CMTimeGetSeconds(m.start)),
+            baseDuration: max(0, CMTimeGetSeconds(m.duration)),
+            baseLeft: max(0, CMTimeGetSeconds(m.trimStart)),
+            baseRight: max(0, CMTimeGetSeconds(m.trimEnd ?? m.duration))
+        )
+    }
+
+    @MainActor
+    func trimMediaDuringGesture(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) {
+        guard var s = activeMediaTrimSession,
+              let i = mediaOverlays.firstIndex(where: { $0.id == id }) else { return }
+
+        var m = mediaOverlays[i]
+        let isPhoto = (m.kind == .photo)
+
+        var start = s.baseStart
+        var dur   = s.baseDuration
+        var left  = s.baseLeft
+        var right = s.baseRight
+
+        let project = max(0, CMTimeGetSeconds(totalDuration))
+        let frame   = max(frameDurationSeconds(), s.minLen)
+        let minLen  = max(s.minLen, frame)
+
+        // LEFT edge (cumulative)
+        if let dx = leftDeltaSeconds {
+            var targetLeft = quantizeToFrame(left + dx)
+            if targetLeft >= 0 {
+                left = min(max(0, targetLeft), max(0, right - minLen))
+            } else {
+                // Allow extend-left by growing scheduling window (photo & video)
+                let extend  = -targetLeft
+                let allowed = min(extend, start)
+                start -= allowed
+                dur   += allowed
+                left = 0
+            }
+        }
+
+        // RIGHT edge
+        if let dx = rightDeltaSeconds {
+            let targetRight = quantizeToFrame(right + dx)
+            if isPhoto {
+                // Photos may grow duration like Text
+                if dx <= 0 {
+                    right = max(left + minLen, min(dur, targetRight))
+                } else {
+                    if targetRight >= (dur - s.eps) {
+                        let maxDur = max(0, project - start)
+                        dur = min(maxDur, max(dur, targetRight))
+                    }
+                    right = min(dur, max(left + minLen, targetRight))
+                }
+            } else {
+                // Videos cannot grow beyond source duration
+                let srcDur = max(0, s.baseDuration) // baseDuration == media duration
+                right = min(srcDur, max(left + minLen, targetRight))
+            }
+        }
+
+        // Clamp against project tail
+        let maxDur = max(0, project - start)
+        if dur > maxDur { dur = maxDur; right = min(right, dur) }
+
+        // Quantize
+        start = quantizeToFrame(start)
+        dur   = max(minLen, quantizeToFrame(dur))
+        left  = max(0, min(quantizeToFrame(left),  max(0, dur - minLen)))
+        right = max(left + minLen, min(quantizeToFrame(right), dur))
+
+        // Write back
+        m.start     = CMTime(seconds: start, preferredTimescale: 600)
+        m.duration  = CMTime(seconds: dur,   preferredTimescale: 600)
+        m.trimStart = CMTime(seconds: left,  preferredTimescale: 600)
+        m.trimEnd   = CMTime(seconds: right, preferredTimescale: 600)
+        mediaOverlays[i] = m
+
+        // Advance baselines
+        s.baseStart    = start
+        s.baseDuration = dur
+        s.baseLeft     = left
+        s.baseRight    = right
+        activeMediaTrimSession = s
+    }
+
+    @MainActor
+    func endMediaTrimGesture() {
+        guard activeMediaTrimSession != nil else { return }
+        activeMediaTrimSession = nil
         Task { await rebuildCompositionForPreview() }
     }
 
@@ -816,6 +1029,17 @@ final class EditorState: ObservableObject {
                 p.audioTimePitchAlgorithm = t.preservePitch ? .spectral : .varispeed
                 mixParams.append(p)
             }
+        }
+
+        // Compose overlay video tracks (PIP) into composition for preview
+        for m in mediaOverlays where m.kind == .video {
+            let asset = AVURLAsset(url: m.url)
+            guard let src = asset.tracks(withMediaType: .video).first,
+                  let dst = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+            let srcRange = CMTimeRange(start: m.trimStart, duration: m.trimmedDuration)
+            let maxOut = max(.zero, totalDuration - m.start)
+            let outDur = CMTimeMinimum(srcRange.duration, maxOut)
+            try? dst.insertTimeRange(CMTimeRange(start: srcRange.start, duration: outDur), of: src, at: m.start)
         }
 
         composition = comp
@@ -1285,6 +1509,17 @@ extension EditorState {
         return max(0, CMTimeGetSeconds(t.effectiveStart + t.trimmedDuration))
     }
 
+    // MARK: - Media overlay selection helpers
+    var selectedMedia: TimedMediaOverlay? { mediaOverlays.first { $0.id == selectedMediaId } }
+    var selectedMediaStartSeconds: Double? {
+        guard let m = selectedMedia else { return nil }
+        return max(0, CMTimeGetSeconds(m.effectiveStart))
+    }
+    var selectedMediaEndSeconds: Double? {
+        guard let m = selectedMedia else { return nil }
+        return max(0, CMTimeGetSeconds(m.effectiveStart + m.trimmedDuration))
+    }
+
     // MARK: - Trimming mutators
     @MainActor
     func trimAudio(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) async {
@@ -1372,6 +1607,15 @@ extension EditorState {
             selectedTextId = nil
             return
         }
+        if let mediaId = selectedMediaId {
+            if let idx = mediaOverlays.firstIndex(where: { $0.id == mediaId }) {
+                mediaOverlays.remove(at: idx)
+            }
+            selectedMediaId = nil
+            // Rebuild preview if any video overlay might be affected
+            await rebuildCompositionForPreview()
+            return
+        }
         if let audioId = selectedAudioId {
             if let idx = audioTracks.firstIndex(where: { $0.id == audioId }) {
                 audioTracks.remove(at: idx)
@@ -1416,6 +1660,32 @@ extension EditorState {
             dup.trimEnd   = src.trimEnd
             textOverlays.append(dup)
             selectedTextId = dup.id
+            await rebuildCompositionForPreview()
+            followMode = .keepVisible
+            return
+        }
+
+        // MEDIA overlay duplication
+        if let mid = selectedMediaId, let i = mediaOverlays.firstIndex(where: { $0.id == mid }) {
+            let src = mediaOverlays[i]
+            // Place so visible start equals source visible end
+            let sourceEnd = src.effectiveStart + src.trimmedDuration
+            let newStart = max(.zero, sourceEnd - src.trimStart)
+            let dup = TimedMediaOverlay(
+                url: src.url,
+                kind: src.kind,
+                position: CGPoint(x: src.position.x + 16, y: src.position.y + 16),
+                scale: src.scale,
+                rotation: src.rotation,
+                alpha: src.alpha,
+                zIndex: src.zIndex + 1,
+                start: newStart,
+                duration: src.duration,
+                trimStart: src.trimStart,
+                trimEnd: src.trimEnd
+            )
+            mediaOverlays.append(dup)
+            selectedMediaId = dup.id
             await rebuildCompositionForPreview()
             followMode = .keepVisible
             return

@@ -22,7 +22,7 @@ struct ProjectsView: View {
                             .resizable()
                             .scaledToFit()
                             .frame(width: 28, height: 28)
-                        Text("New Project")
+                        Text("New Video")
                             .font(.custom("Inter-Bold", size: 24))
                             .foregroundColor(.black)
                     }

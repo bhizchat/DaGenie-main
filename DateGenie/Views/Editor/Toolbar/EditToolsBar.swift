@@ -17,26 +17,27 @@ struct EditToolsBar: View {
                     let isTextSelected = (state.selectedTextId != nil)
                     let isAudioSelected = (state.selectedAudioId != nil)
                     let isClipSelected = (state.selectedClipId != nil)
-                    // For non-text selections (audio/clip), all tools are enabled per spec.
-                    let allowAll = !isTextSelected
-                    let allowForText: (String) -> Bool = { key in
-                        // When text is selected, only these are enabled
+                    let isMediaSelected = (state.selectedMediaId != nil)
+                    // For clip/audio selections, all tools are enabled per spec.
+                    // For text/media selections, only a limited set is enabled.
+                    let allowAll = !(isTextSelected || isMediaSelected)
+                    let allowForLimitedSelection: (String) -> Bool = { key in
                         return ["Split", "Delete", "Duplicate", "Opacity"].contains(key)
                     }
 
-                    EditToolsBarItem(assetName: "Split", title: "Split", action: { }, isEnabled: allowAll || allowForText("Split"))
-                    EditToolsBarItem(assetName: "Speed", title: "Speed", action: onSpeed, isEnabled: allowAll || allowForText("Speed"))
-                    EditToolsBarItem(assetName: "Volume", title: "Volume", action: onVolume, isEnabled: allowAll || allowForText("Volume"))
+                    EditToolsBarItem(assetName: "Split", title: "Split", action: { }, isEnabled: allowAll || allowForLimitedSelection("Split"))
+                    EditToolsBarItem(assetName: "Speed", title: "Speed", action: onSpeed, isEnabled: allowAll || allowForLimitedSelection("Speed"))
+                    EditToolsBarItem(assetName: "Volume", title: "Volume", action: onVolume, isEnabled: allowAll || allowForLimitedSelection("Volume"))
                     EditToolsBarItem(assetName: "Delete", title: "Delete", action: {
                         Task { await state.deleteSelected() }
-                    }, isEnabled: allowAll || allowForText("Delete"))
-                    EditToolsBarItem(assetName: "Duplicate", title: "Duplicate", action: { Task { await state.duplicateSelected() } }, isEnabled: allowAll || allowForText("Duplicate"))
+                    }, isEnabled: allowAll || allowForLimitedSelection("Delete"))
+                    EditToolsBarItem(assetName: "Duplicate", title: "Duplicate", action: { Task { await state.duplicateSelected() } }, isEnabled: allowAll || allowForLimitedSelection("Duplicate"))
                     EditToolsBarItem(assetName: "Extract_audio", title: "Extract\naudio", action: {
                         let um = UIApplication.shared.topMostViewController()?.undoManager
                         Task { await state.extractOriginalAudioFromSelectedClip(undoManager: um) }
-                    }, isEnabled: (isClipSelected && !isAudioSelected) && (allowAll || allowForText("Extract_audio")))
-                    // Opacity is available for video clip and text only (not audio)
-                    let opacityEnabled = (isClipSelected || isTextSelected)
+                    }, isEnabled: (isClipSelected && !isAudioSelected) && (allowAll || allowForLimitedSelection("Extract_audio")))
+                    // Opacity is available for video clip, text, and media overlays (not audio)
+                    let opacityEnabled = (isClipSelected || isTextSelected || isMediaSelected)
                     EditToolsBarItem(assetName: "Opacity", title: "Opacity", action: { }, isEnabled: opacityEnabled)
                 }
                 .padding(.vertical, 6)

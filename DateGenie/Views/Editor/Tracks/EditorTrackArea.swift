@@ -25,7 +25,53 @@ struct EditorTrackArea: View {
 
                 // Render visible text overlays in canvas coordinate space
                 ZStack {
-                    ForEach(state.textOverlays, id: \ .id) { t in
+                    // Media overlays: selected shows interactive view; otherwise render lightweight preview
+                    ForEach(state.mediaOverlays, id: \.id) { m in
+                        if isVisible(m, at: state.displayTime) {
+                            if state.selectedMediaId == m.id {
+                                if let i = state.mediaOverlays.firstIndex(where: { $0.id == m.id }) {
+                                    MediaOverlayView(model: $state.mediaOverlays[i], canvasSize: geo.size)
+                                        .allowsHitTesting(true)
+                                }
+                            } else {
+                                if m.kind == .photo, let img = UIImage(contentsOfFile: m.url.path) {
+                                    Image(uiImage: img)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .position(x: m.position.x, y: m.position.y)
+                                        .scaleEffect(m.scale)
+                                        .rotationEffect(Angle(radians: Double(m.rotation)))
+                                        .opacity(Double(m.alpha))
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            state.selectedMediaId = m.id
+                                            state.selectedTextId = nil
+                                            state.selectedClipId = nil
+                                            state.selectedAudioId = nil
+                                            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                                        }
+                                } else {
+                                    // Video placeholder when not selected
+                                    Rectangle()
+                                        .fill(Color.white.opacity(0.05))
+                                        .frame(width: 120, height: 80)
+                                        .position(x: m.position.x, y: m.position.y)
+                                        .scaleEffect(m.scale)
+                                        .rotationEffect(Angle(radians: Double(m.rotation)))
+                                        .opacity(Double(m.alpha))
+                                        .contentShape(Rectangle())
+                                        .onTapGesture {
+                                            state.selectedMediaId = m.id
+                                            state.selectedTextId = nil
+                                            state.selectedClipId = nil
+                                            state.selectedAudioId = nil
+                                            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil) }
+                                        }
+                                }
+                            }
+                        }
+                    }
+                    ForEach(state.textOverlays, id: \.id) { t in
                         if isVisible(t, at: state.displayTime) {
                             if state.selectedTextId == t.id {
                                 if let i = state.textOverlays.firstIndex(where: { $0.id == t.id }) {
@@ -104,6 +150,36 @@ struct EditorTrackArea: View {
             state.textOverlays.append(dup)
             state.selectedTextId = dup.id
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DeleteSelectedMediaOverlay"))) { note in
+            guard let id = (note.object as? UUID) ?? state.selectedMediaId else { return }
+            if let idx = state.mediaOverlays.firstIndex(where: { $0.id == id }) {
+                state.mediaOverlays.remove(at: idx)
+                if state.selectedMediaId == id { state.selectedMediaId = nil }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DuplicateSelectedMediaOverlay"))) { note in
+            guard let id = note.object as? UUID,
+                  let idx = state.mediaOverlays.firstIndex(where: { $0.id == id }) else { return }
+            let src = state.mediaOverlays[idx]
+            // Place duplicate so its visible start equals source visible end (no overlap)
+            let sourceEnd = src.effectiveStart + src.trimmedDuration
+            let newStart = max(.zero, sourceEnd - src.trimStart)
+            let dup = TimedMediaOverlay(
+                url: src.url,
+                kind: src.kind,
+                position: src.position, // keep same canvas position
+                scale: src.scale,
+                rotation: src.rotation,
+                alpha: src.alpha,
+                zIndex: src.zIndex + 1,
+                start: newStart,
+                duration: src.duration,
+                trimStart: src.trimStart,
+                trimEnd: src.trimEnd
+            )
+            state.mediaOverlays.append(dup)
+            state.selectedMediaId = dup.id
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("UnselectTextOverlay"))) { _ in
             state.selectedTextId = nil
             DispatchQueue.main.async {
@@ -111,6 +187,13 @@ struct EditorTrackArea: View {
             }
             // Ensure timeline scrolling is re-enabled even if gestures were cancelled mid-flight
             // by signalling the container to clear any drag gate.
+            NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("UnselectMediaOverlay"))) { _ in
+            state.selectedMediaId = nil
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: Notification.Name("CloseEditToolbarForDeselection"), object: nil)
+            }
             NotificationCenter.default.post(name: Notification.Name("ResetTimelineDragGate"), object: nil)
         }
         .frame(maxWidth: .infinity)
@@ -133,6 +216,13 @@ struct EditorTrackArea: View {
         guard time.isNumeric else { return false }
         let start = t.effectiveStart
         let end = t.effectiveStart + t.trimmedDuration
+        return time >= start && time <= end
+    }
+
+    private func isVisible(_ m: TimedMediaOverlay, at time: CMTime) -> Bool {
+        guard time.isNumeric else { return false }
+        let start = m.effectiveStart
+        let end = m.effectiveStart + m.trimmedDuration
         return time >= start && time <= end
     }
 }
@@ -230,6 +320,14 @@ extension EditorTrackArea {
         let clampedY = min(max(0, newY), canvasRect.height)
         state.textOverlays[i].base.position = CGPoint(x: clampedX, y: clampedY)
     }
+}
+
+// MARK: - Visibility helpers for overlays
+private func isVisible(_ m: TimedMediaOverlay, at time: CMTime) -> Bool {
+    guard time.isNumeric else { return false }
+    let start = m.effectiveStart
+    let end = m.effectiveStart + m.trimmedDuration
+    return time >= start && time <= end
 }
 
 // MARK: - Modifier to apply transform gesture without intercepting taps/buttons

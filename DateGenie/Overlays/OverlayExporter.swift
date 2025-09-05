@@ -342,6 +342,7 @@ enum VideoOverlayExporter {
         let videoLayer = CALayer(); videoLayer.frame = parentLayer.frame
         parentLayer.addSublayer(videoLayer)
 
+        // Scale from canvas points to render pixels for overlay math
         let exportScale = size.width / max(canvasRect.width, 1)
 
         func addTimedOpacityAnimations(layer: CALayer, start: CMTime, duration: CMTime) {
@@ -432,18 +433,78 @@ enum VideoOverlayExporter {
                        audioMix: AVAudioMix? = nil,
                        timedTexts: [TimedTextOverlay],
                        timedCaptions: [TimedCaption],
+                       timedMedia: [TimedMediaOverlay] = [],
                        canvasRect: CGRect,
                        completion: @escaping (URL?) -> Void) {
-        // Derive a videoComposition from the asset to honor its timing/tracks.
-        let videoComposition = AVMutableVideoComposition(propertiesOf: baseAsset)
-        let size = videoComposition.renderSize
+        // Build a fresh composition so we can add overlay video tracks with transforms
+        let composition = AVMutableComposition()
+        // Base video track
+        var size = CGSize(width: 1080, height: 1920)
+        if let baseSrc = baseAsset.tracks(withMediaType: .video).first,
+           let baseDst = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            do {
+                try baseDst.insertTimeRange(CMTimeRange(start: .zero, duration: baseAsset.duration), of: baseSrc, at: .zero)
+                let oriented = baseSrc.naturalSize.applying(baseSrc.preferredTransform)
+                size = CGSize(width: abs(oriented.width), height: abs(oriented.height))
+            } catch { /* ignore */ }
+        }
+
+        // Video composition with layer instructions (base + overlay videos)
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = size
+        let fpsTrack = baseAsset.tracks(withMediaType: .video).first
+        let fps: Int32 = Int32(round(fpsTrack?.nominalFrameRate ?? 30).clamped(to: 1...60))
+        videoComposition.frameDuration = CMTime(value: 1, timescale: fps)
+
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: composition.duration)
+        var layerInstructions: [AVMutableVideoCompositionLayerInstruction] = []
+
+        if let baseDst = composition.tracks(withMediaType: .video).first {
+            let baseLI = AVMutableVideoCompositionLayerInstruction(assetTrack: baseDst)
+            // Apply the base orientation transform if available
+            if let baseSrc = baseAsset.tracks(withMediaType: .video).first {
+                baseLI.setTransform(baseSrc.preferredTransform, at: .zero)
+            }
+            layerInstructions.append(baseLI)
+        }
+
+        // Add overlay video tracks
+        let exportScale = size.width / max(canvasRect.width, 1)
+        for m in timedMedia where m.kind == .video {
+            let a = AVURLAsset(url: m.url)
+            guard let src = a.tracks(withMediaType: .video).first,
+                  let dst = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+            let srcRange = CMTimeRange(start: m.trimStart, duration: m.trimmedDuration)
+            do {
+                try dst.insertTimeRange(srcRange, of: src, at: m.effectiveStart)
+                let li = AVMutableVideoCompositionLayerInstruction(assetTrack: dst)
+                // Build PIP transform from canvas-space params
+                let nat = src.naturalSize.applying(src.preferredTransform)
+                let ow = max(1.0, abs(nat.width))
+                let oh = max(1.0, abs(nat.height))
+                let sx = m.scale * exportScale
+                let sy = m.scale * exportScale
+                let tx = m.position.x * exportScale - (ow * sx) / 2
+                let ty = m.position.y * exportScale - (oh * sy) / 2
+                var t = src.preferredTransform
+                t = t.concatenating(CGAffineTransform(scaleX: sx, y: sy))
+                if m.rotation != 0 { t = t.concatenating(CGAffineTransform(rotationAngle: m.rotation)) }
+                t = t.concatenating(CGAffineTransform(translationX: tx, y: ty))
+                li.setTransform(t, at: m.effectiveStart)
+                layerInstructions.append(li)
+            } catch { /* ignore */ }
+        }
+
+        instruction.layerInstructions = layerInstructions
+        videoComposition.instructions = [instruction]
 
         // Overlay layers sized to the asset's render size
         let parentLayer = CALayer(); parentLayer.frame = CGRect(origin: .zero, size: size)
         let videoLayer = CALayer(); videoLayer.frame = parentLayer.frame
         parentLayer.addSublayer(videoLayer)
 
-        let exportScale = size.width / max(canvasRect.width, 1)
+        // exportScale already declared above; do not redeclare
 
         func addTimedOpacityAnimations(layer: CALayer, start: CMTime, duration: CMTime) {
             let begin = CMTimeGetSeconds(start)
@@ -495,6 +556,24 @@ enum VideoOverlayExporter {
         }
 
         for cap in timedCaptions {
+        // Photo media overlays via CALayer
+        for m in timedMedia where m.kind == .photo {
+            if let img = UIImage(contentsOfFile: m.url.path)?.cgImage {
+                let layer = CALayer()
+                layer.contents = img
+                layer.contentsScale = UIScreen.main.scale
+                let px = m.position.x * exportScale
+                let py = m.position.y * exportScale
+                var transform = CATransform3DIdentity
+                transform = CATransform3DTranslate(transform, px, py, 0)
+                transform = CATransform3DRotate(transform, m.rotation, 0, 0, 1)
+                transform = CATransform3DScale(transform, m.scale * exportScale, m.scale * exportScale, 1)
+                layer.position = CGPoint(x: 0, y: 0)
+                layer.transform = transform
+                addTimedOpacityAnimations(layer: layer, start: m.start + m.trimStart, duration: m.trimmedDuration)
+                parentLayer.addSublayer(layer)
+            }
+        }
             guard cap.base.isVisible else { continue }
             let text = cap.base.text
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -519,7 +598,7 @@ enum VideoOverlayExporter {
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
 
         let outURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dg_video_\(UUID().uuidString).mp4")
-        guard let exporter = AVAssetExportSession(asset: baseAsset, presetName: AVAssetExportPresetHighestQuality) else { completion(nil); return }
+        guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else { completion(nil); return }
         exporter.videoComposition = videoComposition
         if let mix = audioMix { exporter.audioMix = mix }
         exporter.outputURL = outURL
