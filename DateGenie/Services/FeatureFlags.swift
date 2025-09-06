@@ -18,6 +18,16 @@ enum FeatureFlags {
         }
         set { UserDefaults.standard.set(newValue, forKey: "ff_useAROverlays") }
     }
+
+    // Enable CI-based compositing for still-image overlays during export.
+    // When true, PNG overlays are composited with CISourceOverCompositing via applyingCIFiltersWithHandler.
+    static var useCIOverlayCompositing: Bool {
+        get {
+            if let v = UserDefaults.standard.object(forKey: "ff_useCIOverlayCompositing") as? Bool { return v }
+            return false
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "ff_useCIOverlayCompositing") }
+    }
 }
 
 

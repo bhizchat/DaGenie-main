@@ -32,6 +32,8 @@ struct MediaOverlayView: View {
                 selectionRectWithChips(width: base.width, height: base.height)
             }
         }
+        // Ensure transparent regions within the overlay's bounds are hittable for gestures
+        .contentShape(Rectangle())
         .position(livePosition)
         .animation(nil, value: drag)
         .scaleEffect(safeScale(model.scale * magnify * externalScaleDelta), anchor: enableInternalTransformGesture ? transformAnchor : externalAnchor)
