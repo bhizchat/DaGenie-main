@@ -17,11 +17,25 @@ struct EditorTrackArea: View {
     @State private var dragStartPosition: CGPoint? = nil
     var body: some View {
         GeometryReader { geo in
+            // Compute a fitted canvas rect that preserves the selected project aspect.
+            let targetAR: CGFloat = {
+                if let ar = state.renderConfig.aspect.value { return ar }
+                // Fallback to first clip's oriented aspect
+                if let t = state.player.currentItem?.asset.tracks(withMediaType: .video).first {
+                    let r = CGRect(origin: .zero, size: t.naturalSize).applying(t.preferredTransform)
+                    let w = abs(r.width), h = abs(r.height)
+                    if w > 0 && h > 0 { return w / h }
+                }
+                return 9.0/16.0
+            }()
+            let fit = AVMakeRect(aspectRatio: CGSize(width: max(targetAR, 0.0001), height: 1), insideRect: CGRect(origin: .zero, size: geo.size))
+
             ZStack {
-                // Chrome-free playback surface (no system controls)
-                // Fill horizontally to the phone edges, cropping if needed (industry-standard preview)
-                PlayerSurface(player: state.player, videoGravity: .resizeAspectFill)
+                // Chrome-free playback surface (no system controls) sized to the fitted canvas
+                PlayerSurface(player: state.player,
+                              videoGravity: (state.renderConfig.mode == .fit ? .resizeAspect : .resizeAspectFill))
                     .background(Color.black)
+                    .frame(width: fit.width, height: fit.height)
 
                 // Render visible text overlays in canvas coordinate space
                 ZStack {
@@ -109,13 +123,18 @@ struct EditorTrackArea: View {
                     }
                 }
             }
+            // Center the canvas inside available geometry
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             // Make the entire canvas area the gesture target (not just over the text)
             .contentShape(Rectangle())
             .modifier(SelectedTransformGestureModifier(isActive: state.selectedTextId != nil || state.selectedMediaId != nil, gestureProvider: { canvasTransformGesture() }))
             .coordinateSpace(name: "canvas")
-            .onAppear { canvasRect = CGRect(origin: .zero, size: geo.size) }
-            .onChange(of: geo.size) { newSize in
-                canvasRect = CGRect(origin: .zero, size: newSize)
+            .onAppear { canvasRect = CGRect(origin: .zero, size: fit.size) }
+            .onChange(of: geo.size) { _ in
+                canvasRect = CGRect(origin: .zero, size: fit.size)
+            }
+            .onChange(of: state.renderConfig.aspect) { _ in
+                canvasRect = CGRect(origin: .zero, size: fit.size)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("DeleteSelectedTextOverlay"))) { note in

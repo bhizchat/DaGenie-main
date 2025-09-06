@@ -19,6 +19,7 @@ struct CapcutEditorView: View {
     @State private var showEditBar: Bool = false
     @State private var showOverlayBar: Bool = false
     @State private var showOverlayPicker: Bool = false
+    @State private var overlayPickerPresenting: Bool = false
     @State private var overlayPickerItems: [PhotosPickerItem] = []
     // Audio importer presentation state
     @State private var showAudioImporter: Bool = false
@@ -188,7 +189,7 @@ struct CapcutEditorView: View {
                                           onPlusTapped: { showAddClipChoice = true })
                         // Timeline no longer shows the generating pill; canvas overlay handles it
                     }
-                    .frame(height: 72 + 8 + 32 + 120)
+                    .frame(height: dynamicTimelineHeight())
                     // Inline Volume dock sits between timeline and toolbar to avoid intercepting timeline gestures
                     if showVolumeDock {
                         HStack(spacing: 12) {
@@ -300,7 +301,12 @@ struct CapcutEditorView: View {
                     } else if showOverlayBar {
                         OverlayToolsBar(state: state,
                                         onClose: { withAnimation(.easeInOut(duration: 0.2)) { showOverlayBar = false } },
-                                        onAddMedia: { showOverlayPicker = true },
+                                        onAddMedia: {
+                                            if !overlayPickerPresenting {
+                                                overlayPickerPresenting = true
+                                                showOverlayPicker = true
+                                            }
+                                        },
                                         onShowLogoPicker: { })
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     } else {
@@ -364,6 +370,9 @@ struct CapcutEditorView: View {
                        matching: .any(of: [.images, .videos]))
         .onChange(of: overlayPickerItems) { _ in
             Task { await handlePickedOverlays() }
+        }
+        .onChange(of: showOverlayPicker) { open in
+            if !open { overlayPickerPresenting = false }
         }
         .onAppear {
             print("[CapcutEditorView] open with url=\(url.lastPathComponent)")
@@ -476,6 +485,16 @@ struct CapcutEditorView: View {
         }
     }
 
+    private func dynamicTimelineHeight() -> CGFloat {
+        // Base height components: filmstrip + ruler + spacing + toolbar allowance
+        let base: CGFloat = 72 + 8 + 32 + 120
+        if let ar = state.renderConfig.aspect.value {
+            // If portrait (w/h < 1), drop the timeline to reveal more canvas like CapCut
+            return ar < 1.0 ? (base - 60) : base
+        }
+        return base
+    }
+
     @MainActor
     private func importPickedAudio(urls: [URL]) async {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -577,19 +596,21 @@ struct CapcutEditorView: View {
 }
 
 // MARK: - Aspect-fit helper for composition
-private func aspectFitTransform(for track: AVAssetTrack, renderSize: CGSize) -> CGAffineTransform {
-    // Start with the file's orientation
-    let pt = track.preferredTransform
-    // Compute oriented display size
+private func transform(for track: AVAssetTrack, renderSize: CGSize, mode: ContentMode) -> CGAffineTransform {
+    let preferred = track.preferredTransform
     let natural = track.naturalSize
-    let orientedRect = CGRect(origin: .zero, size: natural).applying(pt)
+    let orientedRect = CGRect(origin: .zero, size: natural).applying(preferred)
     let oriented = CGSize(width: abs(orientedRect.width), height: abs(orientedRect.height))
-    // Fit rect inside render size
-    let fitted = AVMakeRect(aspectRatio: oriented, insideRect: CGRect(origin: .zero, size: renderSize))
-    let scale = fitted.size.width / oriented.width
-    var t = pt
+    let fitScale = min(renderSize.width / oriented.width, renderSize.height / oriented.height)
+    let fillScale = max(renderSize.width / oriented.width, renderSize.height / oriented.height)
+    let scale = (mode == .fit) ? fitScale : fillScale
+    let scaledW = oriented.width * scale
+    let scaledH = oriented.height * scale
+    let tx = (renderSize.width - scaledW) / 2.0
+    let ty = (renderSize.height - scaledH) / 2.0
+    var t = preferred
     t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-    t = t.concatenating(CGAffineTransform(translationX: fitted.origin.x, y: fitted.origin.y))
+    t = t.concatenating(CGAffineTransform(translationX: tx, y: ty))
     return t
 }
 
@@ -1054,6 +1075,22 @@ final class EditorState: ObservableObject {
         let asset = AVURLAsset(url: url)
         let clip = Clip(url: url, asset: asset, duration: asset.duration)
         clips.append(clip)
+        // Auto-select aspect on first import or when portrait is added later
+        await MainActor.run {
+            if clips.count == 1 {
+                if let t = asset.tracks(withMediaType: .video).first {
+                    let r = CGRect(origin: .zero, size: t.naturalSize).applying(t.preferredTransform)
+                    let w = abs(r.width), h = abs(r.height)
+                    if h > w { self.renderConfig.aspect = .nineBySixteen } else { self.renderConfig.aspect = .sixteenByNine }
+                }
+            } else if self.renderConfig.aspect == .sixteenByNine || self.renderConfig.aspect == .original {
+                if let t = asset.tracks(withMediaType: .video).first {
+                    let r = CGRect(origin: .zero, size: t.naturalSize).applying(t.preferredTransform)
+                    let w = abs(r.width), h = abs(r.height)
+                    if h > w { self.renderConfig.aspect = .nineBySixteen }
+                }
+            }
+        }
         await rebuildComposition()
         let index = clips.count - 1
         await generateThumbnails(forClipAt: index)
@@ -1089,7 +1126,29 @@ final class EditorState: ObservableObject {
         // Prepare one layer instruction for the concatenated track; we will set a transform at each segment start
         let vLayerInstruction = videoTrack.map { AVMutableVideoCompositionLayerInstruction(assetTrack: $0) }
         var projectFPS: Float = 30
-        let renderSize = CGSize(width: 1080, height: 1920)
+        // Determine target render size from selected aspect ratio
+        let renderSize: CGSize = {
+            // Try to compute from selected aspect or fall back to first clip natural size
+            if let ar = renderConfig.aspect.value {
+                // Use 1080 on the short edge for preview quality
+                let short: CGFloat = 1080
+                if ar < 1.0 {
+                    // Portrait: width/height = ar → width = short, height = short / ar
+                    return CGSize(width: short, height: round(short / max(ar, 0.0001)))
+                } else {
+                    // Landscape / square
+                    return CGSize(width: round(short * ar), height: short)
+                }
+            } else {
+                // .original – use oriented natural size of first video track
+                if let firstTrack = clips.first?.asset.tracks(withMediaType: .video).first {
+                    let pt = firstTrack.preferredTransform
+                    let rect = CGRect(origin: .zero, size: firstTrack.naturalSize).applying(pt)
+                    return CGSize(width: abs(rect.width), height: abs(rect.height))
+                }
+                return CGSize(width: 1080, height: 1920)
+            }
+        }()
 
         var cursor: CMTime = .zero
         // Collect audio mix params for both original clip audio and user-added audio tracks
@@ -1103,9 +1162,9 @@ final class EditorState: ObservableObject {
                 vdst.scaleTimeRange(CMTimeRange(start: cursor, duration: srcRange.duration), toDuration: outDur)
                 // Track fps to choose a sensible frameDuration
                 if v.nominalFrameRate > 0 { projectFPS = v.nominalFrameRate }
-                // Per-segment aspect-fit transform into the fixed renderSize
+                // Per-segment transform based on selected content mode (fill/fit)
                 if let layer = vLayerInstruction {
-                    let t = aspectFitTransform(for: v, renderSize: renderSize)
+                    let t = transform(for: v, renderSize: renderSize, mode: renderConfig.mode)
                     layer.setTransform(t, at: cursor)
                 }
             }
@@ -1210,8 +1269,10 @@ final class EditorState: ObservableObject {
         }
 
         // Cancel any in-flight generation for this clip
-        if let existing = imageGenerators[clip.id] {
-            existing.cancelAllCGImageGeneration()
+        await MainActor.run {
+            if let existing = imageGenerators[clip.id] {
+                existing.cancelAllCGImageGeneration()
+            }
         }
 
         // Create a new generator configured for filmstrip speed (non-zero tolerances)
@@ -1222,9 +1283,11 @@ final class EditorState: ObservableObject {
         let tol = CMTime(value: 1, timescale: 30) // ~33ms tolerance for speed
         gen.requestedTimeToleranceBefore = tol
         gen.requestedTimeToleranceAfter  = tol
-        imageGenerators[clip.id] = gen
+        await MainActor.run {
+            imageGenerators[clip.id] = gen
+        }
         let token = UUID()
-        thumbnailGenTokens[clip.id] = token
+        await MainActor.run { thumbnailGenTokens[clip.id] = token }
 
         // Pre-size thumbnails so the UI renders full strip immediately
         await MainActor.run {
@@ -1890,7 +1953,7 @@ private struct PlayerLayerView: UIViewRepresentable {
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
         var player: AVPlayer? {
             get { playerLayer.player }
-            set { playerLayer.player = newValue; playerLayer.videoGravity = .resizeAspect }
+            set { playerLayer.player = newValue; playerLayer.videoGravity = .resizeAspectFill }
         }
         override init(frame: CGRect) {
             super.init(frame: frame)

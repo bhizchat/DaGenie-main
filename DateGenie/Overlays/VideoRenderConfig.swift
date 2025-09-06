@@ -33,7 +33,7 @@ struct VideoRenderConfig {
     var aspect: AspectRatio
     var mode: ContentMode
 
-    init(aspect: AspectRatio = .fourByFive, mode: ContentMode = .fill) {
+    init(aspect: AspectRatio = .original, mode: ContentMode = .fill) {
         self.aspect = aspect
         self.mode = mode
     }

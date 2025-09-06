@@ -13,13 +13,8 @@ struct RatioDock: View {
 
     private var presets: [Preset] {
         [
-            Preset(title: "Original", icon: "original", aspect: .original),
-            Preset(title: "TikTok", icon: "tiktok", aspect: .nineBySixteen),
-            Preset(title: "Instagram", icon: "insta", aspect: .fourByFive),
-            Preset(title: "YouTube", icon: "youtube", aspect: .sixteenByNine),
-            Preset(title: "1:1", icon: "insta", aspect: .oneByOne),
-            Preset(title: "3:4", icon: "insta", aspect: .threeByFour),
-            Preset(title: "4:3", icon: "youtube", aspect: .fourByThree)
+            Preset(title: "Vertical 9:16", icon: "tiktok", aspect: .nineBySixteen),
+            Preset(title: "Horizontal 16:9", icon: "youtube", aspect: .sixteenByNine)
         ]
     }
 
