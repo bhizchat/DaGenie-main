@@ -39,18 +39,18 @@ struct EditorTrackArea: View {
 
                 // Render visible text overlays in canvas coordinate space
                 ZStack {
-                    // Media overlays: selected shows interactive view; otherwise reuse MediaOverlayView without chips
+                    // Media overlays: selected uses internal gestures for full 2D drag/scale/rotate; others are passive
                     ForEach(state.mediaOverlays, id: \.id) { m in
                         if isVisible(m, at: state.displayTime) {
                             if state.selectedMediaId == m.id {
                                 if let i = state.mediaOverlays.firstIndex(where: { $0.id == m.id }) {
                                     MediaOverlayView(
                                         model: $state.mediaOverlays[i],
-                                        canvasSize: geo.size,
-                                        externalScaleDelta: canvasMagnify,
-                                        externalRotationDelta: canvasRotate,
-                                        externalAnchor: canvasAnchor,
-                                        enableInternalTransformGesture: false,
+                                        canvasSize: fit.size,
+                                        externalScaleDelta: 1,
+                                        externalRotationDelta: .zero,
+                                        externalAnchor: .center,
+                                        enableInternalTransformGesture: true,
                                         showSelectionChips: true
                                     )
                                         .allowsHitTesting(true)
@@ -59,7 +59,7 @@ struct EditorTrackArea: View {
                                 if let i = state.mediaOverlays.firstIndex(where: { $0.id == m.id }) {
                                     MediaOverlayView(
                                         model: $state.mediaOverlays[i],
-                                        canvasSize: geo.size,
+                                        canvasSize: fit.size,
                                         externalScaleDelta: 1,
                                         externalRotationDelta: .zero,
                                         externalAnchor: .center,

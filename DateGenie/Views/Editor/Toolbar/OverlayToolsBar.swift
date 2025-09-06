@@ -7,6 +7,8 @@ struct OverlayToolsBar: View {
     let onClose: () -> Void
     let onAddMedia: () -> Void
     let onShowLogoPicker: () -> Void
+    // Optional preview for the user's brand logo (transparent PNG)
+    var logoPreview: UIImage? = nil
 
     var body: some View {
         HStack(spacing: 10) {
@@ -18,7 +20,7 @@ struct OverlayToolsBar: View {
                     // Add Media button (uses play_triangle asset per spec)
                     OverlayToolsBarItem(assetName: "play_triangle", title: "Add Media", action: onAddMedia)
                     // Logo button (text-only placeholder for future user logos)
-                    OverlayToolsBarItem(assetName: nil, title: "Logo", action: onShowLogoPicker)
+                    OverlayToolsBarItem(assetName: nil, title: "Logo", action: onShowLogoPicker, previewImage: logoPreview, isEnabled: true)
                 }
                 .padding(.vertical, 6)
             }
@@ -36,6 +38,7 @@ private struct OverlayToolsBarItem: View {
     let assetName: String?
     let title: String
     let action: () -> Void
+    var previewImage: UIImage? = nil
     var isEnabled: Bool = true
 
     var body: some View {
@@ -51,6 +54,16 @@ private struct OverlayToolsBarItem: View {
                             .resizable()
                             .scaledToFit()
                             .frame(width: 26, height: 26)
+                            .opacity(isEnabled ? 1.0 : 0.4)
+                    } else if let ui = previewImage {
+                        Image(uiImage: ui)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 36, height: 36)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.2), lineWidth: 1)
+                            )
                             .opacity(isEnabled ? 1.0 : 0.4)
                     } else {
                         // Minimal placeholder if no asset

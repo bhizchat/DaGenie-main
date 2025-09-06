@@ -21,6 +21,9 @@ struct CapcutEditorView: View {
     @State private var showOverlayPicker: Bool = false
     @State private var overlayPickerPresenting: Bool = false
     @State private var overlayPickerItems: [PhotosPickerItem] = []
+    // Logo picker state
+    @State private var showLogoPicker: Bool = false
+    @State private var logoPickerItems: [PhotosPickerItem] = []
     // Audio importer presentation state
     @State private var showAudioImporter: Bool = false
     // Phase 2B: typing dock state
@@ -91,6 +94,52 @@ struct CapcutEditorView: View {
     private func selectedTextIndex() -> Int? {
         guard let id = state.selectedTextId else { return nil }
         return state.textOverlays.firstIndex(where: { $0.id == id })
+    }
+
+    // MARK: - Logo insertion helpers
+    @MainActor
+    private func insertPersistedLogoOrPrompt() {
+        // Use the persisted transparent PNG from onboarding if available
+        if let url = UserRepository.shared.brandLogoLocalURL() {
+            insertLogo(from: url)
+            return
+        }
+        // No persisted logo yet; allow user to pick a PNG and we will persist it
+        logoPickerItems = []
+        showLogoPicker = true
+    }
+
+    @MainActor
+    private func handlePickedLogoIfNeeded() async {
+        guard let item = logoPickerItems.first else { return }
+        defer { logoPickerItems.removeAll() }
+        do {
+            if let data = try await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
+                // We expect onboarding to have transparent PNG already; still persist what the user picks
+                Task { @MainActor in
+                    if let url = await UserRepository.shared.saveBrandLogoPNG(img) {
+                        insertLogo(from: url)
+                    }
+                }
+            }
+        } catch { print("[LogoPicker] error: \(error.localizedDescription)") }
+        showLogoPicker = false
+    }
+
+    @MainActor
+    private func insertLogo(from url: URL) {
+        // Default position near bottom center; clamp within canvas if not measured yet
+        let pos = CGPoint(x: max(0, canvasRect.width/2), y: max(0, canvasRect.height * 0.86))
+        state.addPhotoOverlay(imageURL: url, at: state.displayTime, position: pos)
+        withAnimation(.easeInOut(duration: 0.2)) { showOverlayBar = false; showEditBar = true }
+    }
+
+    // Small helper to render the logo preview if cached
+    private func currentLogoPreview() -> UIImage? {
+        if let url = UserRepository.shared.brandLogoLocalURL() {
+            return UIImage(contentsOfFile: url.path)
+        }
+        return nil
     }
 
     var body: some View {
@@ -307,7 +356,8 @@ struct CapcutEditorView: View {
                                                 showOverlayPicker = true
                                             }
                                         },
-                                        onShowLogoPicker: { })
+                                        onShowLogoPicker: { insertPersistedLogoOrPrompt() },
+                                        logoPreview: currentLogoPreview())
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     } else {
                         EditorBottomToolbar(
@@ -370,6 +420,14 @@ struct CapcutEditorView: View {
                        matching: .any(of: [.images, .videos]))
         .onChange(of: overlayPickerItems) { _ in
             Task { await handlePickedOverlays() }
+        }
+        // Dedicated Logo picker
+        .photosPicker(isPresented: $showLogoPicker,
+                       selection: $logoPickerItems,
+                       maxSelectionCount: 1,
+                       matching: .images)
+        .onChange(of: logoPickerItems) { _ in
+            Task { await handlePickedLogoIfNeeded() }
         }
         .onChange(of: showOverlayPicker) { open in
             if !open { overlayPickerPresenting = false }
