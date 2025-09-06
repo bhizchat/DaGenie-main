@@ -891,7 +891,7 @@ struct TimelineContainer: View {
                             let img = i < clip.thumbnails.count ? clip.thumbnails[i] : UIImage()
                             Image(uiImage: img)
                                 .resizable()
-                                .scaledToFill()
+                                .aspectRatio(contentMode: .fill)
                                 .frame(width: max(24, state.pixelsPerSecond), height: TimelineStyle.videoRowHeight)
                                 .clipped()
                         }

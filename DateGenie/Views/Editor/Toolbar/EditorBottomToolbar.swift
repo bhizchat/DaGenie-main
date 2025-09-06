@@ -14,7 +14,7 @@ struct EditorBottomToolbar: View {
                 item(icon: "music.note", label: "Audio", action: onAudio)
                 item(letter: "T", label: "Text", action: onText)
                 item(icon: "square.on.square", label: "Overlay", action: onOverlay)
-                item(icon: "rectangle.portrait", label: "Aspect", action: onAspect)
+                item(icon: "rectangle.portrait", label: "Ratio", action: onAspect)
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)

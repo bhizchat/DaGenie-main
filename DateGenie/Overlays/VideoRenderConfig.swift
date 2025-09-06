@@ -2,45 +2,54 @@ import CoreGraphics
 import AVFoundation
 
 enum AspectRatio {
+    case original
     case nineBySixteen
+    case sixteenByNine
     case fourByFive
     case oneByOne
+    case threeByFour
+    case fourByThree
 
-    var value: CGFloat {
+    // width / height. nil means keep original aspect
+    var value: CGFloat? {
         switch self {
+        case .original: return nil
         case .nineBySixteen: return 9.0/16.0
+        case .sixteenByNine: return 16.0/9.0
         case .fourByFive: return 4.0/5.0
         case .oneByOne: return 1.0
+        case .threeByFour: return 3.0/4.0
+        case .fourByThree: return 4.0/3.0
         }
     }
 }
 
 enum ContentMode {
-    case cropCenter
-    case letterbox
+    case fill      // center-crop (CapCut default)
+    case fit       // letterbox/pillarbox
 }
 
 struct VideoRenderConfig {
     var aspect: AspectRatio
     var mode: ContentMode
 
-    init(aspect: AspectRatio = .fourByFive, mode: ContentMode = .cropCenter) {
+    init(aspect: AspectRatio = .fourByFive, mode: ContentMode = .fill) {
         self.aspect = aspect
         self.mode = mode
     }
 
     func renderSize(for sourceSize: CGSize) -> CGSize {
         switch mode {
-        case .cropCenter:
+        case .fill:
             return cropCenterRenderSize(for: sourceSize)
-        case .letterbox:
-            // For letterbox we keep the same size; caller should add bars as needed
+        case .fit:
+            // Keep source; presentation shows bars
             return sourceSize
         }
     }
 
     private func cropCenterRenderSize(for sourceSize: CGSize) -> CGSize {
-        let targetAR = aspect.value
+        guard let targetAR = aspect.value else { return sourceSize }
         let srcAR = sourceSize.width / max(sourceSize.height, 1)
         if abs(srcAR - targetAR) < 0.0001 { return sourceSize }
         if srcAR < targetAR {

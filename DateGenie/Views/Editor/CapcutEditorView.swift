@@ -14,7 +14,8 @@ struct CapcutEditorView: View {
     @State private var showAddClipChoice: Bool = false
     @State private var showTextPanel: Bool = false
     @State private var showCaptionPanel: Bool = false
-    @State private var showAspectSheet: Bool = false
+    @State private var showAspectSheet: Bool = false // deprecated; kept until dock fully replaces
+    @State private var showRatioDock: Bool = false
     @State private var showEditBar: Bool = false
     @State private var showOverlayBar: Bool = false
     @State private var showOverlayPicker: Bool = false
@@ -312,7 +313,10 @@ struct CapcutEditorView: View {
                                 dockFocused = true
                             },
                             onOverlay: { withAnimation(.easeInOut(duration: 0.2)) { showOverlayBar = true } },
-                            onAspect: { showAspectSheet = true }
+                            onAspect: {
+                                // Toggle the new Ratio dock
+                                withAnimation(.easeInOut(duration: 0.2)) { showRatioDock.toggle() }
+                            }
                         )
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
@@ -323,6 +327,17 @@ struct CapcutEditorView: View {
             // Typing dock rides above the keyboard without altering parent layout
             .overlay(alignment: .bottom) {
                 Group {
+                    if showRatioDock {
+                        RatioDock(selected: Binding(get: { state.renderConfig.aspect }, set: { newVal in
+                            state.renderConfig.aspect = newVal
+                            Task { await state.rebuildCompositionForPreview() }
+                        }), onDismiss: {
+                            withAnimation(.easeInOut(duration: 0.2)) { showRatioDock = false }
+                        })
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                     if isTyping, let id = state.selectedTextId,
                        let binding = Binding(get: {
                            state.textOverlays.first(where: { $0.id == id })?.base.string ?? ""
@@ -454,14 +469,7 @@ struct CapcutEditorView: View {
         }
         .sheet(isPresented: $showTextPanel) { TextToolPanel(state: state, canvasRect: canvasRect) }
         .sheet(isPresented: $showCaptionPanel) { CaptionToolPanel(state: state, canvasRect: canvasRect) }
-        .actionSheet(isPresented: $showAspectSheet) {
-            ActionSheet(title: Text("Aspect Ratio"), buttons: [
-                .default(Text("9:16")) { state.renderConfig.aspect = .nineBySixteen },
-                .default(Text("4:5")) { state.renderConfig.aspect = .fourByFive },
-                .default(Text("1:1")) { state.renderConfig.aspect = .oneByOne },
-                .cancel()
-            ])
-        }
+        // Legacy aspect sheet removed in favor of RatioDock
         .onDisappear {
             // Deactivate playback session if it was activated for preview
             try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
@@ -566,6 +574,23 @@ struct CapcutEditorView: View {
             print("[Editor] Audio session error: \(error)")
         }
     }
+}
+
+// MARK: - Aspect-fit helper for composition
+private func aspectFitTransform(for track: AVAssetTrack, renderSize: CGSize) -> CGAffineTransform {
+    // Start with the file's orientation
+    let pt = track.preferredTransform
+    // Compute oriented display size
+    let natural = track.naturalSize
+    let orientedRect = CGRect(origin: .zero, size: natural).applying(pt)
+    let oriented = CGSize(width: abs(orientedRect.width), height: abs(orientedRect.height))
+    // Fit rect inside render size
+    let fitted = AVMakeRect(aspectRatio: oriented, insideRect: CGRect(origin: .zero, size: renderSize))
+    let scale = fitted.size.width / oriented.width
+    var t = pt
+    t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+    t = t.concatenating(CGAffineTransform(translationX: fitted.origin.x, y: fitted.origin.y))
+    return t
 }
 
 // Simple three-dot loading indicator (white)
@@ -1061,6 +1086,11 @@ final class EditorState: ObservableObject {
 
         let videoTrack = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
 
+        // Prepare one layer instruction for the concatenated track; we will set a transform at each segment start
+        let vLayerInstruction = videoTrack.map { AVMutableVideoCompositionLayerInstruction(assetTrack: $0) }
+        var projectFPS: Float = 30
+        let renderSize = CGSize(width: 1080, height: 1920)
+
         var cursor: CMTime = .zero
         // Collect audio mix params for both original clip audio and user-added audio tracks
         var mixParams: [AVMutableAudioMixInputParameters] = []
@@ -1071,6 +1101,13 @@ final class EditorState: ObservableObject {
                 try? vdst.insertTimeRange(srcRange, of: v, at: cursor)
                 // Retime the just-inserted segment to match speed
                 vdst.scaleTimeRange(CMTimeRange(start: cursor, duration: srcRange.duration), toDuration: outDur)
+                // Track fps to choose a sensible frameDuration
+                if v.nominalFrameRate > 0 { projectFPS = v.nominalFrameRate }
+                // Per-segment aspect-fit transform into the fixed renderSize
+                if let layer = vLayerInstruction {
+                    let t = aspectFitTransform(for: v, renderSize: renderSize)
+                    layer.setTransform(t, at: cursor)
+                }
             }
             if clip.hasOriginalAudio && !clip.muteOriginalAudio,
                let aSrc = clip.asset.tracks(withMediaType: .audio).first,
@@ -1114,8 +1151,21 @@ final class EditorState: ObservableObject {
             try? dst.insertTimeRange(CMTimeRange(start: srcRange.start, duration: outDur), of: src, at: m.start)
         }
 
+        // Build video composition with our render size and layer instruction
+        let vcomp = AVMutableVideoComposition()
+        vcomp.renderSize = renderSize
+        vcomp.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, Int32(round(projectFPS)))))
+        if let layer = vLayerInstruction {
+            let instr = AVMutableVideoCompositionInstruction()
+            instr.timeRange = CMTimeRange(start: .zero, duration: comp.duration)
+            instr.backgroundColor = CGColor(gray: 0, alpha: 1)
+            instr.layerInstructions = [layer]
+            vcomp.instructions = [instr]
+        }
+
         composition = comp
         let item = AVPlayerItem(asset: composition)
+        item.videoComposition = vcomp
         // Global default: if any retimed audio requests pitch preservation, prefer spectral
         let wantsPitch = (clips.contains { $0.speed != 1.0 && $0.preserveOriginalPitch }) ||
                          (audioTracks.contains { $0.speed != 1.0 && $0.preservePitch })
@@ -1124,6 +1174,8 @@ final class EditorState: ObservableObject {
             let mix = AVMutableAudioMix(); mix.inputParameters = mixParams
             item.audioMix = mix
         }
+        // Swap player item and seek back. Prefer avoiding stalls during swap.
+        player.automaticallyWaitsToMinimizeStalling = true
         player.replaceCurrentItem(with: item)
         duration = totalDuration
         // Seek new item back to kept time precisely, then resume
@@ -1165,7 +1217,8 @@ final class EditorState: ObservableObject {
         // Create a new generator configured for filmstrip speed (non-zero tolerances)
         let gen = AVAssetImageGenerator(asset: clip.asset)
         gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 240, height: 240)
+        gen.apertureMode = .cleanAperture
+        gen.maximumSize = CGSize(width: 0, height: TimelineStyle.videoRowHeight * UIScreen.main.scale)
         let tol = CMTime(value: 1, timescale: 30) // ~33ms tolerance for speed
         gen.requestedTimeToleranceBefore = tol
         gen.requestedTimeToleranceAfter  = tol
