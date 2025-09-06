@@ -39,7 +39,7 @@ struct EditorTrackArea: View {
 
                 // Render visible text overlays in canvas coordinate space
                 ZStack {
-                    // Media overlays: selected uses internal gestures for full 2D drag/scale/rotate; others are passive
+                    // Media overlays: selected uses canvas-wide magnify/rotate deltas; others are passive
                     ForEach(state.mediaOverlays, id: \.id) { m in
                         if isVisible(m, at: state.displayTime) {
                             if state.selectedMediaId == m.id {
@@ -47,10 +47,10 @@ struct EditorTrackArea: View {
                                     MediaOverlayView(
                                         model: $state.mediaOverlays[i],
                                         canvasSize: fit.size,
-                                        externalScaleDelta: 1,
-                                        externalRotationDelta: .zero,
-                                        externalAnchor: .center,
-                                        enableInternalTransformGesture: true,
+                                        externalScaleDelta: canvasMagnify,
+                                        externalRotationDelta: canvasRotate,
+                                        externalAnchor: canvasAnchor,
+                                        enableInternalTransformGesture: false,
                                         showSelectionChips: true
                                     )
                                         .allowsHitTesting(true)

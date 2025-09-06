@@ -246,22 +246,68 @@ struct TimelineContainer: View {
                     .allowsHitTesting(false)
 
                 if !state.isPlaying {
-                    // Left handle (tap selects previous neighbor ending at s)
+                    // Left handle with snapping + auto-scroll + haptics
                     EdgeHandle(height: TimelineStyle.videoRowHeight,
                                width: selectionHandleWidth,
-                               onDrag: { _ in },
-                               onEnd: { },
+                               onDrag: { dx in
+                                   let pps = state.pixelsPerSecond
+                                   if !isDraggingLaneItem {
+                                       isDraggingLaneItem = true
+                                       isTrimming = true
+                                       state.beginClipTrimGesture()
+                                       selectionHaptics.prepare()
+                                       leftHandlePrevDX = 0
+                                   }
+                                   let deltaSec = Double(dx / max(1, pps))
+                                   let snapped = nearestSnap(to: s + deltaSec, pps: pps, excludeTextId: nil)
+                                   if abs(Double(leftHandlePrevDX) / Double(max(1, pps)) - deltaSec) > 0.001, snapped.hit != nil {
+                                       selectionHaptics.selectionChanged()
+                                   }
+                                   leftHandlePrevDX = dx
+                                   if let cid = state.selectedClipId { state.trimClipDuringGesture(id: cid, leftDeltaSeconds: snapped.time - s) }
+                                   updateAutoScroll(forHandleX: startX - selectionHandleWidth/2, viewWidth: geo.size.width)
+                               },
+                               onEnd: {
+                                   leftHandlePrevDX = 0
+                                   isDraggingLaneItem = false
+                                   isTrimming = false
+                                   Task { await state.endClipTrimGesture() }
+                                   stopAutoScroll()
+                               },
                                onBegin: nil,
                                onTap: { selectClipNeighbor(atEdgeTime: s, isRightEdge: false) })
                         .position(x: startX - selectionHandleWidth / 2,
                                   y: TimelineStyle.videoRowHeight / 2)
                         .zIndex(200)
 
-                    // Right handle (tap selects next neighbor starting at e)
+                    // Right handle with snapping + auto-scroll + haptics
                     EdgeHandle(height: TimelineStyle.videoRowHeight,
                                width: selectionHandleWidth,
-                               onDrag: { _ in },
-                               onEnd: { },
+                               onDrag: { dx in
+                                   let pps = state.pixelsPerSecond
+                                   if !isDraggingLaneItem {
+                                       isDraggingLaneItem = true
+                                       isTrimming = true
+                                       state.beginClipTrimGesture()
+                                       selectionHaptics.prepare()
+                                       rightHandlePrevDX = 0
+                                   }
+                                   let deltaSec = Double(dx / max(1, pps))
+                                   let snapped = nearestSnap(to: e + deltaSec, pps: pps, excludeTextId: nil)
+                                   if abs(Double(rightHandlePrevDX) / Double(max(1, pps)) - deltaSec) > 0.001, snapped.hit != nil {
+                                       selectionHaptics.selectionChanged()
+                                   }
+                                   rightHandlePrevDX = dx
+                                   if let cid = state.selectedClipId { state.trimClipDuringGesture(id: cid, rightDeltaSeconds: snapped.time - e) }
+                                   updateAutoScroll(forHandleX: endX + selectionHandleWidth/2, viewWidth: geo.size.width)
+                               },
+                               onEnd: {
+                                   rightHandlePrevDX = 0
+                                   isDraggingLaneItem = false
+                                   isTrimming = false
+                                   Task { await state.endClipTrimGesture() }
+                                   stopAutoScroll()
+                               },
                                onBegin: nil,
                                onTap: { selectClipNeighbor(atEdgeTime: e, isRightEdge: true) })
                         .position(x: endX + selectionHandleWidth / 2,

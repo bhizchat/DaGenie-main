@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 import FirebaseAuth
 import UniformTypeIdentifiers
 import PhotosUI
@@ -37,6 +38,8 @@ struct CapcutEditorView: View {
     @State private var showSpeedDock: Bool = false
     @State private var speedSliderUnit: Double = 0 // 0..1 mapped to 0.2..100
     @State private var preservePitchToggle: Bool = true
+    // Logo error alert
+    @State private var logoErrorMessage: String? = nil
     
 
     init(url: URL, initialGenerating: Bool = false) {
@@ -104,7 +107,8 @@ struct CapcutEditorView: View {
             insertLogo(from: url)
             return
         }
-        // No persisted logo yet; allow user to pick a PNG and we will persist it
+        // No persisted logo yet; prompt the user to upload a transparent PNG
+        logoErrorMessage = "No onboarding logo found. Please upload a transparent PNG with alpha."
         logoPickerItems = []
         showLogoPicker = true
     }
@@ -115,7 +119,12 @@ struct CapcutEditorView: View {
         defer { logoPickerItems.removeAll() }
         do {
             if let data = try await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-                // We expect onboarding to have transparent PNG already; still persist what the user picks
+                // Enforce transparency: reject if image lacks alpha channel
+                if !imageHasAlpha(img) {
+                    await MainActor.run { logoErrorMessage = "Selected image has no transparency. Please choose a PNG with alpha." }
+                    return
+                }
+                // Persist the transparent PNG and insert
                 Task { @MainActor in
                     if let url = await UserRepository.shared.saveBrandLogoPNG(img) {
                         insertLogo(from: url)
@@ -140,6 +149,12 @@ struct CapcutEditorView: View {
             return UIImage(contentsOfFile: url.path)
         }
         return nil
+    }
+
+    private func imageHasAlpha(_ image: UIImage) -> Bool {
+        guard let cg = image.cgImage else { return false }
+        let a = cg.alphaInfo
+        return !(a == .none || a == .noneSkipFirst || a == .noneSkipLast)
     }
 
     var body: some View {
@@ -414,6 +429,11 @@ struct CapcutEditorView: View {
         }
         // Keep bottom UI static; allow keyboard to cover it
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .alert("Logo Issue", isPresented: Binding(get: { logoErrorMessage != nil }, set: { v in if !v { logoErrorMessage = nil } })) {
+            Button("OK", role: .cancel) { logoErrorMessage = nil }
+        } message: {
+            Text(logoErrorMessage ?? "")
+        }
         .photosPicker(isPresented: $showOverlayPicker,
                        selection: $overlayPickerItems,
                        maxSelectionCount: 5,
@@ -811,6 +831,7 @@ final class EditorState: ObservableObject {
     @Published var activeTextTrimSession: TrimSession? = nil
     @Published var activeAudioTrimSession: TrimSession? = nil
     @Published var activeMediaTrimSession: TrimSession? = nil
+    @Published var activeClipTrimSession: TrimSession? = nil
 
     /// Begin a trim session for the currently selected text overlay.
     @MainActor
@@ -1089,6 +1110,57 @@ final class EditorState: ObservableObject {
         guard activeAudioTrimSession != nil else { return }
         activeAudioTrimSession = nil
         Task { await rebuildCompositionForPreview() }
+    }
+
+    // MARK: - Trim session for video clips (gesture-scoped)
+    @MainActor
+    func beginClipTrimGesture() {
+        guard let id = selectedClipId, let i = clips.firstIndex(where: { $0.id == id }) else { return }
+        let c = clips[i]
+        activeClipTrimSession = TrimSession(
+            baseStart: 0, // not used for clips (no scheduling growth)
+            baseDuration: max(0, CMTimeGetSeconds(c.duration)),
+            baseLeft: max(0, CMTimeGetSeconds(c.trimStart)),
+            baseRight: max(0, CMTimeGetSeconds(c.trimEnd ?? c.duration))
+        )
+    }
+
+    @MainActor
+    func trimClipDuringGesture(id: UUID, leftDeltaSeconds: Double? = nil, rightDeltaSeconds: Double? = nil) {
+        guard var s = activeClipTrimSession,
+              let i = clips.firstIndex(where: { $0.id == id }) else { return }
+
+        var left  = s.baseLeft
+        var right = s.baseRight
+        let dur   = s.baseDuration
+        // Ensure minimum length respects frame duration
+        let frame = max(frameDurationSeconds(), s.minLen)
+        let minLen = max(s.minLen, frame)
+
+        if let dx = leftDeltaSeconds {
+            let targetLeft = quantizeToFrame(left + dx)
+            left = min(max(0, targetLeft), max(0, right - minLen))
+        }
+        if let dx = rightDeltaSeconds {
+            let targetRight = quantizeToFrame(right + dx)
+            right = min(dur, max(left + minLen, targetRight))
+        }
+
+        clips[i].trimStart = CMTime(seconds: max(0, quantizeToFrame(left)), preferredTimescale: 600)
+        clips[i].trimEnd   = CMTime(seconds: min(dur, quantizeToFrame(right)), preferredTimescale: 600)
+
+        // Advance baselines so deltas are cumulative-robust
+        s.baseLeft = max(0, left)
+        s.baseRight = min(dur, right)
+        activeClipTrimSession = s
+    }
+
+    @MainActor
+    func endClipTrimGesture() async {
+        guard activeClipTrimSession != nil, let id = selectedClipId, let idx = clips.firstIndex(where: { $0.id == id }) else { activeClipTrimSession = nil; return }
+        activeClipTrimSession = nil
+        await rebuildCompositionForPreview()
+        await generateThumbnails(forClipAt: idx)
     }
 
     func seek(to time: CMTime, precise: Bool = false) {
@@ -1649,16 +1721,13 @@ extension EditorState {
 
         // Perform split if needed
         if let local = splitLocal {
-            let host = clips[insertIndex]
-            let splitInAsset = host.trimStart + local
-
-            var left = host
-            var right = host
-            left.trimEnd = splitInAsset
-            right.trimStart = splitInAsset
-
-            clips.remove(at: insertIndex)
-            clips.insert(contentsOf: [left, newClip, right], at: insertIndex)
+            // First split the host into left/right with fresh identities
+            await splitClip(at: insertIndex, localTime: local)
+            // After split, clips[insertIndex] = left, clips[insertIndex+1] = right
+            let right = clips.remove(at: insertIndex + 1)
+            // Insert new clip between left and right
+            clips.insert(newClip, at: insertIndex + 1)
+            clips.insert(right, at: insertIndex + 2)
 
             await rebuildComposition()
             await generateThumbnails(forClipAt: insertIndex)       // left
@@ -1872,6 +1941,10 @@ extension EditorState {
         }
         if let clipId = selectedClipId {
             if let idx = clips.firstIndex(where: { $0.id == clipId }) {
+                // Clean up thumbnail state for the clip being deleted
+                imageGenerators[clips[idx].id]?.cancelAllCGImageGeneration()
+                imageGenerators.removeValue(forKey: clips[idx].id)
+                thumbnailGenTokens.removeValue(forKey: clips[idx].id)
                 clips.remove(at: idx)
                 selectedClipId = nil
                 await rebuildComposition()
@@ -1981,6 +2054,71 @@ extension EditorState {
             displayTime = CMTime(seconds: max(0, CMTimeGetSeconds(dup.trimStart)), preferredTimescale: 600)
             return
         }
+    }
+
+    // MARK: - Internal split helper (fresh identities, thumbnail cleanup)
+    @MainActor
+    fileprivate func splitClip(at index: Int, localTime: CMTime) async {
+        guard clips.indices.contains(index) else { return }
+        let host = clips[index]
+        let splitPoint = host.trimStart + localTime
+
+        // Construct brand-new left/right clips with copied properties and fresh UUIDs
+        var left = Clip(url: host.url, asset: host.asset, duration: host.duration)
+        left.hasOriginalAudio = host.hasOriginalAudio
+        left.waveformSamples = host.waveformSamples
+        left.muteOriginalAudio = host.muteOriginalAudio
+        left.originalAudioVolume = host.originalAudioVolume
+        left.speed = host.speed
+        left.preserveOriginalPitch = host.preserveOriginalPitch
+        left.smoothInterpolation = host.smoothInterpolation
+        left.trimStart = host.trimStart
+        left.trimEnd = splitPoint
+
+        var right = Clip(url: host.url, asset: host.asset, duration: host.duration)
+        right.hasOriginalAudio = host.hasOriginalAudio
+        right.waveformSamples = host.waveformSamples
+        right.muteOriginalAudio = host.muteOriginalAudio
+        right.originalAudioVolume = host.originalAudioVolume
+        right.speed = host.speed
+        right.preserveOriginalPitch = host.preserveOriginalPitch
+        right.smoothInterpolation = host.smoothInterpolation
+        right.trimStart = splitPoint
+        right.trimEnd = host.trimEnd
+
+        // Remove original and insert left/right
+        clips.remove(at: index)
+        clips.insert(contentsOf: [left, right], at: index)
+
+        // Cleanup thumbnail generators and tokens for the old host id
+        imageGenerators[host.id]?.cancelAllCGImageGeneration()
+        imageGenerators.removeValue(forKey: host.id)
+        thumbnailGenTokens.removeValue(forKey: host.id)
+
+        await rebuildComposition()
+        await generateThumbnails(forClipAt: index)
+        await generateThumbnails(forClipAt: index + 1)
+
+        // Auto-select right half
+        selectedClipId = clips[index + 1].id
+        followMode = .keepVisible
+    }
+
+    // MARK: - Split selected clip at current playhead
+    @MainActor
+    func splitSelectedClipAtPlayhead() async {
+        guard let cid = selectedClipId,
+              let idx = clips.firstIndex(where: { $0.id == cid }) else { return }
+
+        let absStart = CMTime(seconds: startSeconds(for: cid) ?? 0, preferredTimescale: 600)
+        let play = displayTime
+        guard play >= absStart else { return }
+        let local = play - absStart
+        let tol = halfFrameTolerance()
+        if local <= tol { return }
+        if local >= (clips[idx].trimmedDuration - tol) { return }
+
+        await splitClip(at: idx, localTime: local)
     }
 }
 

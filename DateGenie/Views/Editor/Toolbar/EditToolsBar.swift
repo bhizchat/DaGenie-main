@@ -25,7 +25,9 @@ struct EditToolsBar: View {
                         return ["Split", "Delete", "Duplicate", "Opacity"].contains(key)
                     }
 
-                    EditToolsBarItem(assetName: "Split", title: "Split", action: { }, isEnabled: allowAll || allowForLimitedSelection("Split"))
+                    EditToolsBarItem(assetName: "Split", title: "Split", action: {
+                        Task { await state.splitSelectedClipAtPlayhead() }
+                    }, isEnabled: allowAll || allowForLimitedSelection("Split"))
                     EditToolsBarItem(assetName: "Speed", title: "Speed", action: onSpeed, isEnabled: allowAll || allowForLimitedSelection("Speed"))
                     EditToolsBarItem(assetName: "Volume", title: "Volume", action: onVolume, isEnabled: allowAll || allowForLimitedSelection("Volume"))
                     EditToolsBarItem(assetName: "Delete", title: "Delete", action: {
