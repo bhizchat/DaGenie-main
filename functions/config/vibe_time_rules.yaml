@@ -1,0 +1,28 @@
+Artsy:
+  Morning: [book_store, record_store, thrift_store, cafe]
+  Afternoon: [museum, thrift_store, photo_spot]
+  Evening: [gallery_opening]
+
+Outdoorsy:
+  Morning: [trailhead, park, botanical_garden]
+  Afternoon: [park, scenic_overlook]
+  any: [park]
+
+Boba Stop:
+  any: [bubble_tea, dessert_shop]
+
+Comfort Bites:
+  any: [fast_food, food_truck, taco_stand]
+
+Bar Hop:
+  Evening: [bar, brewery]
+  Night: [bar, brewery]
+
+Romantic:
+  Evening: [scenic_overlook, restaurant, dessert_cafe]
+
+Arcade:
+  any: [arcade, barcade, board_game_cafe]
+
+Live Music:
+  Evening: [music_venue, cafe_open_mic]

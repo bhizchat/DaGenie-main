@@ -1,0 +1,21 @@
+{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "properties" : {
+    "interpretation" : "non-premultiplied-colors"
+  },
+  "textures" : [
+    {
+      "display-gamut" : "display-P3",
+      "filename" : "Universal Display P3.mipmapset",
+      "idiom" : "universal"
+    },
+    {
+      "display-gamut" : "sRGB",
+      "filename" : "Universal SRGB.mipmapset",
+      "idiom" : "universal"
+    }
+  ]
+}

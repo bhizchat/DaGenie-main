@@ -1,0 +1,12 @@
+{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "levels" : [
+    {
+      "filename" : "kappa_sigma_sticker.png",
+      "mipmap-level" : "base"
+    }
+  ]
+}

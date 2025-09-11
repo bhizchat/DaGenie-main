@@ -1,0 +1,42 @@
+# Activity description lines used for the first mission line.
+# Structure:
+# generic: default lines
+# categories: lines keyed by Google Places primary category slug
+# venues: lines keyed by exact venue name (override highest priority)
+# Each array can contain multiple options; one is picked at random.
+
+version: 1
+
+generic:
+  - "Check out {VENUE} and give it your official vibe rating ✨"
+  - "Find the most Instagram-worthy corner inside {VENUE}"
+  - "Ask a staff member what students usually order here"
+  - "Pretend it's your first time at {VENUE}—what surprises you?"
+
+categories:
+  bubble_tea:
+    - "Order the craziest topping combo at {VENUE} and own it"
+    - "Debate which sugar level reigns supreme over a drink at {VENUE}"
+  cafe:
+    - "Grab a latte art pic at {VENUE} worthy of your story"
+    - "Study-session reenactment: set up your laptop aesthetic at {VENUE}"
+  arcade:
+    - "Find a 4-player game at {VENUE} and start a mini-tournament"
+    - "Pose with the highest-scoring cabinet at {VENUE} for bragging rights"
+  bar:
+    - "Create a signature mocktail/cocktail name inspired by {VENUE}"
+    - "Cheers to midterms being over (soon) at {VENUE}"
+  dessert_shop:
+    - "Split the most extra dessert on the menu at {VENUE}"
+  music_venue:
+    - "Shazam the first song playing at {VENUE} and add it to your date playlist"
+    - "Do an air-guitar solo somewhere inside {VENUE} 🎸"
+
+venues:
+  "Round1 Bowling & Amusement":
+    - "Race each other on Mario Kart at {VENUE}—loser buys snacks"
+    - "Try a claw machine until you win *something* at {VENUE}"
+  "Boba Guys Valencia":
+    - "Order a secret-menu drink at {VENUE} and rate it 1-10"
+  "The Great Mall":
+    - "Speed-walk a full loop of {VENUE} without stopping to shop (good luck)"

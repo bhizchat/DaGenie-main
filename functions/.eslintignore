@@ -1,0 +1,5 @@
+# Ignore test and tooling files from production lint step
+__mocks__/**
+test/**
+jest.config.js
+scripts/*.ts
