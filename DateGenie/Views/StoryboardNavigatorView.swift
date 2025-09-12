@@ -97,7 +97,7 @@ struct StoryboardNavigatorView: View {
             .padding(.horizontal, 16)
 
                 // Final CTA on last scene
-                VStack(spacing: 0) {
+            VStack(spacing: 0) {
                     Button(action: generateAll) {
                         Image("createanimation").resizable().renderingMode(.original).scaledToFit().frame(height: 104)
                 }
@@ -391,16 +391,10 @@ struct StoryboardNavigatorView: View {
                     )
                 }
 
-                // Open the editor in generating state immediately
+                // Open the editor; compute generating state from Firestore and let editor rehydrate timeline
                 if let vc = UIApplication.shared.topMostViewController() {
-                    if let _ = vc.presentedViewController as? UIHostingController<CapcutEditorView> {
-                        NotificationCenter.default.post(name: .AdGenBegin, object: nil)
-                    } else {
-                        let host = UIHostingController(rootView: CapcutEditorView(url: URL(fileURLWithPath: "/dev/null"), initialGenerating: true))
-                        vc.present(host, animated: true) {
-                            NotificationCenter.default.post(name: .AdGenBegin, object: nil)
-                        }
-                    }
+                    let host = UIHostingController(rootView: CapcutEditorView(url: URL(fileURLWithPath: "/dev/null"), initialGenerating: false))
+                    vc.present(host, animated: true)
                 }
 
                 // Start listening for scene completion updates and append clips as they arrive

@@ -1,7 +1,7 @@
 /* eslint-disable max-len, @typescript-eslint/no-explicit-any */
 import * as functions from "firebase-functions/v1";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
-import {getFirestore, Timestamp} from "firebase-admin/firestore";
+import {getFirestore, Timestamp, FieldValue} from "firebase-admin/firestore";
 import axios from "axios";
 // axios not needed in scaffold; keep imports minimal
 
@@ -126,6 +126,22 @@ export const runSceneVideo = functions
           updatedAt: Timestamp.now(),
         }, {merge: true});
       });
+
+      // Idempotently upsert a timeline clip doc so projects rehydrate on reopen
+      try {
+        const clipId = `scene-${id4}`;
+        const tlRef = db.doc(`users/${uid}/projects/${projectId}/timeline/clips/${clipId}`);
+        await tlRef.set({
+          type: "video",
+          source: {kind: "scene", storyboardId, sceneIndex: Number(id4)},
+          url: outputUrl,
+          updatedAt: Timestamp.now(),
+          createdAt: FieldValue.serverTimestamp(),
+        }, {merge: true});
+        functions.logger.info("timeline.clip.upserted", {uid, projectId, storyboardId, sceneId: id4, clipId});
+      } catch (e:any) {
+        functions.logger.warn("timeline.clip.upsert_failed", {message: String(e?.message || e)});
+      }
 
       functions.logger.info("run_scene_video.done", {requestId, uid, projectId, storyboardId, sceneId: id4, provider: provider || null, docPath: sceneRef.path, outputUrl});
       res.status(200).json({ok: true, outputUrl});
