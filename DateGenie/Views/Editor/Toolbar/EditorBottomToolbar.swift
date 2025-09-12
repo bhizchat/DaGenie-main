@@ -4,7 +4,8 @@ struct EditorBottomToolbar: View {
     let onEdit: () -> Void
     let onAudio: () -> Void
     let onText: () -> Void
-    let onOverlay: () -> Void
+    // Overlay removed per request
+    // let onOverlay: () -> Void
     let onAspect: () -> Void
 
     var body: some View {
@@ -13,7 +14,6 @@ struct EditorBottomToolbar: View {
                 item(icon: "scissors", label: "Edit", action: onEdit)
                 item(icon: "music.note", label: "Audio", action: onAudio)
                 item(letter: "T", label: "Text", action: onText)
-                item(icon: "square.on.square", label: "Overlay", action: onOverlay)
                 item(icon: "rectangle.portrait", label: "Ratio", action: onAspect)
             }
             .padding(.horizontal, 12)

@@ -422,7 +422,6 @@ struct CapcutEditorView: View {
                                 isTyping = true
                                 dockFocused = true
                             },
-                            onOverlay: { /* temporarily disabled per request */ },
                             onAspect: {
                                 // Toggle the new Ratio dock
                                 withAnimation(.easeInOut(duration: 0.2)) { showRatioDock.toggle() }
@@ -1382,8 +1381,9 @@ final class EditorState: ObservableObject {
             if clip.hasOriginalAudio && !clip.muteOriginalAudio,
                let aSrc = clip.asset.tracks(withMediaType: .audio).first,
                let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                try? aDst.insertTimeRange(srcRange, of: aSrc, at: cursor)
-                aDst.scaleTimeRange(CMTimeRange(start: cursor, duration: srcRange.duration), toDuration: outDur)
+                // Insert original clip audio without retiming; truncate to outDur instead of scaling
+                let insertRange = CMTimeRange(start: srcRange.start, duration: outDur)
+                try? aDst.insertTimeRange(insertRange, of: aSrc, at: cursor)
                 let p = AVMutableAudioMixInputParameters(track: aDst)
                 p.setVolume(clip.originalAudioVolume, at: .zero)
                 p.audioTimePitchAlgorithm = clip.preserveOriginalPitch ? .spectral : .varispeed
@@ -1398,11 +1398,12 @@ final class EditorState: ObservableObject {
                let aDst = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 // Trim-aware insertion from source time range
                 let srcRange = CMTimeRange(start: t.trimStart, duration: t.trimmedDuration)
-                // Desired output duration after retime; clamp to project tail
+                // Desired output duration (no speed change) clamped to project tail
                 let maxOut = max(.zero, totalDuration - (t.start))
                 let outDur = CMTimeMinimum(t.effectiveTrimmedDuration, maxOut)
-                try? aDst.insertTimeRange(srcRange, of: aSrc, at: t.start)
-                aDst.scaleTimeRange(CMTimeRange(start: t.start, duration: srcRange.duration), toDuration: outDur)
+                // Insert only as much as fits without retiming (truncate instead of scaling)
+                let insertRange = CMTimeRange(start: srcRange.start, duration: outDur)
+                try? aDst.insertTimeRange(insertRange, of: aSrc, at: t.start)
                 let p = AVMutableAudioMixInputParameters(track: aDst)
                 p.setVolume(t.volume, at: .zero)
                 p.audioTimePitchAlgorithm = t.preservePitch ? .spectral : .varispeed
