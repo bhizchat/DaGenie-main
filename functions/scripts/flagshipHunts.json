@@ -1,0 +1,114 @@
+[
+  {
+    "id": "street_art_photo_quest",
+    "title": "Street-Art Photo Quest",
+    "city": "Campus A",
+    "durationMin": 45,
+    "budgetUSD": 0,
+    "clues": [
+      {
+        "order": 1,
+        "type": "photo",
+        "text": "Find the large blue dragon mural near Main & 3rd. Snap a selfie with it! 🐉",
+        "lat": 37.422001,
+        "lng": -122.084001,
+        "mobility": "stairs_ok"
+      },
+      {
+        "order": 2,
+        "type": "riddle",
+        "text": "I tick without hands and stand tall above campus. What am I? Take a photo when you find me.",
+        "lat": 37.4216,
+        "lng": -122.0839,
+        "mobility": "flat"
+      }
+
+    ]
+  },
+  {
+    "id": "snack_dash_20",
+    "title": "$20 Snack Dash",
+    "city": "Campus B",
+    "durationMin": 60,
+    "budgetUSD": 20,
+    "clues": [
+      {
+        "order": 1,
+        "type": "food_buy",
+        "text": "Grab two $1 churros from the food truck outside the library and boomerang the first bite. 💥",
+        "lat": 34.0689,
+        "lng": -118.4452,
+        "mobility": "flat"
+      }
+
+    ]
+  },
+  {
+    "id": "sunset_paint_palette",
+    "title": "Sunset Paint & Palette",
+    "city": "Campus A",
+    "durationMin": 75,
+    "budgetUSD": 10,
+    "clues": [
+      {
+        "order": 1,
+        "type": "photo",
+        "text": "Climb to the western overlook and capture the skyline as golden hour begins. 🌅",
+        "lat": 37.4211,
+        "lng": -122.0844,
+        "mobility": "stairs_ok"
+      }
+    ]
+  },
+  {
+    "id": "retro_arcade_rally",
+    "title": "Retro Arcade Rally",
+    "city": "Campus B",
+    "durationMin": 50,
+    "budgetUSD": 5,
+    "clues": [
+      {
+        "order": 1,
+        "type": "mini_game",
+        "text": "Find the vintage Pac-Man cabinet in the student union. Score 1000 points together! 👾",
+        "lat": 34.0692,
+        "lng": -118.4449,
+        "mobility": "flat"
+      }
+    ]
+  },
+  {
+    "id": "hidden_history_hunt",
+    "title": "Hidden History Hunt",
+    "city": "Campus A",
+    "durationMin": 60,
+    "budgetUSD": 0,
+    "clues": [
+      {
+        "order": 1,
+        "type": "riddle",
+        "text": "Seek the oldest plaque on the quad—what year was the school founded? Snap it! 🏛️",
+        "lat": 37.4225,
+        "lng": -122.0835,
+        "mobility": "flat"
+      }
+    ]
+  },
+  {
+    "id": "botanical_bingo",
+    "title": "Botanical Bingo",
+    "city": "Campus B",
+    "durationMin": 45,
+    "budgetUSD": 0,
+    "clues": [
+      {
+        "order": 1,
+        "type": "photo",
+        "text": "Locate a flower matching your partner’s birth-month color and take a close-up shot. 🌸",
+        "lat": 34.0695,
+        "lng": -118.4455,
+        "mobility": "flat"
+      }
+    ]
+  }
+]

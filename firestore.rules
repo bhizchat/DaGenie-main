@@ -1,0 +1,112 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Public, read-only hunt templates
+    match /hunts/{huntId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User profile root doc
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Per-user highlight reels
+    match /users/{uid}/highlightReels/{reelId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Per-user saved plans
+    match /users/{uid}/savedPlans/{doc} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Per-user projects (owner-only access with basic validation)
+    match /users/{uid}/projects/{projectId} {
+      function isOwner() { return request.auth != null && request.auth.uid == uid }
+
+      // Enforce allowed keys and types on create
+      allow create: if isOwner() &&
+        request.resource.data.keys().hasOnly(["name", "createdAt", "videoURL", "thumbURL"]) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        request.resource.data.createdAt == request.time &&
+        ( !("videoURL" in request.resource.data) || request.resource.data.videoURL is string ) &&
+        ( !("thumbURL" in request.resource.data) || request.resource.data.thumbURL is string );
+
+      // Allow owner to read their own projects
+      allow read: if isOwner();
+
+      // Updates: allow name, videoURL, thumbURL, and progress fields; keep createdAt immutable
+      allow update: if isOwner() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "videoURL", "thumbURL", "durationSec", "clipCount", "lastEditedAt"]) &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        resource.data.createdAt == request.resource.data.createdAt &&
+        ( !("videoURL" in request.resource.data) || request.resource.data.videoURL is string ) &&
+        ( !("thumbURL" in request.resource.data) || request.resource.data.thumbURL is string ) &&
+        ( !("durationSec" in request.resource.data) || request.resource.data.durationSec is number ) &&
+        ( !("clipCount" in request.resource.data) || request.resource.data.clipCount is number ) &&
+        ( !("lastEditedAt" in request.resource.data) || request.resource.data.lastEditedAt is timestamp );
+
+      // Deletes allowed for owner
+      allow delete: if isOwner();
+    }
+
+    // Helper: does ownerId appear in caller’s deviceIds array?
+    function legacyDeviceMatch(uid, ownerId) {
+      return ownerId in get(/databases/$(database)/documents/users/$(uid)).data.deviceIds;
+    }
+
+    // Journeys (media metadata + mission progress)
+    match /journeys/{ownerId} {
+      match /levels/{level} {
+        // Header doc at /journeys/{ownerId}/levels/{level}
+        // READ: owner OR any legacy deviceId stored on the user doc
+        allow read: if request.auth != null &&
+          (request.auth.uid == ownerId || legacyDeviceMatch(request.auth.uid, ownerId));
+        // WRITE: only the signed-in owner may write (used by saveLevelHeader and finalizeLevel)
+        allow write: if request.auth != null && request.auth.uid == ownerId;
+        // Per-node media docs under the level
+        match /nodes/{node} {
+          // READ: owner OR any legacy deviceId stored on the user doc
+          allow read: if request.auth != null &&
+            (request.auth.uid == ownerId || legacyDeviceMatch(request.auth.uid, ownerId));
+
+          // WRITE: only the signed-in owner may write
+          allow write: if request.auth != null && request.auth.uid == ownerId;
+        }
+      }
+    }
+
+    // Date instances (live hunts)
+    match /dates/{dateId} {
+      allow create: if request.auth != null &&
+        (request.auth.uid == request.resource.data.uidA || request.auth.uid == request.resource.data.uidB);
+      allow read, update, delete: if request.auth != null &&
+        (request.auth.uid == resource.data.uidA || request.auth.uid == resource.data.uidB);
+    }
+
+    // Analytics logs – write-only
+    match /analytics_logs/{doc} {
+      allow write: if request.auth != null;
+      allow read: if false;
+    }
+
+    // Ad generation jobs – each user can access only their own job docs
+    match /adJobs/{jobId} {
+      // Create: require the creating user to set uid to their own
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      // Read/update/delete: only the owner may access after creation
+      allow read, update, delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    // Default: deny everything else
+    match /{document=**} {
+       allow read, write: if false;
+    }
+  }
+}
+ 
+  

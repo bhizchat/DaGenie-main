@@ -1,0 +1,32 @@
+rules_version = '2';
+
+// Craft rules based on data in your Firestore database
+// allow write: if firestore.get(
+//    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Public read for small thumbnails under assets, everything else locked down unless user owns it
+    match /userHighlights/{uid}/{reelId}/{fileName} {
+      // Only the signed-in user can read/write own highlight assets
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Per-mission captured media (photos/videos) saved while recording a run
+    match /userMedia/{uid}/{step}/{fileName} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Ad Studio: uploads and generated outputs (private per user)
+    match /user_uploads/{uid}/{jobId}/{fileName} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /generated_ads/{uid}/{jobId}/{fileName} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Fallback deny for anything not explicitly matched above
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
