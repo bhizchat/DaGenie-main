@@ -7,6 +7,7 @@ import FirebaseAuth
 
 struct StoryboardNavigatorView: View {
     @State var plan: StoryboardPlan
+    @State private var isRendering: Bool = false
     @State private var index: Int = 0
     @State private var scriptHeight: CGFloat = 140
     @State private var actionHeight: CGFloat = 96
@@ -124,13 +125,24 @@ struct StoryboardNavigatorView: View {
     fileprivate func prev() { if index > 0 { index -= 1 } }
 
     fileprivate func renderIfNeeded() async {
-        // Continue rendering as long as any scene is missing an image
-        guard plan.scenes.contains(where: { ($0.imageUrl ?? "").isEmpty }) else { return }
-        if let rendered = try? await RenderService.shared.render(plan: plan) {
-            self.plan = rendered
-            // After images are attached, persist storyboard set once
-            await persistStoryboardIfNeeded()
+        // Render scenes one-by-one; update UI after each successful image
+        guard !isRendering else { return }
+        isRendering = true
+        defer { isRendering = false }
+        var safety = 0
+        while plan.scenes.contains(where: { ($0.imageUrl ?? "").isEmpty }) {
+            if let rendered = try? await RenderService.shared.render(plan: plan) {
+                // Update both the source-of-truth state and our local copy used in the loop
+                await MainActor.run { self.plan = rendered }
+                plan = rendered
+            } else {
+                // Do not abort entire loop on transient failure; yield and retry next
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+            safety += 1
+            if safety > (plan.scenes.count + 2) { break }
         }
+        await persistStoryboardIfNeeded()
     }
 
     fileprivate func persistStoryboardIfNeeded() async {
@@ -372,6 +384,7 @@ private struct SceneEditorRow: View {
                         @unknown default: EmptyView()
                         }
                     }
+                    .id(scene.imageUrl ?? "")
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 } else {
                     Text("Rendering…").foregroundColor(.black.opacity(0.5))

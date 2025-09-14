@@ -16,13 +16,17 @@ final class RenderService {
         Log.info("Render.start", ["sceneCount": plan.scenes.count])
         var copy = plan
         // Try remote generation first
-        if let url = URL(string: "https://us-central1-dategenie-dev.cloudfunctions.net/generateStoryboardImages") {
+        let base = "https://us-central1-\(VoiceAssistantVM.projectId()).cloudfunctions.net"
+        if let url = URL(string: "\(base)/generateStoryboardImages") {
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")
             // Increase client-side timeout to accommodate long image generation
             req.timeoutInterval = 300
-            let payloadScenes = copy.scenes.map { s in
+            // Only send one pending scene at a time for fast, reliable updates
+            let pending = copy.scenes.filter { ($0.imageUrl ?? "").isEmpty }
+            let batch = Array(pending.prefix(1))
+            let payloadScenes = batch.map { s in
                 return [
                     "index": s.index,
                     "prompt": s.prompt,
@@ -36,7 +40,8 @@ final class RenderService {
                 "scenes": payloadScenes,
                 "style": copy.settings.style,
                 "referenceImageUrls": copy.referenceImageUrls ?? [],
-                "character": copy.character.id
+                "character": copy.character.id,
+                "provider": "nano"
             ]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
             Log.info("Render.remote.start", ["url": url.absoluteString])
@@ -58,19 +63,9 @@ final class RenderService {
                     Log.error("Render.remote.http_error", ["status": http.statusCode, "body": snippet])
                     throw NSError(domain: "RenderService", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode): \(snippet)"])
                 }
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    let bodyText = String(data: data, encoding: .utf8) ?? ""
-                    Log.error("Render.remote.invalid_json", ["body": String(bodyText.prefix(300))])
-                    throw NSError(domain: "RenderService", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON"])
-                }
-                guard let arr = json["scenes"] as? [[String: Any]] else {
-                    Log.error("Render.remote.no_scenes_field", ["keys": Array(json.keys)])
-                    throw NSError(domain: "RenderService", code: -3, userInfo: [NSLocalizedDescriptionKey: "No 'scenes' in response"])
-                }
-                let map: [Int: String] = arr.reduce(into: [:]) { acc, obj in
-                    let idx = (obj["index"] as? Int) ?? 0
-                    if let u = obj["imageUrl"] as? String { acc[idx] = u }
-                }
+                // Strong decode to avoid NSNumber/Double casting traps
+                let result = try JSONDecoder().decode(RenderResult.self, from: data)
+                let map = Dictionary(uniqueKeysWithValues: result.scenes.map { ($0.index, $0.imageUrl) })
                 if map.isEmpty {
                     Log.warn("Render.remote.no_images", [:])
                     throw NSError(domain: "RenderService", code: -4, userInfo: [NSLocalizedDescriptionKey: "No images generated"])
@@ -113,6 +108,41 @@ final class RenderService {
         }
         Log.info("Render.done")
         return copy
+    }
+
+    // Render a single scene via the same endpoint to avoid long timeouts
+    func renderOne(scene: PlanScene, plan: StoryboardPlan) async throws -> String? {
+        guard let url = URL(string: "https://us-central1-dategenie-dev.cloudfunctions.net/generateStoryboardImages") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 300
+        let payload: [String: Any] = [
+            "scenes": [[
+                "index": scene.index,
+                "prompt": scene.prompt,
+                "action": scene.action ?? "",
+                "speechType": scene.speechType ?? "",
+                "speech": scene.speech ?? "",
+                "animation": scene.animation ?? ""
+            ]],
+            "style": plan.settings.style,
+            "referenceImageUrls": plan.referenceImageUrls ?? [],
+            "character": plan.character.id
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 300
+        config.timeoutIntervalForResource = 300
+        let session = URLSession(configuration: config)
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let arr = json["scenes"] as? [[String: Any]], let first = arr.first,
+           let u = first["imageUrl"] as? String {
+            return u
+        }
+        return nil
     }
 }
 

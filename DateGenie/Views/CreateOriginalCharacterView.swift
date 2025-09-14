@@ -22,6 +22,9 @@ struct CreateOriginalCharacterView: View {
                     Text("TAP BELOW TO UPLOAD A PHOTO REFERENCE")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(.black)
+                    Text("(4:3 ratio photo recommended)")
+                        .font(.system(size: 12))
+                        .foregroundColor(.black.opacity(0.7))
 
                     Button(action: { showPicker = true }) {
                         ZStack {

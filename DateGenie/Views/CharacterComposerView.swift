@@ -145,7 +145,18 @@ struct CharacterComposerView: View {
         isSubmitting = true
         let uploaded = userRefs.compactMap { uploadedByAttachmentId[$0.id] }
         let ids: [String] = uploaded.map { $0.id }
-        let urls: [String] = uploaded.map { $0.url }
+        var urls: [String] = uploaded.map { $0.url }
+        // Ensure the selected character's anchor image is included for identity
+        if let anchor = character?.defaultImageUrl, !anchor.isEmpty {
+            urls.insert(anchor, at: 0)
+        }
+        // Deduplicate (stable, preserves order) and cap to 3 refs (server slices anyway)
+        var seen = Set<String>()
+        urls = urls.filter { url in
+            let inserted = seen.insert(url).inserted
+            return inserted
+        }
+        urls = Array(urls.prefix(3))
         let background = character.flatMap { userOrPresetDescription(for: $0) }
         let req = GenerationRequest(characterId: characterId, ideaText: ideaText, userReferenceImageIds: ids, characterBackground: background, userReferenceImageUrls: urls)
         Task {

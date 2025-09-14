@@ -35,17 +35,18 @@ export const generateStoryboardImages = functions
         revision: process.env.K_REVISION,
         defaultBucket: storage.bucket().name,
       });
-      console.log("[SBIMG] req", {id: requestId, scenes: Array.isArray(scenes) ? scenes.length : null, refs: Array.isArray(referenceImageUrls) ? referenceImageUrls.length : null, style, character});
+      console.log("[SBIMG] req", {id: requestId, scenes: Array.isArray(scenes) ? scenes.length : null, refs: Array.isArray(referenceImageUrls) ? referenceImageUrls.length : null, style, character, provider});
       const apiKey = (process.env.GEMINI_API_KEY as string) || (req.get("x-api-key") as string) || "";
-      console.log("[SBIMG] key", {present: apiKey.length > 0, tail: apiKey ? apiKey.slice(-4) : null});
+      if (!apiKey) {
+        console.log("[SBIMG] gemini_key_absent");
+      } else {
+        console.log("[SBIMG] gemini_key_present", {tail: apiKey.slice(-4)});
+      }
       if (!Array.isArray(scenes) || scenes.length === 0) {
         res.status(400).json({error: "bad_request", message: "scenes array required"});
         return;
       }
-      if (!apiKey) {
-        res.status(500).json({error: "missing_api_key"});
-        return;
-      }
+      // Do not hard-require Gemini key up-front; Nano Banana is the default
 
       const out: Array<{index: number; imageUrl: string}> = [];
       const okMimes = new Set(["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"]);
@@ -54,6 +55,16 @@ export const generateStoryboardImages = functions
         if (bucket.endsWith(".appspot.com")) return bucket.replace(/\.appspot\.com$/i, ".firebasestorage.app");
         if (bucket.endsWith(".firebasestorage.app")) return bucket.replace(/\.firebasestorage\.app$/i, ".appspot.com");
         return bucket;
+      }
+
+      async function signIfGs(gsUrl: string): Promise<string> {
+        const without = gsUrl.replace("gs://", "");
+        const firstSlash = without.indexOf("/");
+        const b = firstSlash > 0 ? without.slice(0, firstSlash) : without;
+        const o = firstSlash > 0 ? without.slice(firstSlash + 1) : "";
+        const file = storage.bucket(b).file(o);
+        const [signed] = await file.getSignedUrl({version: "v4", action: "read", expires: Date.now() + 15 * 60 * 1000});
+        return signed;
       }
 
       for (const s of scenes) {
@@ -107,6 +118,11 @@ export const generateStoryboardImages = functions
             if (bytes < 1024) { throw new Error(`invalid_reference_response ct=${ct} bytes=${bytes}`); }
             parts.push({inline_data: {mime_type: ct, data: Buffer.from(buf).toString("base64")}});
             replicateInputImage = Buffer.from(buf);
+            // Also mint a signed URL for models that prefer URLs (e.g., nano-banana)
+            try {
+              const [signed] = await storage.bucket(tryBucket).file(objectPath).getSignedUrl({version: "v4", action: "read", expires: Date.now() + 15 * 60 * 1000});
+              (pushRef as any)._signedUrl = signed;
+            } catch {}
             return;
           }
           const r = await axios.get<ArrayBuffer>(u, {responseType: "arraybuffer", timeout: 20000, validateStatus: () => true});
@@ -152,18 +168,25 @@ export const generateStoryboardImages = functions
 
         console.log("[SBIMG] compose", {id: requestId, idx: index, partsCount: parts.length, promptLen: prompt.length, promptHead: prompt.slice(0, 180)});
 
-        // If caller explicitly requests Flux context, bypass Gemini and go straight to Replicate Flux Kontext Pro
-        // Force Flux Kontext by default; set provider="gemini" to use Gemini path
-        const forceFlux = String(provider || "flux").toLowerCase() === "flux";
-        if (forceFlux) {
+        // New default: use Replicate google/nano-banana for image editing unless provider forces otherwise
+        const providerNorm = String(provider || "nano").toLowerCase();
+        const useNano = providerNorm === "nano" || (providerNorm !== "flux" && providerNorm !== "gemini");
+        if (useNano) {
           try {
             const token = process.env.REPLICATE_API_TOKEN as string | undefined;
             if (!token) throw new Error("replicate_token_missing");
             const replicate = new Replicate({auth: token});
-            // Prefer bytes; else use previously minted signed URL or original URL
-            let inputImage: any = replicateInputImage || (pushRef as any)._signedUrl || urls[0];
-            const input: any = { prompt, input_image: inputImage, output_format: "png" };
-            const output: any = await replicate.run("black-forest-labs/flux-kontext-pro", { input });
+            // nano-banana expects URL(s). Build up to 2 input URLs.
+            const inputs: string[] = [];
+            const first = (pushRef as any)._signedUrl || (urls[0].startsWith("gs://") ? await signIfGs(urls[0]) : urls[0]);
+            if (first) inputs.push(first);
+            // Optionally include a second reference if provided
+            if (urls[1]) {
+              const second = urls[1].startsWith("gs://") ? await signIfGs(urls[1]) : urls[1];
+              inputs.push(second);
+            }
+            const input: any = { prompt, image_input: inputs };
+            const output: any = await replicate.run("google/nano-banana", { input });
             let buf: Buffer | null = null;
             if (output && typeof output.url === "function") {
               const u = output.url();
@@ -185,7 +208,7 @@ export const generateStoryboardImages = functions
             const tokenUp: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
             await file.save(buf, {contentType: "image/png", metadata: {metadata: {firebaseStorageDownloadTokens: tokenUp, prompt: prompt.slice(0, 2000)}}, resumable: false});
             const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${tokenUp}`;
-            console.log("[SBIMG] replicate_uploaded", {id: requestId, idx: index, path: objectPath});
+            console.log("[SBIMG] nano_uploaded", {id: requestId, idx: index, path: objectPath});
             out.push({index, imageUrl: publicUrl});
             continue; // next scene
           } catch (rf: any) {
@@ -194,11 +217,13 @@ export const generateStoryboardImages = functions
               console.warn("[SBIMG] safety_flag", {id: requestId, idx: index, msg});
               continue;
             }
-            console.error("[SBIMG] replicate_force_failed", {id: requestId, idx: index, msg});
-            continue;
+            console.error("[SBIMG] nano_failed", {id: requestId, idx: index, msg});
+            // Fall through to alternative providers below
           }
         }
 
+        // Optional Gemini path only when explicitly set
+        if (String(provider || "").toLowerCase() === "gemini") {
         const apiBase = "https://generativelanguage.googleapis.com/v1beta";
         const model = "gemini-2.5-flash-image-preview";
         const url = `${apiBase}/models/${model}:generateContent`;
@@ -276,49 +301,60 @@ export const generateStoryboardImages = functions
           }
         }
 
-        const partsAny = resp?.data?.candidates?.[0]?.content?.parts || [];
-        let dataField: string | undefined;
-        let mimeType: string | undefined;
-        for (const p of partsAny) {
-          const d = p?.inline_data?.data ?? p?.inlineData?.data;
-          const mt = p?.inline_data?.mime_type ?? p?.inlineData?.mimeType ?? "image/png";
-          if (typeof d === "string" && d.length > 0) { dataField = d; mimeType = mt; break; }
-        }
-        if (!dataField) {
-          console.error("[SBIMG] gemini_no_image", {id: requestId, idx: index, head: JSON.stringify(resp?.data || {}).slice(0, 400)});
-          continue; // skip this scene
-        }
+        if (resp) {
+          const partsAny = resp?.data?.candidates?.[0]?.content?.parts || [];
+          let dataField: string | undefined;
+          let mimeType: string | undefined;
+          for (const p of partsAny) {
+            const d = p?.inline_data?.data ?? p?.inlineData?.data;
+            const mt = p?.inline_data?.mime_type ?? p?.inlineData?.mimeType ?? "image/png";
+            if (typeof d === "string" && d.length > 0) { dataField = d; mimeType = mt; break; }
+          }
+          if (!dataField) {
+            console.error("[SBIMG] gemini_no_image", {id: requestId, idx: index, head: JSON.stringify(resp?.data || {}).slice(0, 400)});
+            continue; // skip this scene
+          }
 
-        const bucket = storage.bucket();
-        const ext = (mimeType && String(mimeType).includes("jpeg")) ? "jpg" : "png";
-        const objectPath = `storyboards/${Date.now()}_${index}.${ext}`;
-        const file = bucket.file(objectPath);
-        const original = Buffer.from(String(dataField), "base64");
+          const bucket = storage.bucket();
+          const ext = (mimeType && String(mimeType).includes("jpeg")) ? "jpg" : "png";
+          const objectPath = `storyboards/${Date.now()}_${index}.${ext}`;
+          const file = bucket.file(objectPath);
+          const original = Buffer.from(String(dataField), "base64");
 
-        // Enforce 16:9 output at 1920x1080 via center-crop then resize with cover fit
-        // 1) If source isn't 16:9, use cover fit to fill 1920x1080, cropping as needed
-        // 2) Always output in same mime where practical (jpeg preferred)
-        const width = 1920;
-        const height = 1080;
-        const outFormat = (ext === "jpg") ? "jpeg" : "png";
-        let processed: Buffer;
-        try {
-          const pipeline = sharp(original)
-            .resize({width, height, fit: "cover", position: "centre"});
-          processed = outFormat === "jpeg" ? await pipeline.jpeg({quality: 92}).toBuffer() : await pipeline.png({compressionLevel: 9}).toBuffer();
-        } catch (e) {
-          console.warn("[SBIMG] sharp_failed_falling_back", {id: requestId, idx: index, msg: String((e as any)?.message || e)});
-          processed = original; // fallback without enforcement
+          // Enforce 16:9 output at 1920x1080 via center-crop then resize with cover fit
+          // 1) If source isn't 16:9, use cover fit to fill 1920x1080, cropping as needed
+          // 2) Always output in same mime where practical (jpeg preferred)
+          const width = 1920;
+          const height = 1080;
+          const outFormat = (ext === "jpg") ? "jpeg" : "png";
+          let processed: Buffer;
+          try {
+            const pipeline = sharp(original)
+              .resize({width, height, fit: "cover", position: "centre"});
+            processed = outFormat === "jpeg" ? await pipeline.jpeg({quality: 92}).toBuffer() : await pipeline.png({compressionLevel: 9}).toBuffer();
+          } catch (e) {
+            console.warn("[SBIMG] sharp_failed_falling_back", {id: requestId, idx: index, msg: String((e as any)?.message || e)});
+            processed = original; // fallback without enforcement
+          }
+          const token: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          await file.save(processed, {contentType: outFormat === "jpeg" ? "image/jpeg" : "image/png", metadata: {metadata: {firebaseStorageDownloadTokens: token, prompt: prompt.slice(0, 2000)}}, resumable: false});
+          const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`;
+          console.log("[SBIMG] uploaded", {id: requestId, idx: index, path: objectPath});
+          out.push({index, imageUrl: publicUrl});
         }
-        const token: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        await file.save(processed, {contentType: outFormat === "jpeg" ? "image/jpeg" : "image/png", metadata: {metadata: {firebaseStorageDownloadTokens: token, prompt: prompt.slice(0, 2000)}}, resumable: false});
-        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${token}`;
-        console.log("[SBIMG] uploaded", {id: requestId, idx: index, path: objectPath});
-        out.push({index, imageUrl: publicUrl});
+        } // <-- close if (provider==gemini)
       }
 
-      console.log("[SBIMG] ok", {id: requestId, count: out.length});
-      res.status(200).json({scenes: out});
+      try {
+        console.log("[SBIMG] ok", {id: requestId, count: out.length});
+        if (out.length === 0) {
+          res.status(502).json({error: "no_images", message: "No storyboard images generated."});
+          return;
+        }
+        res.status(200).json({scenes: out});
+      } catch (respErr) {
+        console.error("[SBIMG] response_write_failed", String((respErr as any)?.message || respErr));
+      }
     } catch (err) {
       const msg = (err as any)?.message || String(err);
       console.error("[SBIMG] failed", msg, {stack: (err as any)?.stack});

@@ -88,14 +88,42 @@ final class CharacterRepository: ObservableObject {
             "theswift": GenCharacter(id: "theswift", name: "The Swift", defaultImageUrl: "", assetImageUrls: [], localAssetName: "theswift"),
             // Newly added row
             "polymath": GenCharacter(id: "polymath", name: "The Polymath", defaultImageUrl: "", assetImageUrls: [], localAssetName: "polymath"),
-            "mentor": GenCharacter(id: "mentor", name: "The Mentor", defaultImageUrl: "", assetImageUrls: [], localAssetName: "mentor"),
+            "mentor": GenCharacter(
+                id: "mentor",
+                name: "The Mentor",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "mentor",
+                bio: "A calm voice in a noisy world, The Mentor is a modern philosopher who blends timeless wisdom with practical guidance. Inspired by Naval Ravikant, he challenges people to step back from the chaos, reflect deeply, and uncover their true path. As both an entrepreneur and investor, he teaches not just about building wealth, but about building a meaningful life. His presence is steady and grounding—helping others unlock clarity, self-knowledge, and freedom while navigating the complexities of ambition and existence."
+            ),
             "podcaster": GenCharacter(id: "podcaster", name: "The Podcaster", defaultImageUrl: "", assetImageUrls: [], localAssetName: "podcaster"),
             "finance_woman": GenCharacter(id: "finance_woman", name: "The Finance Woman", defaultImageUrl: "", assetImageUrls: [], localAssetName: "finance_woman"),
             "mr.wonderful": GenCharacter(id: "mr.wonderful", name: "Mr.Wonderful", defaultImageUrl: "", assetImageUrls: [], localAssetName: "Mr.Wonderful"),
             "rob": GenCharacter(id: "rob", name: "Rob the Bank", defaultImageUrl: "", assetImageUrls: [], localAssetName: "rob"),
             "social": GenCharacter(id: "social", name: "The Social Entrepreneur", defaultImageUrl: "", assetImageUrls: [], localAssetName: "social"),
             "tech_media": GenCharacter(id: "tech_media", name: "TECH  MEDIA", defaultImageUrl: "", assetImageUrls: [], localAssetName: "Tech _Media"),
-            "startup_advisor": GenCharacter(id: "startup_advisor", name: "The Startup Advisor", defaultImageUrl: "", assetImageUrls: [], localAssetName: "startup_advisor")
+            "startup_advisor": GenCharacter(
+                id: "startup_advisor",
+                name: "The Startup Advisor",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "startup_advisor",
+                bio: "The Startup Advisor is the wise architect of Silicon Valley dreams, a mentor whose words have launched countless founders on their journeys. Inspired by Paul Graham, he blends sharp intellect with practical frameworks, teaching the art of product‑market fit, fundraising strategies, and building enduring companies. With a mix of philosophy and tactical wisdom, he helps entrepreneurs cut through noise, focus on what matters, and scale ideas into generational businesses."
+            )
+            ,
+            // Newly added characters (local assets pre-bundled)
+            "philosopher": GenCharacter(id: "philosopher", name: "The Philosopher", defaultImageUrl: "", assetImageUrls: [], localAssetName: "philosopher"),
+            "creator": GenCharacter(id: "creator", name: "The Creator", defaultImageUrl: "", assetImageUrls: [], localAssetName: "creator"),
+            "eyelish": GenCharacter(id: "eyelish", name: "EyeLish", defaultImageUrl: "", assetImageUrls: [], localAssetName: "eyelish"),
+            "charmer": GenCharacter(id: "charmer", name: "The Charmer", defaultImageUrl: "", assetImageUrls: [], localAssetName: "charmer"),
+            "singer": GenCharacter(id: "singer", name: "The Singer", defaultImageUrl: "", assetImageUrls: [], localAssetName: "singer"),
+            "tma": GenCharacter(id: "tma", name: "The Martial Artist", defaultImageUrl: "", assetImageUrls: [], localAssetName: "TMA"),
+            "youtuber": GenCharacter(id: "youtuber", name: "The Youtuber", defaultImageUrl: "", assetImageUrls: [], localAssetName: "youtuber"),
+            "comedian": GenCharacter(id: "comedian", name: "The Comedian", defaultImageUrl: "", assetImageUrls: [], localAssetName: "comedian"),
+            "director": GenCharacter(id: "director", name: "The Director", defaultImageUrl: "", assetImageUrls: [], localAssetName: "director"),
+            "astronaut": GenCharacter(id: "astronaut", name: "The Astronaut", defaultImageUrl: "", assetImageUrls: [], localAssetName: "astronaut"),
+            "couple": GenCharacter(id: "couple", name: "The Couple", defaultImageUrl: "", assetImageUrls: [], localAssetName: "couple"),
+            "company": GenCharacter(id: "company", name: "The Company", defaultImageUrl: "", assetImageUrls: [], localAssetName: "company")
         ]
 
         return characters[normalized]
