@@ -59,6 +59,14 @@ final class CharacterRepository: ObservableObject {
             "supertrump": GenCharacter(id: "supertrump", name: "SuperTrump", defaultImageUrl: "", assetImageUrls: [], localAssetName: "supertrump"),
             "ceo": GenCharacter(id: "ceo", name: "CEO", defaultImageUrl: "", assetImageUrls: [], localAssetName: "CEO"),
             "tech": GenCharacter(id: "tech", name: "The Technologist", defaultImageUrl: "", assetImageUrls: [], localAssetName: "tech"),
+            "boss": GenCharacter(
+                id: "boss",
+                name: "The BOSS",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "boss",
+                bio: "Databases? Built them. Companies? Scaled them. Inspired by Larry Ellison's rise with Oracle, The BOSS embodies relentless ambition and the will to fight for every win. He doesn't just play the game—he rewrites the rules. With sharp instincts, unshakable confidence, and an unyielding drive, The BOSS thrives in high-stakes battles where others fold. Every setback fuels his climb, every challenge sharpens his edge. He's not here to follow—he's here to dominate."
+            ),
             // Additional characters from screenshots
             "giant": GenCharacter(id: "giant", name: "The Giant", defaultImageUrl: "", assetImageUrls: [], localAssetName: "giant"),
             "investor": GenCharacter(id: "investor", name: "The Investor", defaultImageUrl: "", assetImageUrls: [], localAssetName: "Investor"),

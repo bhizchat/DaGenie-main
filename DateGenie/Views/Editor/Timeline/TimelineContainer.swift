@@ -23,6 +23,120 @@ struct TimelineContainer: View {
         self.onPlusTapped = onPlusTapped
     }
 
+    // MARK: - Small helpers to tame type-checker in video row
+    private func insertionGap() -> some View {
+        RoundedRectangle(cornerRadius: 2)
+            .stroke(Color.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [5,3]))
+            .background(Color.clear)
+    }
+
+    private func tileWidth(for clip: Clip) -> CGFloat {
+        let raw = max(0, CMTimeGetSeconds(clip.duration))
+        let end = CMTimeGetSeconds(clip.trimEnd ?? clip.duration)
+        let start = CMTimeGetSeconds(clip.trimStart)
+        let eff = max(0, min(raw, end) - max(0, start))
+        return CGFloat(eff) * state.pixelsPerSecond
+    }
+
+    @ViewBuilder
+    private func clipTile(clip: Clip,
+                          index i: Int,
+                          clipWidth: CGFloat,
+                          starts: [CGFloat],
+                          boundaries: [CGFloat],
+                          leadingInset: CGFloat,
+                          geoWidth: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            if state.selectedClipId == clip.id && !state.isReorderMode {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white, lineWidth: 3)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
+                    .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
+                    .offset(x: 0, y: 0)
+                    .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+                    .zIndex(-1)
+            }
+            Rectangle()
+                .fill(Color.gray.opacity(0.15))
+                .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
+            if state.isReorderMode {
+                let img = clip.thumbnails.first ?? UIImage()
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
+                    .clipped()
+            } else {
+                HStack(spacing: 0) {
+                    let count = max(1, clip.thumbnails.count)
+                    ForEach(0..<count, id: \.self) { j in
+                        let img = j < clip.thumbnails.count ? clip.thumbnails[j] : UIImage()
+                        Image(uiImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: max(24, state.pixelsPerSecond), height: TimelineStyle.videoRowHeight)
+                            .clipped()
+                    }
+                }
+                .frame(width: clipWidth, height: TimelineStyle.videoRowHeight, alignment: .leading)
+                .clipped()
+            }
+            if state.selectedClipId == clip.id && !state.isReorderMode {
+                Rectangle()
+                    .fill(Color.blue)
+                    .frame(width: clipWidth, height: 2)
+                    .offset(y: (TimelineStyle.videoRowHeight / 2) - 1)
+            }
+        }
+        .frame(width: clipWidth, height: TimelineStyle.videoRowHeight, alignment: .leading)
+        .opacity(state.draggingClipId == clip.id ? 0.15 : 1.0)
+        .offset(x: state.draggingClipId == clip.id ? state.dragTranslationX : 0,
+                y: state.draggingClipId == clip.id ? -6 : 0)
+        .contentShape(Rectangle())
+        .zIndex(state.selectedClipId == clip.id ? 100 : 0)
+        .onTapGesture {
+            let wasSelected = (state.selectedClipId == clip.id)
+            state.selectedClipId = wasSelected ? nil : clip.id
+            if !wasSelected {
+                state.selectedAudioId = nil
+                state.selectedTextId = nil
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
+                }
+            }
+            didTapClip = true
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+        .modifier(InlineGestureModifier(gesture: {
+            let press = LongPressGesture(minimumDuration: 0.18)
+                .onEnded { _ in
+                    state.beginClipReorderGesture(clipId: clip.id)
+                    state.dragCandidateIndex = i
+                    isDraggingLaneItem = true
+                    selectionHaptics.prepare()
+                }
+            let drag = DragGesture(minimumDistance: 1, coordinateSpace: .named("timelineScroll"))
+                .onChanged { value in
+                    guard state.draggingClipId != nil else { return }
+                    let originalCenter = (i < starts.count ? starts[i] : 0) + clipWidth * 0.5
+                    let centerX = originalCenter + value.translation.width
+                    var candidate = 0
+                    for b in boundaries { if centerX >= b { candidate += 1 } }
+                    candidate = max(0, min(candidate, state.clips.count))
+                    if candidate != (state.dragCandidateIndex ?? -1) { selectionHaptics.selectionChanged() }
+                    state.updateClipReorderGesture(candidateIndex: candidate, translationX: value.translation.width)
+                    let itemCenterInContent = leadingInset + originalCenter + value.translation.width
+                    let itemCenterInView = itemCenterInContent - observedOffsetX
+                    updateAutoScroll(forHandleX: itemCenterInView, viewWidth: geoWidth)
+                }
+                .onEnded { _ in
+                    isDraggingLaneItem = false
+                    state.commitClipReorderGesture()
+                    stopAutoScroll()
+                }
+            return press.sequenced(before: drag)
+        }))
+    }
     // View-local scroll state
     // Programmatic scroll target should be opt-in; nil means "do not touch scroll view"
     @State private var programmaticX: CGFloat? = nil
@@ -190,7 +304,7 @@ struct TimelineContainer: View {
                 }
                 .background(
                     ScrollViewBridge(targetX: programmaticX,
-                                     isScrollEnabled: !isDraggingLaneItem) { x, t, d, decel in
+                                     isScrollEnabled: !(isDraggingLaneItem || state.isReorderMode)) { x, t, d, decel in
                         handleScrollEvent(x: x,
                                           isTracking: t,
                                           isDragging: d,
@@ -198,7 +312,7 @@ struct TimelineContainer: View {
                                           geo: geo)
                     }
                 )
-                .scrollDisabled(isDraggingLaneItem)
+                .scrollDisabled(isDraggingLaneItem || state.isReorderMode)
                 // Keep overlay alignment coherent during programmatic follow while playing
                 .onChange(of: state.displayTime) { _ in
                     if !isScrollInteracting {
@@ -898,81 +1012,79 @@ struct TimelineContainer: View {
 
     // MARK: - Rows (split out for compiler)
     @ViewBuilder private func videoRow(_ geo: GeometryProxy) -> some View {
+        // Break sub-expressions into smaller computed lets to aid type-checker.
+        let viewWidth = geo.size.width
+        let pps = state.pixelsPerSecond
         HStack(spacing: 0) {
-            let leadingInset = max(0, (geo.size.width / 2) + leftGap)
-            let trailingInset = max(0, (geo.size.width / 2) - leftGap) // mirror so end can center under playhead
+            // Compute compact centering for square-tile reorder mode so tiles gather under playhead
+            let compactTotalWidth: CGFloat = {
+                guard state.isReorderMode else { return 0 }
+                let tiles = CGFloat(state.clips.count) * state.reorderTileSide
+                let gaps = CGFloat(max(0, state.clips.count - 1)) * state.reorderTileSpacing
+                return tiles + gaps
+            }()
+            let leadingInset: CGFloat = {
+                if state.isReorderMode {
+                    return max(0, ((viewWidth - compactTotalWidth) / 2) + leftGap)
+                } else {
+                    return max(0, (viewWidth / 2) + leftGap)
+                }
+            }()
+            let trailingInset: CGFloat = {
+                if state.isReorderMode {
+                    return max(0, ((viewWidth - compactTotalWidth) / 2) - leftGap)
+                } else {
+                    return max(0, (viewWidth / 2) - leftGap)
+                }
+            }()
+            // Precompute timeline metrics (widths and cumulative starts in points)
+            // In reorder mode, use uniform square tiles plus spacing; otherwise use filmstrip widths
+            let widths: [CGFloat] = state.isReorderMode ? Array(repeating: state.reorderTileSide + state.reorderTileSpacing, count: state.clips.count) : state.clips.map { c in
+                let rawSeconds = max(0, CMTimeGetSeconds(c.duration))
+                let trimmedEnd = CMTimeGetSeconds(c.trimEnd ?? c.duration)
+                let trimmedStart = CMTimeGetSeconds(c.trimStart)
+                let eff = max(0, min(rawSeconds, trimmedEnd) - max(0, trimmedStart))
+                return CGFloat(eff) * pps
+            }
+            // Cumulative left edges computed functionally to satisfy ViewBuilder constraints
+            let starts: [CGFloat] = widths.indices.map { i in
+                widths.prefix(i).reduce(CGFloat(0), +)
+            }
+            let boundaries: [CGFloat] = Array(starts.dropFirst())
             Color.clear.frame(width: leadingInset, height: TimelineStyle.videoRowHeight)
-            ForEach(Array(state.clips.enumerated()), id: \.element.id) { _, clip in
-                // Use trimmed duration if available
-                let rawSeconds = max(0, CMTimeGetSeconds(clip.duration))
-                let trimmedEnd = CMTimeGetSeconds(clip.trimEnd ?? clip.duration)
-                let trimmedStart = CMTimeGetSeconds(clip.trimStart)
-                let effectiveSeconds = max(0, min(rawSeconds, trimmedEnd) - max(0, trimmedStart))
-                let clipWidth = CGFloat(effectiveSeconds) * state.pixelsPerSecond
-                ZStack(alignment: .leading) {
-                    // Selection card behind content aligned to exact clip start/end with clear white surround
-                    if state.selectedClipId == clip.id {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.white, lineWidth: 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.white)
-                            )
-                            .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
-                            .offset(x: 0, y: 0)
-                            .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
-                            .zIndex(-1)
-                    }
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.15))
-                        .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
-                        .overlay(
-                            // Keep stroke off; selection is represented by the white cell + bottom bar
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.clear, lineWidth: 0)
-                        )
-                    HStack(spacing: 0) {
-                        let count = max(1, clip.thumbnails.count)
-                        ForEach(0..<count, id: \.self) { i in
-                            let img = i < clip.thumbnails.count ? clip.thumbnails[i] : UIImage()
-                            Image(uiImage: img)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: max(24, state.pixelsPerSecond), height: TimelineStyle.videoRowHeight)
-                                .clipped()
-                        }
-                    }
-                    .frame(width: clipWidth, height: TimelineStyle.videoRowHeight, alignment: .leading)
-                    .clipped()
-                    // Blue bottom bar to match CapCut visual
-                    if state.selectedClipId == clip.id {
-                        Rectangle()
-                            .fill(Color.blue)
-                            .frame(width: clipWidth, height: 2)
-                            .offset(y: (TimelineStyle.videoRowHeight / 2) - 1)
+            ForEach(Array(state.clips.enumerated()), id: \.element.id) { i, clip in
+                // Placeholder gap before tile at current candidate insert index (including original)
+                if state.isReorderMode, state.dragCandidateIndex == i {
+                    insertionGap()
+                        .frame(width: state.reorderTileSpacing, height: TimelineStyle.videoRowHeight)
+                }
+                let clipWidth = state.isReorderMode ? state.reorderTileSide : tileWidth(for: clip)
+                clipTile(clip: clip,
+                         index: i,
+                         clipWidth: clipWidth,
+                         starts: starts,
+                         boundaries: boundaries,
+                         leadingInset: leadingInset,
+                         geoWidth: geo.size.width)
+                // Add consistent spacing between square tiles in reorder mode (except where the insertion gap is shown)
+                if state.isReorderMode {
+                    let isLast = (i == state.clips.count - 1)
+                    let nextIndex = i + 1
+                    let shouldAddSpacing = !isLast && (state.dragCandidateIndex != nextIndex)
+                    if shouldAddSpacing {
+                        Color.clear.frame(width: state.reorderTileSpacing, height: TimelineStyle.videoRowHeight)
                     }
                 }
-                .frame(width: clipWidth, height: TimelineStyle.videoRowHeight, alignment: .leading)
-                // Per-clip handle overlays removed; handled by global overlay for accurate placement
-                .contentShape(Rectangle())
-                .zIndex(state.selectedClipId == clip.id ? 100 : 0)
-                .contentShape(Rectangle())
-                .highPriorityGesture(
-                    TapGesture().onEnded {
-                        let wasSelected = (state.selectedClipId == clip.id)
-                        state.selectedClipId = wasSelected ? nil : clip.id
-                        if !wasSelected {
-                            state.selectedAudioId = nil
-                            state.selectedTextId = nil
-                            // Ensure toolbar opens immediately on first selection
-                            DispatchQueue.main.async {
-                                NotificationCenter.default.post(name: Notification.Name("OpenEditToolbarForSelection"), object: nil)
-                            }
-                        }
-                        didTapClip = true
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    }
-                )
+            }
+            // If candidate is the very end, render a trailing placeholder before the trailing inset
+            if state.isReorderMode, state.dragCandidateIndex == state.clips.count {
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(width: state.reorderTileSpacing, height: TimelineStyle.videoRowHeight)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 2)
+                            .stroke(Color.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [5,3]))
+                    )
             }
             // trailing spacer so the last frame can scroll until centered on the playhead
             Color.clear.frame(width: trailingInset, height: TimelineStyle.videoRowHeight)
@@ -1532,6 +1644,15 @@ struct TimelineContainer: View {
         let mins = Int(s) / 60
         let secs = Int(s) % 60
         return String(format: "%02d:%02d", mins, secs)
+    }
+}
+
+// Helper to attach a highPriorityGesture produced inline (workaround for `some Gesture` constraint in modifiers)
+private struct InlineGestureModifier<G: Gesture>: ViewModifier {
+    let gestureProvider: () -> G
+    init(gesture: @escaping () -> G) { self.gestureProvider = gesture }
+    func body(content: Content) -> some View {
+        content.highPriorityGesture(gestureProvider(), including: .gesture)
     }
 }
 

@@ -809,6 +809,16 @@ final class EditorState: ObservableObject {
     @Published var selectedTextId: UUID? = nil
     @Published var selectedMediaId: UUID? = nil
 
+    // MARK: - Ephemeral state for clip reordering (press → drag → drop)
+    @Published var isReorderMode: Bool = false
+    @Published var draggingClipId: UUID? = nil
+    @Published var dragStartIndex: Int? = nil
+    @Published var dragCandidateIndex: Int? = nil
+    @Published var dragTranslationX: CGFloat = 0
+    // Reorder tile visuals (square tiles while reordering)
+    @Published var reorderTileSide: CGFloat = 68
+    @Published var reorderTileSpacing: CGFloat = 8
+
     private var timeObserver: Any?
     private var displayLink: CADisplayLink?
     // Gate playback-driven UI updates until a precise seek commits
@@ -898,6 +908,62 @@ final class EditorState: ObservableObject {
         var baseRight: Double
         var minLen: Double = 0.03
         var eps: Double = 1.0 / 240.0
+    }
+
+    // MARK: - Clip reorder gesture lifecycle
+    /// Begin a clip reorder session when the user long-presses a clip tile.
+    @MainActor
+    func beginClipReorderGesture(clipId: UUID) {
+        isReorderMode = true
+        draggingClipId = clipId
+        dragTranslationX = 0
+        dragStartIndex = clips.firstIndex(where: { $0.id == clipId })
+        dragCandidateIndex = dragStartIndex
+        // Ensure the lifted clip is also selected for consistent toolbar state
+        if selectedClipId == nil { selectedClipId = clipId }
+        // Freeze follow during interactive drag
+        followMode = .off
+    }
+
+    /// Update the in-flight reorder session with a new candidate index and translation in points.
+    @MainActor
+    func updateClipReorderGesture(candidateIndex: Int, translationX: CGFloat) {
+        guard draggingClipId != nil else { return }
+        // Allow insert-at-end slot while in reorder mode
+        let maxSlot = isReorderMode ? clips.count : max(0, clips.count - 1)
+        let clamped = max(0, min(candidateIndex, maxSlot))
+        dragCandidateIndex = clamped
+        dragTranslationX = translationX
+    }
+
+    /// Commit the reorder by moving the lifted clip from its start index to the candidate index.
+    @MainActor
+    func commitClipReorderGesture() {
+        defer {
+            isReorderMode = false
+            draggingClipId = nil
+            dragStartIndex = nil
+            dragCandidateIndex = nil
+            dragTranslationX = 0
+        }
+        guard let from = dragStartIndex,
+              let desired = dragCandidateIndex,
+              from >= 0, from < clips.count else { return }
+
+        // Calculate target insertion index after removing the source.
+        var target = desired
+        // Allow dropping at the very end (desired can be clips.count)
+        target = max(0, min(target, clips.count))
+        if target > from { target -= 1 }
+        target = max(0, min(target, max(0, clips.count - 1)))
+        guard target != from else { return }
+
+        let moved = clips.remove(at: from)
+        // Insert at computed target; allow append by using count as upper bound
+        let insertIndex = max(0, min(target, clips.count))
+        clips.insert(moved, at: insertIndex)
+        selectedClipId = moved.id
+        Task { await rebuildCompositionForPreview() }
     }
 
     @Published var activeTextTrimSession: TrimSession? = nil
