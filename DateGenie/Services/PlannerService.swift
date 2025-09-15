@@ -292,6 +292,20 @@ final class PlannerService {
             "social": "social.png",
             "tech_media": "Tech _Media.png",
             "startup_advisor": "startup_advisor.png"
+            ,
+            // Newly added characters (ensure these files exist in Storage)
+            "philosopher": "philosopher.png",
+            "creator": "creator.png",
+            "eyelish": "eyelish.png",
+            "charmer": "charmer.png",
+            "singer": "singer.png",
+            "tma": "tma.png",
+            "youtuber": "youtuber.png",
+            "comedian": "comedian.png",
+            "director": "director.png",
+            "astronaut": "astronaut.png",
+            "couple": "couple.png",
+            "company": "company.png"
         ]
         if let file = map[id.lowercased()] { return "\(base)/\(file)" }
         return nil

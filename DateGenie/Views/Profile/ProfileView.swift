@@ -138,6 +138,32 @@ struct ProfileView: View {
             }
             .padding(.horizontal, 24)
 
+            // Community CTA
+            VStack(spacing: 12) {
+                Text("Join the Community 👇")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(Color(hex: 0x131563))
+
+                Button {
+                    openDiscordInvite()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image("discord")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 28, height: 28)
+                        Text("DISCORD")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(Color(hex: 0x131563))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color(red: 246/255, green: 182/255, blue: 86/255))
+                    .cornerRadius(12)
+                }
+            }
+            .padding(.horizontal, 24)
+
             Spacer()
         }
         .ignoresSafeArea(edges: .top)
@@ -192,6 +218,11 @@ struct ProfileView: View {
 private var showingRename: Bool { false }
 
 extension ProfileView {
+    private func openDiscordInvite() {
+        guard let url = URL(string: "https://discord.gg/mt5JusrCkz") else { return }
+        UIApplication.shared.open(url)
+    }
+
     private func promptChangeUsername() {
         // Simple inline prompt using UIKit alert for brevity
         guard let root = UIApplication.shared.topMostViewController() else { return }

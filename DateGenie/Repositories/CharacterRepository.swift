@@ -112,18 +112,102 @@ final class CharacterRepository: ObservableObject {
             )
             ,
             // Newly added characters (local assets pre-bundled)
-            "philosopher": GenCharacter(id: "philosopher", name: "The Philosopher", defaultImageUrl: "", assetImageUrls: [], localAssetName: "philosopher"),
-            "creator": GenCharacter(id: "creator", name: "The Creator", defaultImageUrl: "", assetImageUrls: [], localAssetName: "creator"),
-            "eyelish": GenCharacter(id: "eyelish", name: "EyeLish", defaultImageUrl: "", assetImageUrls: [], localAssetName: "eyelish"),
-            "charmer": GenCharacter(id: "charmer", name: "The Charmer", defaultImageUrl: "", assetImageUrls: [], localAssetName: "charmer"),
-            "singer": GenCharacter(id: "singer", name: "The Singer", defaultImageUrl: "", assetImageUrls: [], localAssetName: "singer"),
-            "tma": GenCharacter(id: "tma", name: "The Martial Artist", defaultImageUrl: "", assetImageUrls: [], localAssetName: "TMA"),
-            "youtuber": GenCharacter(id: "youtuber", name: "The Youtuber", defaultImageUrl: "", assetImageUrls: [], localAssetName: "youtuber"),
-            "comedian": GenCharacter(id: "comedian", name: "The Comedian", defaultImageUrl: "", assetImageUrls: [], localAssetName: "comedian"),
-            "director": GenCharacter(id: "director", name: "The Director", defaultImageUrl: "", assetImageUrls: [], localAssetName: "director"),
-            "astronaut": GenCharacter(id: "astronaut", name: "The Astronaut", defaultImageUrl: "", assetImageUrls: [], localAssetName: "astronaut"),
-            "couple": GenCharacter(id: "couple", name: "The Couple", defaultImageUrl: "", assetImageUrls: [], localAssetName: "couple"),
-            "company": GenCharacter(id: "company", name: "The Company", defaultImageUrl: "", assetImageUrls: [], localAssetName: "company")
+            "philosopher": GenCharacter(
+                id: "philosopher",
+                name: "The Philosopher",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "philosopher",
+                bio: "Power, strategy, and timeless truths—he studies them all. Inspired by Robert Greene, The Philosopher is a seeker of wisdom who turns ancient lessons into modern insights. By candlelight, he dissects the hidden laws that govern ambition, influence, and human nature. He’s not just reading history—he’s distilling it into principles for today’s battles, guiding anyone bold enough to think deeper."
+            ),
+            "creator": GenCharacter(
+                id: "creator",
+                name: "The Creator",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "creator",
+                bio: "Safe? Predictable? Not his style. Inspired by Tyler, the Creator, this artist lives at the edge of imagination—bold, fearless, and unapologetically original. Every performance, every lyric, every look is a challenge to the ordinary. The Creator doesn’t just make music; he makes worlds, bending sound, fashion, and art into something entirely his own."
+            ),
+            "eyelish": GenCharacter(
+                id: "eyelish",
+                name: "EyeLish",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "eyelish",
+                bio: "Whispers turned into anthems, vulnerability into strength. Inspired by Billie Eilish, EyeLish is a musical creative with a voice that bends genres and moods. With haunting melodies, raw honesty, and a style all her own, she transforms emotion into soundscapes that linger long after the song ends. She’s not just making music—she’s reshaping what it means to be heard."
+            ),
+            "charmer": GenCharacter(
+                id: "charmer",
+                name: "The Charmer",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "charmer",
+                bio: "A smile, a glance, a perfectly timed word—he makes it look effortless. Inspired by Pedro Pascal, The Charmer is a man who knows how to win hearts and command attention. Whether on screen as a celebrated actor or off screen where his charm disarms even the toughest crowd, he’s always in control of the moment. He doesn’t just walk into a room—he owns it, leaving everyone wondering how they got caught under his spell."
+            ),
+            "singer": GenCharacter(
+                id: "singer",
+                name: "The Singer",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "singer",
+                bio: "From bedroom covers to stadium lights, he’s lived the dream. Inspired by Justin Bieber, The Singer is the teenage heartthrob who defined a generation of pop stardom. With chart‑topping hits, effortless stage presence, and undeniable swag, he knows exactly how to win hearts everywhere he goes. He’s not just performing songs—he’s setting the soundtrack to growing up."
+            ),
+            "tma": GenCharacter(
+                id: "tma",
+                name: "The Martial Artist",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "TMA",
+                bio: "Strength, speed, and discipline—he embodies them all. Inspired by Bruce Lee, The Martial Artist is a born fighter whose mastery of movement turns combat into poetry. With precision strikes, unshakable focus, and a will forged through relentless training, he’s proof that the mind and body can move as one. He’s not just fighting battles—he’s living a philosophy of power, balance, and self‑mastery."
+            ),
+            "youtuber": GenCharacter(
+                id: "youtuber",
+                name: "The Youtuber",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "youtuber",
+                bio: "From bedroom uploads to global fame, he built an empire one video at a time. Inspired by the rise of PewDiePie, The Youtuber turned gameplay, jokes, and pure personality into a cultural phenomenon. With a camera, a mic, and a fearless sense of humor, he transformed internet entertainment forever. He’s not just creating content—he’s creating a community."
+            ),
+            "comedian": GenCharacter(
+                id: "comedian",
+                name: "The Comedian",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "comedian",
+                bio: "Every punchline lands, every story leaves you laughing harder than the last. Inspired by the funny nature of Kevin Hart, The Comedian turns everyday life into comedy gold. With quick wit, boundless energy, and a knack for timing, he can turn any stage into his own. He’s not just telling jokes—he’s bringing people together through laughter."
+            ),
+            "director": GenCharacter(
+                id: "director",
+                name: "The Director",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "director",
+                bio: "Every frame a story, every detail an obsession. Inspired by Steven Spielberg, The Director lives for the magic of cinema. With relentless dedication, he builds entire worlds from behind the camera, blending vision, heart, and craft into films that move generations."
+            ),
+            "astronaut": GenCharacter(
+                id: "astronaut",
+                name: "The Astronaut",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "astronaut",
+                bio: "A giant leap into the unknown, a fearless step onto history’s stage. Inspired by Neil Armstrong, The Astronaut represents the bravery that carried humanity to the moon. With steady resolve, relentless training, and the courage to go where no one had gone before, he embodies the spirit of exploration. He’s not just reaching for the stars—he’s proving the impossible is within our grasp."
+            ),
+            "couple": GenCharacter(
+                id: "couple",
+                name: "The Couple",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "couple",
+                bio: "Stronger together, unstoppable as one. Inspired by the dynamic partnership of Alex and Leila Hormozi, The Couple blends strategy and resilience with loyalty and love. In business, in life, and in every challenge, they amplify each other’s strengths and face the world side by side. They’re not just partners—they’re proof that the right team can conquer anything."
+            ),
+            "company": GenCharacter(
+                id: "company",
+                name: "The Company",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "company",
+                bio: "Strategy at scale, power in execution. Inspired by Jeff Bezos, The Company reflects the relentless drive that built Amazon into a global empire. With bold vision, meticulous operations, and an eye on the future, he redefined how the world shops. But this story isn’t his alone—alongside the dynamic presence of Lauren Sánchez, there’s an added spark of partnership, ambition, and flair. They’re not just building a business—they’re shaping the future of commerce together."
+            )
         ]
 
         return characters[normalized]

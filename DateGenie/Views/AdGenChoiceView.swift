@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AdGenChoiceView: View {
     @Environment(\.dismiss) private var dismiss
@@ -142,6 +143,20 @@ struct MemeverseArchetypesView: View {
     var presentEditorOnSend: Bool
     @ObservedObject private var characterRepo = CharacterRepository.shared
 
+    // Subtle pressed-state feedback for taps
+    private struct CardPressStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+                .animation(.spring(response: 0.2, dampingFraction: 0.85), value: configuration.isPressed)
+        }
+    }
+
+    private func lightHaptic() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+    }
+
     var body: some View {
         ZStack {
             Color(red: 0xF7/255.0, green: 0xB4/255.0, blue: 0x51/255.0)
@@ -166,8 +181,8 @@ struct MemeverseArchetypesView: View {
                                 .padding(.horizontal, 16)
                             LazyVGrid(columns: columns, spacing: 18) {
                                 ForEach(characterRepo.customCharacters, id: \.id) { cc in
-                                    VStack(spacing: 8) {
-                                        Button(action: { openUserCharacter(id: cc.id) }) {
+                                    Button(action: { lightHaptic(); openUserCharacter(id: cc.id) }) {
+                                        VStack(spacing: 8) {
                                             ZStack {
                                                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                                                     .fill(Color.white)
@@ -180,28 +195,33 @@ struct MemeverseArchetypesView: View {
                                                         @unknown default: EmptyView()
                                                         }
                                                     }
-                                                    .frame(width: 110, height: 160)
                                                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                                    .clipped()
                                                 }
                                             }
                                             .frame(width: 110, height: 160)
+
+                                            Text(cc.name)
+                                                .font(.system(size: 13, weight: .semibold))
+                                                .foregroundColor(.black)
+                                                .multilineTextAlignment(.center)
+                                                .lineLimit(2)
+                                                .minimumScaleFactor(0.8)
                                         }
-                                        .buttonStyle(.plain)
-                                        Text(cc.name)
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(.black)
-                                            .multilineTextAlignment(.center)
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 4)
+                                        .contentShape(Rectangle())
                                     }
+                                    .buttonStyle(CardPressStyle())
+                                    .accessibilityLabel(Text(cc.name))
                                 }
                             }
                             .padding(.horizontal, 16)
                         }
                     }
                     LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(Self.characters, id: \.assetName) { ch in
-                            VStack(spacing: 8) {
-                                Button(action: { openCharacterOrLegacy(assetName: ch.assetName) }) {
+                        ForEach(Array(Self.characters.enumerated()), id: \.offset) { _, ch in
+                            Button(action: { lightHaptic(); openCharacterOrLegacy(assetName: ch.assetName) }) {
+                                VStack(spacing: 8) {
                                     let isCEO = ch.assetName == "CEO"
                                     let isPodcaster = ch.assetName == "podcaster"
                                     if isPodcaster {
@@ -222,15 +242,21 @@ struct MemeverseArchetypesView: View {
                                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                             .clipped()
                                     }
-                                }
-                                .buttonStyle(.plain)
 
-                                Text(ch.displayName)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(.black)
-                                    .multilineTextAlignment(.center)
+                                    Text(ch.displayName)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.black)
+                                        .multilineTextAlignment(.center)
+                                        .lineLimit(2)
+                                        .minimumScaleFactor(0.8)
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 4)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(CardPressStyle())
                             .gridCellColumns(ch.assetName == "Tech _Media" ? 2 : 1)
+                            .accessibilityLabel(Text(ch.displayName))
                         }
                     }
                     .padding(.horizontal, 16)
@@ -278,7 +304,11 @@ struct MemeverseArchetypesView: View {
             "MrBeast": "mrbeast", "actress": "actress", "Self_Help": "self_help", "glinda": "glinda",
             "oprah": "oprah", "theswift": "theswift", "polymath": "polymath", "mentor": "mentor",
             "podcaster": "podcaster", "finance_woman": "finance_woman", "Mr.Wonderful": "mr.wonderful",
-            "rob": "rob", "social": "social", "startup_advisor": "startup_advisor"
+            "rob": "rob", "social": "social", "startup_advisor": "startup_advisor",
+            // Newly added assets
+            "philosopher": "philosopher", "creator": "creator", "eyelish": "eyelish", "charmer": "charmer",
+            "singer": "singer", "TMA": "tma", "youtuber": "youtuber", "comedian": "comedian",
+            "director": "director", "astronaut": "astronaut", "couple": "couple", "company": "company"
         ]
         let canonicalId = explicitIds[assetName] ?? slug
         // Known character ids we support in the new CharacterComposerView
@@ -288,7 +318,9 @@ struct MemeverseArchetypesView: View {
             "speaker", "kingpin", "vc", "athlete", "player", "baller", "wrestler", "psychologist", "contrarian",
             "billionaire", "mrbeast", "actress", "self_help", "glinda", "oprah", "theswift",
             // Newly added set
-            "polymath", "mentor", "podcaster", "finance_woman", "mr.wonderful", "rob", "social", "startup_advisor"
+            "polymath", "mentor", "podcaster", "finance_woman", "mr.wonderful", "rob", "social", "startup_advisor",
+            // Newly added characters
+            "philosopher", "creator", "eyelish", "charmer", "singer", "tma", "youtuber", "comedian", "director", "astronaut", "couple", "company"
         ]
         // Route to user-created character if present
         if CharacterRepository.shared.customCharacters.contains(where: { $0.id.lowercased() == canonicalId }) {
@@ -378,6 +410,20 @@ struct MemeverseArchetypesView: View {
         Character(displayName: "Rob the Bank", assetName: "rob"),
         Character(displayName: "The Social Entrepreneur", assetName: "social"),
         Character(displayName: "The Startup Advisor", assetName: "startup_advisor")
+        ,
+        // Newly added cards
+        Character(displayName: "The Philosopher", assetName: "philosopher"),
+        Character(displayName: "The Creator", assetName: "creator"),
+        Character(displayName: "EyeLish", assetName: "eyelish"),
+        Character(displayName: "The Charmer", assetName: "charmer"),
+        Character(displayName: "The Singer", assetName: "singer"),
+        Character(displayName: "The Martial Artist", assetName: "TMA"),
+        Character(displayName: "The Youtuber", assetName: "youtuber"),
+        Character(displayName: "The Comedian", assetName: "comedian"),
+        Character(displayName: "The Director", assetName: "director"),
+        Character(displayName: "The Astronaut", assetName: "astronaut"),
+        Character(displayName: "The Couple", assetName: "couple"),
+        Character(displayName: "The Company", assetName: "company")
     ]
 }
 
