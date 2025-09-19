@@ -38,6 +38,16 @@ enum FeatureFlags {
         }
         set { UserDefaults.standard.set(newValue, forKey: "ff_disableProjectSaving") }
     }
+
+    // Emergency kill switch: disables storyboard video generation (Veo path)
+    // Default true to block while we investigate runaway calls
+    static var disableVeoStoryboards: Bool {
+        get {
+            if let v = UserDefaults.standard.object(forKey: "ff_disableVeoStoryboards") as? Bool { return v }
+            return true
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "ff_disableVeoStoryboards") }
+    }
 }
 
 

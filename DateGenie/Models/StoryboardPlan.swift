@@ -30,6 +30,8 @@ struct PlanScene: Codable, Identifiable {
     var speechType: String?
     var speech: String?
     var animation: String?
+    // Optional explicit speaker slot for bubbles: "char1" | "char2" | nil
+    var speakerSlot: String?
 }
 
 

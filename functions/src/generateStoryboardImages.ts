@@ -25,7 +25,7 @@ export const generateStoryboardImages = functions
         res.status(405).json({error: "method_not_allowed"});
         return;
       }
-      const {scenes = [], style = "3D stylized", referenceImageUrls = [], character = "", provider = ""} = (req.body || {}) as any;
+      const {scenes = [], style = "3D stylized", referenceImageUrls = [], character = "", provider = "", characterName = ""} = (req.body || {}) as any;
       const requestId = `SBIMG_${Date.now()}`;
       // Startup/env diagnostics
       console.log("[SBIMG] env", {
@@ -67,6 +67,10 @@ export const generateStoryboardImages = functions
         return signed;
       }
 
+      // Build slot->name map if provided in characterName or future fields
+      const slotToName: {char1?: string; char2?: string} = {};
+      if (characterName) slotToName.char1 = String(characterName);
+
       for (const s of scenes) {
         const index = Number(s?.index ?? out.length + 1);
         // Require at least one reference; treat the first as identity/style anchor for the chosen character
@@ -81,8 +85,14 @@ export const generateStoryboardImages = functions
           style,
           actionHint: s?.action || undefined,
           animationHint: s?.animation || undefined,
-          settingHint: undefined, // keep edits minimal; background stays coherent with original
+          dialogueText: s?.speech || undefined,
+          speechType: s?.speechType || undefined,
+          speakerSlot: (s?.speakerSlot === "char1" || s?.speakerSlot === "char2") ? s.speakerSlot : null,
+          slotToNameMap: slotToName,
         });
+        // Strong identity clause to reduce character swaps
+        const identityLine = characterName ? `Identity anchor: the person is ${characterName}. Do not change identity.` : (character ? `Identity anchor id: ${character}.` : "");
+        const fullPrompt = identityLine ? `${identityLine} ${prompt}` : prompt;
 
         // Parts (edit flow): anchor image FIRST → then text (stronger identity anchoring)
         const parts: any[] = [];
@@ -161,10 +171,9 @@ export const generateStoryboardImages = functions
           }
         }
         // Text instruction after the image per editing guidance
-        parts.push({text: prompt});
-        console.log("[SBIMG] prompt_added", {id: requestId, idx: index, promptHead: prompt.slice(0, 160), promptLen: prompt.length});
-        // Log full prompt for debugging/traceability
-        console.log("[SBIMG] prompt_full", {id: requestId, idx: index, prompt});
+        parts.push({text: fullPrompt});
+        console.log("[SBIMG] prompt_added", {id: requestId, idx: index, promptHead: fullPrompt.slice(0, 160), promptLen: fullPrompt.length});
+        console.log("[SBIMG] prompt_full", {id: requestId, idx: index, prompt: fullPrompt});
 
         console.log("[SBIMG] compose", {id: requestId, idx: index, partsCount: parts.length, promptLen: prompt.length, promptHead: prompt.slice(0, 180)});
 

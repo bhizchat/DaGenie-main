@@ -18,7 +18,7 @@ private struct BrandHeader: View {
             Text("✨ DaGenie ✨")
                 .font(.system(size: 28, weight: .bold, design: .default).width(.condensed))
                 .foregroundColor(.accentPrimary)
-            Text("Create your experience")
+            Text("Create Animated Stories")
                 .font(.system(size: 20, weight: .regular, design: .serif))
                 .foregroundColor(.accentPrimary)
         }

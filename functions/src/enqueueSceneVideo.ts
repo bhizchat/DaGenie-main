@@ -23,21 +23,51 @@ export const enqueueSceneVideo = functions
   .https.onRequest(async (req, res) => {
     try {
       if (req.method !== "POST") { res.status(405).json({error: "method_not_allowed"}); return; }
-      const {uid, projectId, storyboardId, sceneId, provider, requestId, nameSuffix, delaySeconds} = (req.body || {}) as any;
+      const {uid, projectId, storyboardId, sceneId} = (req.body || {}) as any;
+      const provider = (req.body?.provider || null) as (string|null);
+      const requestId = (req.body?.requestId || null) as (string|null);
+      const nameSuffix = (req.body?.nameSuffix || null) as (string|null);
+      const delaySeconds = (req.body?.delaySeconds || 0) as (number);
+      const idempotencyKey = (req.body?.idempotencyKey || null) as (string|null);
+      const force = Boolean(req.body?.force || false);
       if (!uid || !projectId || !storyboardId || !sceneId) { res.status(400).json({error: "bad_request"}); return; }
+
+      // Emergency server-side guard: block Veo-based providers to stop runaway calls
+      const p = String(provider || "veo").toLowerCase();
+      if (p === "veo" || p.includes("veo")) {
+        res.status(503).json({error: "service_unavailable", message: "veo_storyboards_disabled"});
+        return;
+      }
 
       const sbRef = db.collection("users").doc(uid).collection("projects").doc(projectId).collection("storyboards").doc(storyboardId);
       const sceneRef = sbRef.collection("scenes").doc(String(sceneId));
 
-      // Mark queued
-      await sceneRef.set({ video: { status: "queued", provider: provider || null }, videoStatus: "queued", updatedAt: FieldValue.serverTimestamp(), createdAt: FieldValue.serverTimestamp() }, {merge: true});
+      // Idempotent pre-enqueue gate
+      let shouldEnqueue = true;
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(sceneRef);
+        const data = snap.data() || {} as any;
+        const video = (data.video || {}) as any;
+        const status = String(video.status || "").toLowerCase();
+        const inFlight = ["queued", "running", "processing"].includes(status);
+        const done = status === "done";
+        if ((inFlight || done) && !force) {
+          shouldEnqueue = false;
+          return;
+        }
+        const base: any = { status: "queued", provider: provider || null };
+        if (idempotencyKey) { base.lock = { ...(video.lock || {}), idempotencyKey }; }
+        tx.set(sceneRef, { video: base, videoStatus: "queued", updatedAt: FieldValue.serverTimestamp(), createdAt: FieldValue.serverTimestamp() }, {merge: true});
+      });
+      if (!shouldEnqueue) { res.status(202).json({ok: true, already: true}); return; }
 
       const project = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || process.env.FIREBASE_CONFIG && JSON.parse(String(process.env.FIREBASE_CONFIG)).projectId || "";
       const parent = tasks.queuePath(project, LOCATION, QUEUE);
-      const taskName = deterministicTaskName(projectId, storyboardId, String(sceneId), provider, nameSuffix);
+      // Deterministic task name per scene/provider unless force=true
+      const taskName = deterministicTaskName(projectId, storyboardId, String(sceneId), provider || undefined, force ? (nameSuffix || undefined) : undefined);
 
       const runUrl = process.env.RUN_SCENE_URL || `https://us-central1-${project}.cloudfunctions.net/runSceneVideo`;
-      const payload = {uid, projectId, storyboardId, sceneId, provider: provider || null, requestId: requestId || null};
+      const payload = {uid, projectId, storyboardId, sceneId, provider: provider || null, requestId: requestId || null, idempotencyKey: idempotencyKey || null};
 
       const httpRequest: any = {
         httpMethod: "POST",

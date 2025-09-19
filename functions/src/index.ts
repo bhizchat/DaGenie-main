@@ -33,6 +33,7 @@ export {validateReceipt} from "./validateReceipt";
 // export {createAdFromConversation} from "./veo/createAdFromConversation";
 // export {onAdJobQueued} from "./veo/onAdJobQueued";
 export {generateStoryboardPlan} from "./generateStoryboardPlan";
+export {generateStoryboardPlanFromScene} from "./generateStoryboardPlanFromScene";
 export {generateStoryboardImages} from "./generateStoryboardImages";
 export {generateCharacterImage} from "./generateCharacterImage";
 export {createStoryboardJob} from "./veo/createStoryboardJob";

@@ -5,6 +5,57 @@ final class PlannerService {
     static let shared = PlannerService()
     private init() {}
 
+    // MARK: Scene Planner Flow
+    struct ScenePlannerRequest: Codable {
+        let primaryCharacterId: String
+        let secondaryCharacterId: String?
+        let plot: String
+        let action: String
+        let settingKey: String
+        let referenceImageUrls: [String]
+        let sceneCount: Int
+        let requestId: String
+        let schemaVersion: Int
+        let locale: String?
+        let aspectRatio: String?
+    }
+
+    func planFromScene(_ reqBody: ScenePlannerRequest) async throws -> StoryboardPlan {
+        let project = VoiceAssistantVM.projectId()
+        guard let url = URL(string: "https://us-central1-\(project).cloudfunctions.net/generateStoryboardPlanFromScene") else {
+            throw NSError(domain: "PlannerService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Bad URL"])
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let data = try JSONEncoder().encode(reqBody)
+        req.httpBody = data
+        let (respData, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let body = String(data: respData, encoding: .utf8) ?? "<no body>"
+            throw NSError(domain: "PlannerService", code: (resp as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: body])
+        }
+        if let json = try? JSONSerialization.jsonObject(with: respData) as? [String: Any],
+           let arr = json["scenes"] as? [[String: Any]] {
+            var scenes: [PlanScene] = []
+            var i = 1
+            for obj in arr {
+                let action = obj["action"] as? String ?? ""
+                let speechType = obj["speechType"] as? String ?? "Dialogue"
+                let speech = obj["speech"] as? String ?? ""
+                let animation = obj["animation"] as? String ?? ""
+                let script = "Action: \(action)\n\(speechType): \(speech)\nAnimation: \(animation)"
+                scenes.append(PlanScene(index: i, prompt: "", script: script, durationSec: 6, wordsPerSec: 2.0, wordBudget: 60, imageUrl: nil, action: action, speechType: speechType, speech: speech, animation: animation))
+                i += 1
+            }
+            let settings = PlanSettings(aspectRatio: reqBody.aspectRatio ?? "16:9", style: "illustrated", camera: "mixed")
+            let refs = json["referenceImageUrls"] as? [String] ?? reqBody.referenceImageUrls
+            var plan = StoryboardPlan(character: PlanCharacter(id: reqBody.primaryCharacterId), settings: settings, scenes: scenes.map(PlannerService.enforceBudget), referenceImageUrls: refs)
+            return plan
+        }
+        throw NSError(domain: "PlannerService", code: -2, userInfo: [NSLocalizedDescriptionKey: "Malformed response"])
+    }
+
     func plan(request: GenerationRequest) async throws -> StoryboardPlan {
         // TODO: Replace with real backend URL. For now, use local stub.
         let imageCount = request.userReferenceImageIds.count
@@ -234,7 +285,7 @@ final class PlannerService {
     }
 
     // MARK: - Character assets (temp mapping until backend)
-    private static func defaultCharacterImageURL(for id: String) -> String? {
+    static func defaultCharacterImageURL(for id: String) -> String? {
         // Use Firebase Storage anchors (gs:// supported by the function)
         // Upload the corresponding PNGs to: gs://dategenie-dev.firebasestorage.app/refs/characters/
         // The dictionary maps character ids -> file name in Storage
@@ -306,9 +357,52 @@ final class PlannerService {
             "astronaut": "astronaut.png",
             "couple": "couple.png",
             "company": "company.png"
+            ,
+            // Grid characters with new bios
+            "yacine": "yacine.png",
+            "dario": "dario.png",
+            "breaking_dad": "breaking_dad.png",
+            "jobs": "jobs.png"
         ]
         if let file = map[id.lowercased()] { return "\(base)/\(file)" }
-        return nil
+        // Generic fallback: assume png named by id under refs/characters
+        return "\(base)/\(id.lowercased()).png"
+    }
+
+    // Default setting image references (optional; you can upload to Storage and extend this map)
+    static func defaultSettingImageURL(for key: String) -> String? {
+        let base = "gs://dategenie-dev.firebasestorage.app/refs/settings"
+        let map: [String: String] = [
+            "ironline": "ironline.jpg",
+            "mid": "mid.jpg",
+            "back": "back.jpg",
+            "eclat": "eclat.jpg",
+            "seora": "seora.jpg",
+            "midnight": "midnight.jpg",
+            "petal": "petal.jpg",
+            "shutterspace": "shutterspace.jpg",
+            "idolworks": "idolworks.jpg",
+            "cheonho": "cheonho.jpg",
+            "garosu": "garosu.jpg",
+            "cheongdam": "cheongdam.jpg",
+            "dongdaemun": "dongdaemun.jpg",
+            "myeong": "myeong.jpg",
+            "hongdae": "hongdae.jpg",
+            "seongsu": "seongsu.jpg",
+            "banpo": "banpo.jpg"
+        ]
+        if let file = map[key.lowercased()] { return "\(base)/\(file)" }
+        // Generic fallback: assume jpg named by key under refs/settings
+        return "\(base)/\(key.lowercased()).jpg"
+    }
+
+    // Compose default references in the desired order: primary, secondary (optional), setting (optional)
+    static func defaultRefs(primaryId: String, secondaryId: String?, settingKey: String?) -> [String] {
+        var refs: [String] = []
+        if let p = defaultCharacterImageURL(for: primaryId) { refs.append(p) }
+        if let sId = secondaryId, let s = defaultCharacterImageURL(for: sId) { refs.append(s) }
+        if let sk = settingKey, let u = defaultSettingImageURL(for: sk) { refs.append(u) }
+        return refs
     }
 
     // Apply default accent suffix for speech if missing

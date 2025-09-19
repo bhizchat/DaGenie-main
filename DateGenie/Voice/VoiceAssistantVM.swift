@@ -52,7 +52,7 @@ final class VoiceAssistantVM: ObservableObject {
 	@Published var pendingAudioWithSound: Bool = true
 	@Published var generatedVideoURL: URL? = nil
     // New: archetype routing
-    @Published var currentArchetype: Archetype = .commercial
+    @Published var currentArchetype: Archetype = .stories
 	// Generating overlay state
 	@Published var isGenerating: Bool = false
 	@Published var awaitingRepeat: Bool = false

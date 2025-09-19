@@ -223,18 +223,43 @@ struct TimelineContainer: View {
         let pxRoundedCenter = (center * screenScale()).rounded(.toNearestOrAwayFromZero) / screenScale()
         return max(0, pxRoundedCenter + leftGap)
     }
-    private func timeForOffset(_ x: CGFloat, width: CGFloat, pps: CGFloat, duration: CMTime) -> CMTime {
-        let center = width / 2
-        let tSeconds = Double(max(0, (x - leadingInset(for: width) + center) / max(1, pps)))
-        let dur = max(0.0, CMTimeGetSeconds(duration))
-        return CMTime(seconds: min(tSeconds, dur), preferredTimescale: 600)
+    // Pixel-rounding helper to align to the device pixel grid
+    private func pxRound(_ x: CGFloat, scale: CGFloat) -> CGFloat {
+        (x * scale).rounded(.toNearestOrAwayFromZero) / scale
     }
+    // Canonical base X aligned to pixel grid for symmetric mapping
+    private func mappingBaseX(for width: CGFloat, scale: CGFloat) -> CGFloat {
+        let base = leadingInset(for: width) - width / 2
+        return pxRound(base, scale: scale)
+    }
+    // Symmetric, pixel-quantized mapping: offset → time
+    private func timeForOffset(_ x: CGFloat, width: CGFloat, pps: CGFloat, duration: CMTime) -> CMTime {
+        let scale = screenScale()
+        let base = mappingBaseX(for: width, scale: scale)
+        // Quantize input offset to pixel grid first
+        let dx = pxRound(x - base, scale: scale)
+        // Convert to seconds
+        let secondsPerPoint = 1.0 / Double(max(pps, 1e-6))
+        var seconds = Double(dx) * secondsPerPoint
+        // Quantize to seconds-per-pixel lattice for round-trip symmetry
+        let secondsPerPixel = secondsPerPoint / Double(scale)
+        seconds = (seconds / secondsPerPixel).rounded(.toNearestOrAwayFromZero) * secondsPerPixel
+        // Clamp and return with a finer timescale for scrubbing precision
+        let dur = max(0.0, CMTimeGetSeconds(duration))
+        seconds = min(max(0.0, seconds), dur)
+        return CMTime(seconds: seconds, preferredTimescale: 60000)
+    }
+    // Symmetric, pixel-quantized mapping: time → offset
     private func offsetForTime(_ time: CMTime, width: CGFloat, pps: CGFloat) -> CGFloat {
-        let center = width / 2
+        let scale = screenScale()
+        let base = mappingBaseX(for: width, scale: scale)
+        let secondsPerPoint = 1.0 / Double(max(pps, 1e-6))
+        let secondsPerPixel = secondsPerPoint / Double(scale)
         let t = max(0.0, CMTimeGetSeconds(time))
-        let x = leadingInset(for: width) + CGFloat(t) * pps - center
-        let s = screenScale()
-        return (x * s).rounded(.toNearestOrAwayFromZero) / s
+        // Quantize time to the same seconds-per-pixel lattice
+        let tq = (t / secondsPerPixel).rounded(.toNearestOrAwayFromZero) * secondsPerPixel
+        let x = base + CGFloat(tq / secondsPerPoint)
+        return pxRound(x, scale: scale)
     }
 
     // MARK: - Scroll handler (extracted for type-checking performance)
@@ -243,7 +268,10 @@ struct TimelineContainer: View {
                                    isDragging: Bool,
                                    isDecel: Bool,
                                    geo: GeometryProxy) {
-        observedOffsetX = x
+        // Quantize observed offset to device pixel grid to match programmatic path
+        let scale = screenScale()
+        let xq = pxRound(x, scale: scale)
+        observedOffsetX = xq
         // Consider any of these phases an interaction; mirror to scrubbing flag
         let interacting = (isTracking || isDragging || isDecel)
         if isScrollInteracting != interacting {
@@ -258,7 +286,7 @@ struct TimelineContainer: View {
         }
         // Map scroll → time only while user (or deceleration) is driving.
         if interacting {
-            let ct = timeForOffset(x, width: geo.size.width,
+            let ct = timeForOffset(xq, width: geo.size.width,
                                    pps: state.pixelsPerSecond,
                                    duration: state.totalDuration)
             state.scrub(to: ct)

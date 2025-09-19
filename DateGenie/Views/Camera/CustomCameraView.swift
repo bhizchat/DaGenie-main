@@ -15,7 +15,7 @@ struct CustomCameraView: View {
     @State private var composerText: String = ""
     var presentEditorOnSend: Bool = true
     var initialImage: UIImage? = nil
-    var intro: AdIntroContent = .commercial
+    var intro: AdIntroContent = .stories
     private var archetype: Archetype { intro.archetype }
 
 	var body: some View {

@@ -102,7 +102,7 @@ struct AdGenChoiceView: View {
         }
     }
 
-    private func openComposer(initial: UIImage?, intro: AdIntroContent = .commercial) {
+    private func openComposer(initial: UIImage?, intro: AdIntroContent = .stories) {
         let view = CustomCameraView(presentEditorOnSend: presentEditorOnSend, initialImage: initial, intro: intro)
         let host = UIHostingController(rootView: view)
         host.modalPresentationStyle = .overFullScreen
@@ -124,8 +124,8 @@ struct AdGenChoiceView: View {
         switch name {
         case "Rufus": intro = .rufus
         case "Cory": intro = .cory
-        case "Coca": intro = .commercial
-        default: intro = .scratch
+        case "Coca": intro = .stories
+        default: intro = .stories
         }
         openComposer(initial: img, intro: intro)
     }
@@ -180,25 +180,54 @@ struct MemeverseArchetypesView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 16)
                             LazyVGrid(columns: columns, spacing: 18) {
-                                ForEach(characterRepo.customCharacters, id: \.id) { cc in
+                                ForEach(characterRepo.customCharacters) { cc in
                                     Button(action: { lightHaptic(); openUserCharacter(id: cc.id) }) {
                                         VStack(spacing: 8) {
-                                            ZStack {
-                                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                                    .fill(Color.white)
-                                                if let u = URL(string: cc.defaultImageUrl) {
+                                            Group {
+                                                if let u = URL(string: cc.defaultImageUrl), !cc.defaultImageUrl.isEmpty {
                                                     AsyncImage(url: u) { phase in
                                                         switch phase {
-                                                        case .empty: ProgressView().frame(width: 110, height: 160)
-                                                        case .success(let img): img.resizable().scaledToFill()
-                                                        case .failure: Image(systemName: "photo")
-                                                        @unknown default: EmptyView()
+                                                        case .empty:
+                                                            ProgressView()
+                                                                .frame(width: 110, height: 160)
+                                                        case .success(let img):
+                                                            img.resizable()
+                                                                .aspectRatio(contentMode: .fill)
+                                                                .frame(width: 110, height: 160)
+                                                                .clipped()
+                                                        case .failure:
+                                                            Image(systemName: "photo")
+                                                                .resizable()
+                                                                .scaledToFit()
+                                                                .frame(width: 110, height: 160)
+                                                                .padding(8)
+                                                                .background(Color.white)
+                                                        @unknown default:
+                                                            EmptyView()
+                                                                .frame(width: 110, height: 160)
                                                         }
                                                     }
                                                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                                } else if let local = cc.localAssetName, let ui = UIImage(named: local) {
+                                                    Image(uiImage: ui)
+                                                        .resizable()
+                                                        .aspectRatio(contentMode: .fill)
+                                                        .frame(width: 110, height: 160)
+                                                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                                        .clipped()
+                                                } else {
+                                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                        .fill(Color.white)
+                                                        .frame(width: 110, height: 160)
+                                                        .overlay(
+                                                            Image(systemName: "photo")
+                                                                .resizable()
+                                                                .scaledToFit()
+                                                                .padding(20)
+                                                                .foregroundColor(.gray)
+                                                        )
                                                 }
                                             }
-                                            .frame(width: 110, height: 160)
 
                                             Text(cc.name)
                                                 .font(.system(size: 13, weight: .semibold))
@@ -308,7 +337,17 @@ struct MemeverseArchetypesView: View {
             // Newly added assets
             "philosopher": "philosopher", "creator": "creator", "eyelish": "eyelish", "charmer": "charmer",
             "singer": "singer", "TMA": "tma", "youtuber": "youtuber", "comedian": "comedian",
-            "director": "director", "astronaut": "astronaut", "couple": "couple", "company": "company"
+            "director": "director", "astronaut": "astronaut", "couple": "couple", "company": "company",
+            // New character assets
+            "steven_shot": "steven_shot", "monk_fist": "monk_fist", "jack_hood": "jack_hood",
+            "dane": "dane", "bjlightning": "bjlightning", "justinharper": "justinharper",
+            "willmanhattan": "willmanhattan", "martian_gary": "martian_gary", "super_mel": "super_mel",
+            "boss": "boss",
+            // Newly added grid characters
+            "yacine": "yacine", "dario": "dario", "breaking_dad": "breaking_dad", "jobs": "jobs",
+            "savant": "savant", "bender": "bender", "lucky_cyborg": "lucky_cyborg", "demis_riddler": "demis_riddler",
+            "night": "night", "warrior": "warrior", "sweeney_star": "sweeney_star", "barker": "barker",
+            "gaga": "gaga", "spice": "spice"
         ]
         let canonicalId = explicitIds[assetName] ?? slug
         // Known character ids we support in the new CharacterComposerView
@@ -320,7 +359,11 @@ struct MemeverseArchetypesView: View {
             // Newly added set
             "polymath", "mentor", "podcaster", "finance_woman", "mr.wonderful", "rob", "social", "startup_advisor",
             // Newly added characters
-            "philosopher", "creator", "eyelish", "charmer", "singer", "tma", "youtuber", "comedian", "director", "astronaut", "couple", "company"
+            "philosopher", "creator", "eyelish", "charmer", "singer", "tma", "youtuber", "comedian", "director", "astronaut", "couple", "company",
+            // New characters
+            "steven_shot", "monk_fist", "jack_hood", "dane", "bjlightning", "justinharper", "willmanhattan", "martian_gary", "super_mel", "boss",
+            // Newly added grid characters
+            "yacine", "dario", "breaking_dad", "jobs", "savant", "bender", "lucky_cyborg", "demis_riddler", "night", "warrior", "sweeney_star", "barker", "gaga", "spice"
         ]
         // Route to user-created character if present
         if CharacterRepository.shared.customCharacters.contains(where: { $0.id.lowercased() == canonicalId }) {
@@ -342,7 +385,7 @@ struct MemeverseArchetypesView: View {
         UIApplication.shared.topMostViewController()?.present(host, animated: true)
     }
 
-    private func openComposer(initial: UIImage?, intro: AdIntroContent = .commercial) {
+    private func openComposer(initial: UIImage?, intro: AdIntroContent = .stories) {
         let view = CustomCameraView(presentEditorOnSend: presentEditorOnSend, initialImage: initial, intro: intro)
         let host = UIHostingController(rootView: view)
         host.modalPresentationStyle = .overFullScreen
@@ -355,7 +398,7 @@ struct MemeverseArchetypesView: View {
         switch name {
         case "Rufus": intro = .rufus
         case "Cory": intro = .cory
-        case "Coca": intro = .commercial
+        case "Coca": intro = .stories
         default: intro = .scratch
         }
         openComposer(initial: img, intro: intro)
@@ -423,7 +466,33 @@ struct MemeverseArchetypesView: View {
         Character(displayName: "The Director", assetName: "director"),
         Character(displayName: "The Astronaut", assetName: "astronaut"),
         Character(displayName: "The Couple", assetName: "couple"),
-        Character(displayName: "The Company", assetName: "company")
+        Character(displayName: "The Company", assetName: "company"),
+        // New cards
+        Character(displayName: "Steven Shot", assetName: "steven_shot"),
+        Character(displayName: "Monk Fist", assetName: "monk_fist"),
+        Character(displayName: "Jack Hood", assetName: "jack_hood"),
+        Character(displayName: "Dane", assetName: "dane"),
+        Character(displayName: "BJ Lightning", assetName: "bjlightning"),
+        Character(displayName: "Justin Harper", assetName: "justinharper"),
+        Character(displayName: "Will Manhattan", assetName: "willmanhattan"),
+        Character(displayName: "Martian Gary", assetName: "martian_gary"),
+        Character(displayName: "Super Mel", assetName: "super_mel"),
+        Character(displayName: "The BOSS", assetName: "boss"),
+        // Extra grid characters
+        Character(displayName: "Yacine", assetName: "yacine"),
+        Character(displayName: "Dario and Claude", assetName: "dario"),
+        Character(displayName: "Breaking Dad", assetName: "breaking_dad"),
+        Character(displayName: "Jobs and Woz", assetName: "jobs"),
+        Character(displayName: "The Savant", assetName: "savant"),
+        Character(displayName: "Last Style Bender", assetName: "bender"),
+        Character(displayName: "Lucky Cyborg", assetName: "lucky_cyborg"),
+        Character(displayName: "Demis Riddler", assetName: "demis_riddler"),
+        Character(displayName: "The Nigerian Nightmare", assetName: "night"),
+        Character(displayName: "The African Warrior", assetName: "warrior"),
+        Character(displayName: "Sweeney Star", assetName: "sweeney_star"),
+        Character(displayName: "Red Barker", assetName: "barker"),
+        Character(displayName: "Princess Gaga", assetName: "gaga"),
+        Character(displayName: "Sharp Spice", assetName: "spice")
     ]
 }
 

@@ -36,6 +36,8 @@ struct DateGenieApp: App {
         FirebaseApp.configure()
         // Preemptive configure with cached install_date; userId/subTier will be set once auth completes
         AnalyticsManager.shared.configure(userId: nil, subscriptionTier: nil)
+        // Enable storyboard generation for testing (turn off kill switch)
+        UserDefaults.standard.set(false, forKey: "ff_disableVeoStoryboards")
         
         // Ensure we always have an authenticated user (anonymous is fine for personal data isolation / rules)
         if Auth.auth().currentUser == nil {

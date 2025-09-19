@@ -1719,6 +1719,8 @@ extension EditorState {
         let dl = CADisplayLink(target: self, selector: #selector(scrubDisplayLinkFired(_:)))
         dl.preferredFramesPerSecond = 0 // pace at device refresh (60/120Hz)
         dl.add(to: .main, forMode: .common)
+        // Ensure firing during UIScrollView tracking/deceleration as additional hardening
+        dl.add(to: .main, forMode: .tracking)
         scrubDisplayLink = dl
     }
 

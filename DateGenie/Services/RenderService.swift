@@ -33,7 +33,8 @@ final class RenderService {
                     "action": s.action ?? "",
                     "speechType": s.speechType ?? "",
                     "speech": s.speech ?? "",
-                    "animation": s.animation ?? ""
+                    "animation": s.animation ?? "",
+                    "speakerSlot": s.speakerSlot ?? NSNull()
                 ] as [String: Any]
             }
             var body: [String: Any] = [
@@ -41,7 +42,8 @@ final class RenderService {
                 "style": copy.settings.style,
                 "referenceImageUrls": copy.referenceImageUrls ?? [],
                 "character": copy.character.id,
-                "provider": "nano"
+                "provider": "nano",
+                "characterName": copy.character.id.capitalized
             ]
             req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
             Log.info("Render.remote.start", ["url": url.absoluteString])
@@ -112,7 +114,8 @@ final class RenderService {
 
     // Render a single scene via the same endpoint to avoid long timeouts
     func renderOne(scene: PlanScene, plan: StoryboardPlan) async throws -> String? {
-        guard let url = URL(string: "https://us-central1-dategenie-dev.cloudfunctions.net/generateStoryboardImages") else { return nil }
+        let base = "https://us-central1-\(VoiceAssistantVM.projectId()).cloudfunctions.net"
+        guard let url = URL(string: "\(base)/generateStoryboardImages") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -128,7 +131,8 @@ final class RenderService {
             ]],
             "style": plan.settings.style,
             "referenceImageUrls": plan.referenceImageUrls ?? [],
-            "character": plan.character.id
+            "character": plan.character.id,
+            "provider": "nano"
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         let config = URLSessionConfiguration.default
