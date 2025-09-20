@@ -36,6 +36,10 @@ struct SideMenuView: View {
             }
             .buttonStyle(.plain)
             Divider()
+            NavigationLink(destination: CreateMusicVideoView()) {
+                Text(" 🎵 Create Music Video")
+            }
+            .buttonStyle(.plain)
             Button {
                 try? Auth.auth().signOut()
                 onClose()

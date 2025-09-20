@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import FirebaseAuth
 
 struct StoriesView: View {
     var onBack: (() -> Void)? = nil
@@ -11,6 +12,8 @@ struct StoriesView: View {
     @State private var showImagePicker: Bool = false
     @State private var selected: CharacterItem? = nil
     @State private var plannerCharacter: CharacterItem? = nil
+    @State private var isCreating: Bool = false
+    @State private var createMessage: String? = nil
 
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 18, alignment: .top),
@@ -22,6 +25,35 @@ struct StoriesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
+
+                    // Custom created characters (appear inline, no header)
+                    if !CharacterRepository.shared.customCharacters.isEmpty {
+                        LazyVGrid(columns: columns, spacing: 22) {
+                            ForEach(CharacterRepository.shared.customCharacters, id: \.id) { gc in
+                                VStack(spacing: 8) {
+                                    AsyncImage(url: URL(string: gc.defaultImageUrl)) { img in
+                                        img.resizable().scaledToFit()
+                                    } placeholder: {
+                                        Color.white
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .background(Color.white)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    Text(gc.name)
+                                        .font(.system(size: 14, weight: .heavy))
+                                        .foregroundColor(.black)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    // Open a detail sheet like built-ins, with bio if present
+                                    selected = CharacterItem(name: gc.name, asset: gc.id, remoteUrl: gc.defaultImageUrl, bio: gc.bio)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 18)
+                    }
+
                     LazyVGrid(columns: columns, spacing: 22) {
                         ForEach(characters) { item in
                             CharacterCard(item: item)
@@ -39,8 +71,9 @@ struct StoriesView: View {
             StoriesTypingDock(text: $draftText,
                               placeholder: "Generate a Main Character with AI",
                               onPlus: { showImagePicker = true },
-                              onSubmit: {},
+                              onSubmit: { submitCreateFromDock() },
                               thumbnail: pickedImage,
+                              isLoading: isCreating,
                               onRemoveAttachment: { pickedImage = nil })
             .sheet(isPresented: $showImagePicker) {
                 ImagePicker(image: $pickedImage, sourceType: .photoLibrary)
@@ -66,6 +99,9 @@ struct StoriesView: View {
         }
         .onAppear { characters.shuffle() }
         .hideKeyboardOnTap()
+        .alert("Character", isPresented: Binding(get: { createMessage != nil }, set: { _ in createMessage = nil })) {
+            Button("OK", role: .cancel) { createMessage = nil }
+        } message: { Text(createMessage ?? "Done") }
     }
 
     private var header: some View {
@@ -90,13 +126,22 @@ private struct CharacterCard: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Image(item.asset)
-                .resizable()
-                .renderingMode(.original)
-                .scaledToFit()
+            if let url = item.remoteUrl, let u = URL(string: url) {
+                AsyncImage(url: u) { img in
+                    img.resizable().scaledToFit()
+                } placeholder: { Color.white }
                 .frame(maxWidth: .infinity)
                 .background(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Image(item.asset)
+                    .resizable()
+                    .renderingMode(.original)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
             Text(item.name)
                 .font(.system(size: 14, weight: .heavy))
                 .foregroundColor(.black)
@@ -111,19 +156,30 @@ private struct CharacterDetailSheet: View {
     let onSelect: (CharacterItem) -> Void
 
     private var age: Int { CharacterBios.age(for: item.asset) }
-    private var bio: String { CharacterBios.bio(for: item.asset) }
+    private var bio: String {
+        if let b = item.bio, !b.isEmpty { return b }
+        return CharacterBios.bio(for: item.asset)
+    }
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
-                Image(item.asset)
-                    .resizable()
-                    .renderingMode(.original)
-                    .scaledToFit()
+                if let url = item.remoteUrl, let u = URL(string: url) {
+                    AsyncImage(url: u) { img in
+                        img.resizable().scaledToFit()
+                    } placeholder: { Color.white }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.horizontal, 20)
+                } else {
+                    Image(item.asset)
+                        .resizable()
+                        .renderingMode(.original)
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 20)
+                }
 
                 HStack {
                     Text(item.firstName.uppercased())
@@ -239,6 +295,7 @@ private struct StoriesTypingDock: View {
     let onPlus: () -> Void
     let onSubmit: () -> Void
     var thumbnail: UIImage? = nil
+    var isLoading: Bool = false
     var onRemoveAttachment: () -> Void = {}
 
     @FocusState private var focused: Bool
@@ -285,13 +342,23 @@ private struct StoriesTypingDock: View {
                 }
                 Spacer()
                 Button(action: onSubmit) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 46, height: 46)
-                        .background(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color(hex: 0x999CA0) : Color(hex: 0xF7B451))
-                        .clipShape(Circle())
+                    Group {
+                        if isLoading {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(.white)
+                                .frame(width: 46, height: 46)
+                        } else {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 46, height: 46)
+                        }
+                    }
+                    .background((text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && thumbnail == nil) || isLoading ? Color(hex: 0x999CA0) : Color(hex: 0xF7B451))
+                    .clipShape(Circle())
                 }
+                .disabled(isLoading)
             }
         }
         .padding(.horizontal, 14)
@@ -300,6 +367,75 @@ private struct StoriesTypingDock: View {
             Color(hex: 0x808080)
                 .ignoresSafeArea(edges: .bottom)
         )
+    }
+}
+
+// MARK: - Creation wiring
+extension StoriesView {
+    private func submitCreateFromDock() {
+        print("[Stories] submitCreateFromDock tapped; textLen=\(draftText.count) hasImage=\(pickedImage != nil)")
+        let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || pickedImage != nil else { return }
+        Task { await createCharacter(description: text, image: pickedImage) }
+    }
+
+    private func createCharacter(description: String, image: UIImage?) async {
+        do {
+            await MainActor.run { isCreating = true }
+            var referenceUrls: [String] = []
+            if let img = image {
+                if let uploaded = try? await UploadRepository.shared.uploadUserReference(img) {
+                    print("[Stories] uploaded reference gs=\(uploaded.gsPath ?? "nil") url=\(uploaded.url)")
+                    // Prefer https first for Replicate; include gs as secondary
+                    referenceUrls.append(uploaded.url)
+                    if let gs = uploaded.gsPath { referenceUrls.append(gs) }
+                }
+            }
+            let base = "https://us-central1-\(VoiceAssistantVM.projectId()).cloudfunctions.net"
+            guard let url = URL(string: "\(base)/createOriginalCharacter") else { return }
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            var body: [String: Any] = ["description": description]
+            if !referenceUrls.isEmpty { body["referenceImageUrls"] = referenceUrls }
+            if let uid = Auth.auth().currentUser?.uid { body["uid"] = uid }
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            print("[Stories] POST createOriginalCharacter body=\(body)")
+            // Increase timeout for long-running image generation
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 300
+            config.timeoutIntervalForResource = 300
+            let session = URLSession(configuration: config)
+            let (data, resp) = try await session.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { return }
+            if !(200..<300).contains(http.statusCode) {
+                let bodyText = String(data: data, encoding: .utf8) ?? ""
+                print("[Stories] createOriginalCharacter http=\(http.statusCode) body=\(bodyText)")
+                await MainActor.run { isCreating = false; createMessage = "Server error (\(http.statusCode))" }
+                return
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                print("[Stories] createOriginalCharacter resp=\(json)")
+                let id = (json["characterId"] as? String) ?? ("user_" + UUID().uuidString)
+                let imageUrl = (json["imageUrl"] as? String) ?? ""
+                let name = (json["name"] as? String) ?? "Unnamed"
+                let bio = (json["bio"] as? String) ?? ""
+                let gc = GenCharacter(id: id, name: name, defaultImageUrl: imageUrl, assetImageUrls: [], localAssetName: nil, bio: bio)
+                await MainActor.run {
+                    CharacterRepository.shared.addCustomCharacter(gc)
+                    // Reset dock
+                    draftText = ""
+                    pickedImage = nil
+                    createMessage = "Created \(name). Check Your Characters."
+                    isCreating = false
+                }
+            }
+        } catch {
+            await MainActor.run {
+                isCreating = false
+                createMessage = "Failed: \(error.localizedDescription)"
+            }
+        }
     }
 }
 

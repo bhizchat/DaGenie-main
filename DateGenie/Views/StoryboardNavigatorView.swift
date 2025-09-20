@@ -8,6 +8,15 @@ import FirebaseAuth
 struct StoryboardNavigatorView: View {
     @AppStorage("hasSeenStoryboardOnboarding") private var hasSeenStoryboardOnboarding: Bool = false
     @State var plan: StoryboardPlan
+    /// When true, the view will attempt to synthesize missing images using `RenderService`.
+    /// Music‑video flow already generates images on the server, so this should be false there
+    /// to avoid momentary blank/black screens and unintended overrides.
+    let autoRenderMissingImages: Bool
+
+    init(plan: StoryboardPlan, autoRenderMissingImages: Bool = true) {
+        _plan = State(initialValue: plan)
+        self.autoRenderMissingImages = autoRenderMissingImages
+    }
     @State private var isRendering: Bool = false
     @State private var index: Int = 0
     @State private var scriptHeight: CGFloat = 140
@@ -75,12 +84,11 @@ struct StoryboardNavigatorView: View {
     }
 
     private func composeScript(for s: PlanScene) -> String {
-        let label = s.speechType ?? "Dialogue"
         let a = s.action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let sp = s.speech?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let anim = s.animation?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var lines: [String] = []
         if !a.isEmpty { lines.append("Action: \(a)") }
-        if !sp.isEmpty { lines.append("\(label): \(sp)") }
+        if !anim.isEmpty { lines.append("Animation: \(anim)") }
         return lines.joined(separator: "\n")
     }
 
@@ -113,8 +121,8 @@ struct StoryboardNavigatorView: View {
 
                 // Final CTA on last scene
             VStack(spacing: 0) {
-                    Button(action: exportWebcomic) {
-                        Image("export_web").resizable().renderingMode(.original).scaledToFit().frame(height: 104)
+                    Button(action: generateAll) {
+                        Image("createanimation").resizable().renderingMode(.original).scaledToFit().frame(height: 104)
                 }
                 .disabled(isGenerating)
                 .padding(.vertical, 12)
@@ -127,7 +135,7 @@ struct StoryboardNavigatorView: View {
         }
         }
         .background(Color(hex: 0xF7B451).ignoresSafeArea())
-        .task { await renderIfNeeded() }
+        .task { if autoRenderMissingImages { await renderIfNeeded() } }
         .overlay(alignment: .center) {
             if isGenerating { ZStack { Color.black.opacity(0.25).ignoresSafeArea(); ProgressView("Preparing…").padding(16).background(RoundedRectangle(cornerRadius: 12).fill(Color.white)) } }
         }
@@ -295,7 +303,7 @@ struct StoryboardNavigatorView: View {
                    let sbId = storyboardId,
                    let pid = projectId {
                     let sceneId = String(format: "%04d", plan.scenes[index].index)
-                    try await StoryboardsRepository.shared.enqueueSceneVideo(userId: uid, projectId: pid, storyboardId: sbId, sceneId: sceneId, provider: "veo", requestId: UUID().uuidString)
+                    try await StoryboardsRepository.shared.enqueueSceneVideo(userId: uid, projectId: pid, storyboardId: sbId, sceneId: sceneId, provider: "wan", requestId: UUID().uuidString)
                     isGenerating = false
                     return
                 }
@@ -423,7 +431,7 @@ struct StoryboardNavigatorView: View {
                         projectId: pid,
                         storyboardId: sbId,
                         sceneId: sid,
-                        provider: "veo",
+                        provider: "wan",
                         requestId: UUID().uuidString,
                         delaySeconds: i * spacing + jitter,
                         nameSuffix: "r\(runId)-\(i)"
@@ -580,7 +588,7 @@ private struct SceneEditorRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.2))
                 if let urlStr = scene.imageUrl, let url = URL(string: urlStr) {
                     AsyncImage(url: url) { ph in
@@ -595,6 +603,20 @@ private struct SceneEditorRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 } else {
                     Text("Rendering…").foregroundColor(.black.opacity(0.5))
+                }
+                // Status pill (queued/running/done/error)
+                if let status = scene.animation, ["queued","running","done","error"].contains(status.lowercased()) {
+                    Text(status.capitalized)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8).fill(
+                                status.lowercased() == "done" ? Color.green : (status.lowercased() == "error" ? Color.red : Color.blue)
+                            )
+                        )
+                        .padding(8)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: 14))
@@ -641,12 +663,11 @@ private struct SceneEditorRow: View {
                     DispatchQueue.main.async { scene.script = composeForRow(scene) }
                 }
 
-                // Dialogue/Narration
-                let label = (scene.speechType ?? "Dialogue")
-                GrowingField(title: label, text: Binding(get: { scene.speech ?? "" }, set: { v in
-                    let trimmed = limitWords(v, cap: 20); scene.speech = trimmed; if scene.speechType == nil { scene.speechType = "Dialogue" }
+                // Animation (replaces Dialogue)
+                GrowingField(title: "Animation", text: Binding(get: { scene.animation ?? "" }, set: { v in
+                    scene.animation = limitWords(v, cap: 20)
                 }), isEditing: $focusSpeech, height: $speechHeight)
-                .onChange(of: scene.speech ?? "") { _ in
+                .onChange(of: scene.animation ?? "") { _ in
                     DispatchQueue.main.async { scene.script = composeForRow(scene) }
                 }
 
@@ -663,12 +684,11 @@ private struct SceneEditorRow: View {
     }
 
     private func composeForRow(_ s: PlanScene) -> String {
-        let label = s.speechType ?? "Dialogue"
         let a = s.action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let sp = s.speech?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let anim = s.animation?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var lines: [String] = []
         if !a.isEmpty { lines.append("Action: \(a)") }
-        if !sp.isEmpty { lines.append("\(label): \(sp)") }
+        if !anim.isEmpty { lines.append("Animation: \(anim)") }
         return lines.joined(separator: "\n")
     }
 }
@@ -791,4 +811,4 @@ private struct StoryboardFirstRunOnboarding: View {
     private func next() {
         if page == 0 { page = 1 } else { onFinish(); dismiss() }
     }
-}
+} 

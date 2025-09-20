@@ -35,7 +35,7 @@ struct ProjectsView: View {
             }
             .disabled(isCreating)
             .fullScreenCover(isPresented: $showCreationOptions) {
-                AdGenChoiceView()
+                CreateMusicVideoView()
             }
 
             if !FeatureFlags.disableProjectSaving {

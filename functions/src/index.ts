@@ -44,3 +44,6 @@ export {veoDirect} from "./veo/veoDirect";
 export {saveStoryboardSet} from "./saveStoryboardSet";
 export {enqueueSceneVideo} from "./enqueueSceneVideo";
 export {runSceneVideo} from "./runSceneVideo";
+export {createOriginalCharacter} from "./createOriginalCharacter";
+export {generateMusicStoryboard} from "./musicVideo/generateMusicStoryboard";
+export {generateFluxAvatar} from "./musicVideo/generateFluxAvatar";

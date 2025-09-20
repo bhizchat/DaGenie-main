@@ -4,6 +4,15 @@ struct CharacterItem: Identifiable, Equatable {
     let id: UUID = UUID()
     let name: String
     let asset: String
+    let remoteUrl: String?
+    let bio: String?
+
+    init(name: String, asset: String, remoteUrl: String? = nil, bio: String? = nil) {
+        self.name = name
+        self.asset = asset
+        self.remoteUrl = remoteUrl
+        self.bio = bio
+    }
 
     var firstName: String { name.split(separator: " ").first.map(String.init) ?? name }
 

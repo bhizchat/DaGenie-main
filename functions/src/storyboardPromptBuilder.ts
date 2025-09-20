@@ -37,6 +37,55 @@ export function buildEditPromptFromScript(i: EditPromptInput): string {
   return [idHeader, style, action, anim, speechInstr, safety].filter(Boolean).join(" \n");
 }
 
+// Rap video oriented frame prompt (no club/street/crowd/stage archetype assumptions)
+export type RapFramePromptInput = {
+  style?: string;
+  aspectRatio?: string;
+  actionHint?: string;          // performance/pose intent
+  animationHint?: string;       // camera/motion intent
+  environment?: string;         // world/environment description from setting
+  cameraMovementHint?: string;  // e.g., orbit 12–15°, push‑in, handheld sway
+  lightingHint?: string;        // neon rim, tungsten practicals, etc.
+  slotToNameMap?: { char1?: string; char2?: string };
+  creativeHint?: string;        // user idea text (soft guidance)
+};
+
+export function buildRapFramePrompt(i: RapFramePromptInput): string {
+  const style = i.style || "3D stylized";
+  const ar = i.aspectRatio || "9:16";
+  const idHeader = (() => {
+    const c1 = i.slotToNameMap?.char1 ? `Character 1 = ${i.slotToNameMap?.char1}` : undefined;
+    const c2 = i.slotToNameMap?.char2 ? `Character 2 = ${i.slotToNameMap?.char2}` : undefined;
+    const parts = [c1, c2].filter(Boolean).join("; ");
+    return parts ? `Identity anchors: ${parts}. Do not swap identities.` : "";
+  })();
+
+  const action = i.actionHint ? `Action intent: ${i.actionHint}.` : "";
+  const anim = i.animationHint ? `Animation/camera intent: ${i.animationHint}.` : "";
+  const env = i.environment ? `Environment: ${i.environment}.` : "";
+  const cam = i.cameraMovementHint ? `Camera grammar: ${i.cameraMovementHint}.` : "";
+  const light = i.lightingHint ? `Lighting: ${i.lightingHint}.` : "";
+  const creative = (i.creativeHint || "").trim() ? `Creative guidance (soft): ${(i.creativeHint || "").trim()}. Honor only if consistent with identity and action/animation.` : "";
+
+  const core = [
+    `Make a Highly stylized 3D render with a cartoonish character look, bold high‑contrast color, smooth CGI materials.`,
+    `Use the FIRST reference image as the strict identity/style anchor. Preserve face geometry, hair, skin tone, eyebrows, and jewelry. Do not alter identity.`,
+    `Primary subject is a rapper performing or posing to camera or three‑quarter – strong stage presence without explicit stage/club/crowd visuals. If a microphone is implied, render a realistic handheld mic with correct grip; avoid deformed fingers.`,
+    action,
+    anim,
+    env,
+    cam,
+    light,
+    creative,
+    `Aspect ratio ${ar}; compose cleanly with readable forms.`,
+    `Do NOT add any captions, logos, or watermarks. Avoid duplicate faces, extra limbs, or deformed hands.`,
+  ].filter(Boolean).join(" ");
+
+  const styleLine = `Style: ${style}.`;
+  const safety = `Negative: text, caption, watermark, signature, deformed hands, extra fingers, extra limbs, duplicate head/face, heavy blur.`;
+  return [idHeader, styleLine, core, safety].filter(Boolean).join(" \n");
+}
+
 export type StoryboardPromptInput = {
   style?: string;          // e.g., "3D stylized", "illustrated"
   aspectRatio?: string;    // default "1:1"
@@ -63,27 +112,3 @@ export function buildStoryboardPrompt(i: StoryboardPromptInput): string {
   ];
   return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
-
-export type EditPromptInput = {
-  style?: string;          // target rendering style to preserve (e.g., "3D stylized")
-  actionHint?: string;     // what the character should do
-  animationHint?: string;  // camera/motion hint (used as nuance, not as on-image text)
-  settingHint?: string;    // optional context, but we avoid scene layout
-};
-
-// Build a prompt that edits ONLY the provided image (text+image-to-image).
-// Emphasis: preserve identity/style; modify pose/prop/outfit per script; no on-image text.
-export function buildEditPromptFromScript(i: EditPromptInput): string {
-  const style = i.style || "3D stylized";
-  const parts: string[] = [
-    `Storyboard frame edit. Using the provided image of the main character, edit the image while preserving the character's identity, proportions, outfit materials, and the ${style} rendering style.`,
-    i.actionHint ? `Change the character's pose/action so the character ${i.actionHint}.` : "",
-    i.animationHint ? `Subtle camera/energy hint: ${i.animationHint}.` : "",
-    i.settingHint ? `Optional context: ${i.settingHint}.` : "",
-    `Compose in horizontal 16:9 (1920x1080) framing. Keep the subject well framed without black bars.`,
-    `Do not add any speech bubbles, captions, or on-image text. Keep background and lighting coherent with the original photo.`,
-  ];
-  return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-}
-
-

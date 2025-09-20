@@ -43,11 +43,19 @@ struct ScenePlannerView: View, Identifiable {
                     Text("Character 1").font(.system(size: 14, weight: .semibold))
                     ZStack(alignment: .topTrailing) {
                         if let pc = primaryCharacter {
-                            Image(pc.asset)
-                                .resizable()
-                                .scaledToFit()
+                            if let url = pc.remoteUrl, let u = URL(string: url) {
+                                AsyncImage(url: u) { img in
+                                    img.resizable().scaledToFit()
+                                } placeholder: { Color.white }
                                 .frame(height: 160)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                            } else {
+                                Image(pc.asset)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(height: 160)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
 
                             // Remove button
                             Button(action: { primaryCharacter = nil }) {
@@ -78,11 +86,19 @@ struct ScenePlannerView: View, Identifiable {
                     Text("Character 2").font(.system(size: 14, weight: .semibold))
                     if let sc = sideCharacter {
                         ZStack(alignment: .topTrailing) {
-                            Image(sc.asset)
-                                .resizable()
-                                .scaledToFit()
+                            if let url = sc.remoteUrl, let u = URL(string: url) {
+                                AsyncImage(url: u) { img in
+                                    img.resizable().scaledToFit()
+                                } placeholder: { Color.white }
                                 .frame(height: 160)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                            } else {
+                                Image(sc.asset)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(height: 160)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
 
                             Button(action: { sideCharacter = nil }) {
                                 Image(systemName: "xmark.circle.fill")

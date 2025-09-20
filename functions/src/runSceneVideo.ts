@@ -135,6 +135,7 @@ export const runSceneVideo = functions
           return;
         }
 
+        // 5s@16fps ~= 80 frames; stick to 480p fast for throughput
         try {
           const resp = await axios.post(wanUrl, {
             image,

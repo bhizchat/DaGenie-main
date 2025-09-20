@@ -286,6 +286,12 @@ final class PlannerService {
 
     // MARK: - Character assets (temp mapping until backend)
     static func defaultCharacterImageURL(for id: String) -> String? {
+        // If this is a custom character (user_*) prefer its generated image URL from repository
+        if id.lowercased().hasPrefix("user_") {
+            if let found = CharacterRepository.shared.customCharacters.first(where: { $0.id.lowercased() == id.lowercased() }) {
+                return found.defaultImageUrl.isEmpty ? nil : found.defaultImageUrl
+            }
+        }
         // Use Firebase Storage anchors (gs:// supported by the function)
         // Upload the corresponding PNGs to: gs://dategenie-dev.firebasestorage.app/refs/characters/
         // The dictionary maps character ids -> file name in Storage

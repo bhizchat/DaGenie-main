@@ -3,7 +3,7 @@ import axios from "axios";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getStorage} from "firebase-admin/storage";
 import crypto from "crypto";
-import {buildEditPromptFromScript} from "./storyboardPromptBuilder";
+import {buildRapFramePrompt} from "./storyboardPromptBuilder";
 import sharp from "sharp";
 import Replicate from "replicate";
 
@@ -25,7 +25,7 @@ export const generateStoryboardImages = functions
         res.status(405).json({error: "method_not_allowed"});
         return;
       }
-      const {scenes = [], style = "3D stylized", referenceImageUrls = [], character = "", provider = "", characterName = ""} = (req.body || {}) as any;
+      const {scenes = [], style = "3D stylized", referenceImageUrls = [], character = "", provider = "", characterName = "", environment = "", aspectRatio = "9:16", ideaText = ""} = (req.body || {}) as any;
       const requestId = `SBIMG_${Date.now()}`;
       // Startup/env diagnostics
       console.log("[SBIMG] env", {
@@ -80,15 +80,17 @@ export const generateStoryboardImages = functions
           return;
         }
 
-        // Build pure edit prompt from script (no dialogue text added onto image)
-        const prompt = buildEditPromptFromScript({
+        // Compose rap-friendly frame prompt (identity anchored, no speech text)
+        const prompt = buildRapFramePrompt({
           style,
+          aspectRatio,
           actionHint: s?.action || undefined,
           animationHint: s?.animation || undefined,
-          dialogueText: s?.speech || undefined,
-          speechType: s?.speechType || undefined,
-          speakerSlot: (s?.speakerSlot === "char1" || s?.speakerSlot === "char2") ? s.speakerSlot : null,
+          environment: environment || undefined,
+          cameraMovementHint: undefined,
+          lightingHint: undefined,
           slotToNameMap: slotToName,
+          creativeHint: ideaText || undefined,
         });
         // Strong identity clause to reduce character swaps
         const identityLine = characterName ? `Identity anchor: the person is ${characterName}. Do not change identity.` : (character ? `Identity anchor id: ${character}.` : "");
@@ -173,6 +175,9 @@ export const generateStoryboardImages = functions
         // Text instruction after the image per editing guidance
         parts.push({text: fullPrompt});
         console.log("[SBIMG] prompt_added", {id: requestId, idx: index, promptHead: fullPrompt.slice(0, 160), promptLen: fullPrompt.length});
+        if ((ideaText || "").length > 0) {
+          console.log("[SBIMG] idea_hint", {id: requestId, head: String(ideaText).slice(0, 120)});
+        }
         console.log("[SBIMG] prompt_full", {id: requestId, idx: index, prompt: fullPrompt});
 
         console.log("[SBIMG] compose", {id: requestId, idx: index, partsCount: parts.length, promptLen: prompt.length, promptHead: prompt.slice(0, 180)});
@@ -197,7 +202,10 @@ export const generateStoryboardImages = functions
             const input: any = { prompt, image_input: inputs };
             const output: any = await replicate.run("google/nano-banana", { input });
             let buf: Buffer | null = null;
-            if (output && typeof output.url === "function") {
+            if (Array.isArray(output) && output.length > 0 && typeof output[0] === "string") {
+              const dl = await axios.get<ArrayBuffer>(output[0], {responseType: "arraybuffer", timeout: 120000});
+              buf = Buffer.from(dl.data as any);
+            } else if (output && typeof output.url === "function") {
               const u = output.url();
               const dl = await axios.get<ArrayBuffer>(u, {responseType: "arraybuffer", timeout: 120000});
               buf = Buffer.from(dl.data as any);
@@ -227,7 +235,7 @@ export const generateStoryboardImages = functions
               continue;
             }
             console.error("[SBIMG] nano_failed", {id: requestId, idx: index, msg});
-            // Fall through to alternative providers below
+            // Fall through to Flux fallback below (regardless of provider flag)
           }
         }
 
@@ -253,6 +261,37 @@ export const generateStoryboardImages = functions
             message: top?.message || String(e?.message || "request_failed"),
             fieldViolations,
           };
+        }
+
+        // Unconditional Flux fallback if still no out
+        if (!out.find((x) => x.index === index)) {
+          try {
+            const token = process.env.REPLICATE_API_TOKEN as string | undefined;
+            if (!token) throw new Error("replicate_token_missing");
+            const replicate = new Replicate({auth: token});
+            const input: any = { prompt, input_image: replicateInputImage || urls[0], output_format: "png" };
+            const output: any = await replicate.run("black-forest-labs/flux-kontext-pro", { input });
+            let buf: Buffer | null = null;
+            if (output && typeof output.url === "function") {
+              const u = output.url();
+              const dl = await axios.get<ArrayBuffer>(u, {responseType: "arraybuffer", timeout: 120000});
+              buf = Buffer.from(dl.data as any);
+            } else if (typeof output === "string") {
+              const dl = await axios.get<ArrayBuffer>(output, {responseType: "arraybuffer", timeout: 120000});
+              buf = Buffer.from(dl.data as any);
+            }
+            if (!buf) throw new Error("replicate_no_output");
+            const bucket = storage.bucket();
+            const objectPath = `storyboards/${Date.now()}_${index}.png`;
+            const file = bucket.file(objectPath);
+            const tokenUp: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            await file.save(buf, {contentType: "image/png", metadata: {metadata: {firebaseStorageDownloadTokens: tokenUp, prompt: prompt.slice(0, 2000)}}, resumable: false});
+            const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${tokenUp}`;
+            console.log("[SBIMG] replicate_fallback_uploaded", {id: requestId, idx: index, path: objectPath});
+            out.push({index, imageUrl: publicUrl});
+          } catch (e: any) {
+            console.error("[SBIMG] flux_fallback_failed", {id: requestId, idx: index, msg: String(e?.message || e)});
+          }
         }
 
         let resp;

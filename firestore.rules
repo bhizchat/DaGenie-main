@@ -52,6 +52,27 @@ service cloud.firestore {
 
       // Deletes allowed for owner
       allow delete: if isOwner();
+
+      // Music video storyboard subcollections under projects
+      match /storyboards/{sbId} {
+        allow read, write: if isOwner();
+        match /scenes/{sceneId} {
+          allow read, write: if isOwner();
+        }
+      }
+    }
+
+    // Music Video flow (owner-only). Simple owner read/write for project + nested storyboard/scenes
+    match /users/{uid}/musicVideos/{projectId} {
+      function isOwner() { return request.auth != null && request.auth.uid == uid }
+      allow read, write: if isOwner();
+
+      match /storyboards/{sbId} {
+        allow read, write: if isOwner();
+        match /scenes/{sceneId} {
+          allow read, write: if isOwner();
+        }
+      }
     }
 
     // Helper: does ownerId appear in caller’s deviceIds array?
