@@ -319,7 +319,9 @@ struct StoryboardNavigatorView: View {
                    let sbId = storyboardId,
                    let pid = projectId {
                     let sceneId = String(format: "%04d", plan.scenes[index].index)
-                    try await StoryboardsRepository.shared.enqueueSceneVideo(userId: uid, projectId: pid, storyboardId: sbId, sceneId: sceneId, provider: "wan", requestId: UUID().uuidString)
+                    let runId = UUID().uuidString
+                    try? await StoryboardsRepository.shared.startStoryboardRun(userId: uid, projectId: pid, storyboardId: sbId, runId: runId)
+                    try await StoryboardsRepository.shared.enqueueSceneVideo(userId: uid, projectId: pid, storyboardId: sbId, sceneId: sceneId, provider: "wan", requestId: UUID().uuidString, delaySeconds: nil, nameSuffix: nil, runId: runId)
                     isGenerating = false
                     return
                 }
@@ -429,7 +431,9 @@ struct StoryboardNavigatorView: View {
                 guard let uid = Auth.auth().currentUser?.uid, let sbId = storyboardId, let pid = projectId else { return }
                 // Enqueue all scenes with images sequentially with spacing
                 let spacing = 3 // tighten spacing; enqueue faster
-                let runId = Int(Date().timeIntervalSince1970)
+                let runId = UUID().uuidString
+                // Start fenced run and cancel stale work server-side
+                try? await StoryboardsRepository.shared.startStoryboardRun(userId: uid, projectId: pid, storyboardId: sbId, runId: runId)
                 let scenesWithImages = plan.scenes.enumerated().filter { !($0.element.imageUrl ?? "").isEmpty }
                 for (iTuple, pair) in scenesWithImages.enumerated() {
                     let i = iTuple
@@ -445,7 +449,8 @@ struct StoryboardNavigatorView: View {
                         provider: "wan",
                         requestId: "wan-\(runId)-\(sid)",
                         delaySeconds: i * spacing + jitter,
-                        nameSuffix: "r\(runId)-\(i)"
+                        nameSuffix: "r\(i)",
+                        runId: runId
                     )
                 }
 
@@ -503,6 +508,27 @@ struct StoryboardNavigatorView: View {
                 let video = data["video"] as? [String: Any]
                 let status = (video?["status"] as? String) ?? (data["videoStatus"] as? String) ?? ""
                 guard status.lowercased() == "done" else { continue }
+                // Fence: only accept current run clips if available
+                if let vRun = video?["runId"] as? String,
+                   let uid = Auth.auth().currentUser?.uid {
+                    let pid: String = projectId
+                    let sbId: String = storyboardId
+                    // Fetch storyboard.activeRunId once; for simplicity, read live
+                    Firestore.firestore().collection("users").document(uid).collection("projects").document(pid).collection("storyboards").document(sbId).getDocument { sb, _ in
+                        let active = (sb?.data()? ["state"] as? [String: Any])? ["activeRunId"] as? String
+                        if active == nil || active == vRun {
+                            if let urlStr = video?["outputUrl"] as? String, let url = URL(string: urlStr) {
+                                if !processedSceneIds.contains(doc.documentID) {
+                                    processedSceneIds.insert(doc.documentID)
+                                    let doneCount = processedSceneIds.count
+                                    let totalCount = plan.scenes.count
+                                    NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: ["url": url, "doneCount": doneCount, "totalCount": totalCount])
+                                }
+                            }
+                        }
+                    }
+                    continue
+                }
                 guard let urlStr = video?["outputUrl"] as? String, let url = URL(string: urlStr) else { continue }
                 if !processedSceneIds.contains(doc.documentID) {
                     processedSceneIds.insert(doc.documentID)

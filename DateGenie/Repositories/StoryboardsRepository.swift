@@ -85,6 +85,27 @@ final class StoryboardsRepository {
         return decoded.storyboardId
     }
 
+  struct StartRunResponse: Decodable { let ok: Bool; let activeRunId: String? }
+
+  func startStoryboardRun(userId: String,
+                          projectId: String,
+                          storyboardId: String,
+                          runId: String,
+                          gcpProjectId: String = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev") async throws {
+      let urlStr = functionsBaseURL(projectId: gcpProjectId) + "/startStoryboardRun"
+      guard let url = URL(string: urlStr) else { throw URLError(.badURL) }
+      var req = URLRequest(url: url)
+      req.httpMethod = "POST"
+      req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+      let body: [String: Any] = ["uid": userId, "projectId": projectId, "storyboardId": storyboardId, "runId": runId]
+      req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+      let (data, resp) = try await URLSession.shared.data(for: req)
+      guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+          throw NSError(domain: "StoryboardsRepository", code: (resp as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: String(data: data, encoding: .utf8) ?? "startStoryboardRun failed"])
+      }
+      _ = try? JSONDecoder().decode(StartRunResponse.self, from: data)
+  }
+
     // MARK: - Enqueue generation for a scene
 
     struct EnqueueResponse: Decodable { let ok: Bool; let taskName: String? }
@@ -97,6 +118,7 @@ final class StoryboardsRepository {
                            requestId: String? = nil,
                            delaySeconds: Int? = nil,
                            nameSuffix: String? = nil,
+                           runId: String,
                            gcpProjectId: String = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev") async throws {
         let urlStr = functionsBaseURL(projectId: gcpProjectId) + "/enqueueSceneVideo"
         guard let url = URL(string: urlStr) else { throw URLError(.badURL) }
@@ -107,7 +129,8 @@ final class StoryboardsRepository {
             "uid": userId,
             "projectId": projectId,
             "storyboardId": storyboardId,
-            "sceneId": sceneId
+            "sceneId": sceneId,
+            "runId": runId
         ]
         if let p = provider { body["provider"] = p }
         if let rid = requestId { body["requestId"] = rid }

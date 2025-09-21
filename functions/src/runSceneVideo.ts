@@ -19,11 +19,11 @@ function verifyOidcFromTasks(req: functions.https.Request): void {
 export const runSceneVideo = functions
   .runWith({timeoutSeconds: 540, memory: "1GB", secrets: ["REPLICATE_API_TOKEN"]})
   .region("us-central1")
-  .https.onRequest(async (req, res) => {
+  .https.onRequest(async (req, res): Promise<void> => {
     try {
       if (req.method !== "POST") { res.status(405).json({error: "method_not_allowed"}); return; }
       verifyOidcFromTasks(req);
-      const {uid, projectId, storyboardId, sceneId, provider, requestId, idempotencyKey} = (req.body || {}) as any;
+      const {uid, projectId, storyboardId, sceneId, provider, requestId, idempotencyKey, runId} = (req.body || {}) as any;
       if (!uid || !projectId || !storyboardId || !sceneId) { res.status(400).json({error: "bad_request"}); return; }
 
       const sbRef = db.collection("users").doc(uid).collection("projects").doc(projectId).collection("storyboards").doc(storyboardId);
@@ -37,11 +37,17 @@ export const runSceneVideo = functions
       if (!snap.exists) { res.status(404).json({error: "scene_not_found"}); return; }
       const data = snap.data() || {} as any;
 
-      // Idempotency: if already done, short-circuit
-      if (data?.video?.status === "done") {
-        res.status(200).json({ok: true, noop: true});
-        return;
-      }
+      // Run fence before any provider call
+      try {
+        const sb = await sbRef.get();
+        const activeRunId = (sb.data() as any)?.state?.activeRunId;
+        const vCheck = (data.video || {}) as any;
+        if ((activeRunId && runId && activeRunId !== runId) || (vCheck.runId && runId && vCheck.runId !== runId) || vCheck.status === "canceled") {
+          functions.logger.info("run_scene_video.skip_stale_or_canceled", {sceneId: id4, runId, activeRunId, vRunId: vCheck.runId, status: vCheck.status});
+          res.status(200).json({skipped: true});
+          return;
+        }
+      } catch {}
 
       // Idempotent claim: if already processing/done for veo, no-op
       let duplicate = false;
@@ -90,8 +96,7 @@ export const runSceneVideo = functions
 
         if (!image || !prompt) {
           functions.logger.error("run_scene_video.bad_input", {hasImage: !!image, hasPrompt: !!prompt});
-          await sceneRef.set({ video: { ...(data.video || {}), status: "failed", lastError: "bad_scene_data" }, videoStatus: "failed", updatedAt: FieldValue.serverTimestamp() }, {merge: true});
-          res.status(200).json({ok: false, reason: "bad_scene_data"});
+          res.status(400).json({error: "bad_scene_data"});
           return;
         }
 
@@ -104,8 +109,6 @@ export const runSceneVideo = functions
           } else if (typeof output === "string") {
             outputUrl = output;
           } else if (output && typeof output.arrayBuffer === "function") {
-            // Not uploading binary here; rely on replicate delivery URL only
-            // If arrayBuffer returned, we can't derive a public URL directly
             outputUrl = null;
           }
           providerJobId = `veo_${Date.now()}`;
@@ -147,6 +150,10 @@ export const runSceneVideo = functions
           }, {timeout: 540_000});
           providerJobId = `wan_${Date.now()}`;
           outputUrl = (resp.data && (resp.data.videoUrl as string)) || null;
+          const predictionId = (resp.data && (resp.data.predictionId as string)) || undefined;
+          if (predictionId) {
+            try { await sceneRef.set({ video: { predictionId }, updatedAt: FieldValue.serverTimestamp() }, {merge: true}); } catch {}
+          }
           functions.logger.info("run_scene_video.provider_wan_ok", {wanUrl, hasOutput: !!outputUrl});
         } catch (err: any) {
           const msg = String(err?.response?.data?.error || err?.message || err);
@@ -166,6 +173,19 @@ export const runSceneVideo = functions
         res.status(200).json({ok: false, reason: `${normalizedProvider}_no_output`});
         return;
       }
+
+      // Re-check fence just before writing done
+      try {
+        const sb2 = await sbRef.get();
+        const a2 = (sb2.data() as any)?.state?.activeRunId;
+        const s2 = await sceneRef.get();
+        const v2 = (s2.data() as any)?.video || {};
+        if ((a2 && runId && a2 !== runId) || (v2.runId && runId && v2.runId !== runId) || v2.status === "canceled") {
+          functions.logger.info("run_scene_video.stale_after_provider", {sceneId: id4, runId, activeRunId: a2});
+          res.status(200).json({stale: true});
+          return;
+        }
+      } catch {}
 
       await sceneRef.update({
         "video.status": "done",
