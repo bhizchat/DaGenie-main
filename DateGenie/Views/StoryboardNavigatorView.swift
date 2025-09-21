@@ -7,7 +7,10 @@ import FirebaseAuth
 
 struct StoryboardNavigatorView: View {
     @AppStorage("hasSeenStoryboardOnboarding") private var hasSeenStoryboardOnboarding: Bool = false
-    @State var plan: StoryboardPlan
+    // Local editable copy of the plan used by the editor UI
+    @State private var plan: StoryboardPlan
+    // Source of truth coming from parent; used to re-sync when Firestore updates arrive
+    private let inputPlan: StoryboardPlan
     /// When true, the view will attempt to synthesize missing images using `RenderService`.
     /// Music‑video flow already generates images on the server, so this should be false there
     /// to avoid momentary blank/black screens and unintended overrides.
@@ -15,7 +18,16 @@ struct StoryboardNavigatorView: View {
 
     init(plan: StoryboardPlan, autoRenderMissingImages: Bool = true) {
         _plan = State(initialValue: plan)
+        self.inputPlan = plan
         self.autoRenderMissingImages = autoRenderMissingImages
+    }
+
+    // Lightweight change-detection key so we can refresh local state when parent plan updates
+    private var inputSyncKey: String {
+        let parts = inputPlan.scenes.map { s in
+            "\(s.index):\(s.imageUrl ?? ""):\(s.action ?? ""):\(s.animation ?? "")"
+        }
+        return parts.joined(separator: "|")
     }
     @State private var isRendering: Bool = false
     @State private var index: Int = 0
@@ -136,6 +148,10 @@ struct StoryboardNavigatorView: View {
         }
         .background(Color(hex: 0xF7B451).ignoresSafeArea())
         .task { if autoRenderMissingImages { await renderIfNeeded() } }
+        .onChange(of: inputSyncKey) { _ in
+            // Re-sync local editable copy with upstream changes (e.g., new imageUrls, action/animation)
+            self.plan = inputPlan
+        }
         .overlay(alignment: .center) {
             if isGenerating { ZStack { Color.black.opacity(0.25).ignoresSafeArea(); ProgressView("Preparing…").padding(16).background(RoundedRectangle(cornerRadius: 12).fill(Color.white)) } }
         }
@@ -590,10 +606,11 @@ private struct SceneEditorRow: View {
         VStack(alignment: .leading, spacing: 14) {
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.2))
-                if let urlStr = scene.imageUrl, let url = URL(string: urlStr) {
+                if let urlStr = scene.imageUrl, let url = URL(string: urlStr), !urlStr.isEmpty {
                     AsyncImage(url: url) { ph in
                         switch ph {
-                        case .empty: ProgressView()
+                        case .empty:
+                            ZStack { Color.clear; ProgressView() }
                         case .success(let img): img.resizable().scaledToFit()
                         case .failure: Image(systemName: "photo").resizable().scaledToFit().padding(30).foregroundColor(.black.opacity(0.4))
                         @unknown default: EmptyView()
@@ -602,7 +619,13 @@ private struct SceneEditorRow: View {
                     .id(scene.imageUrl ?? "")
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 } else {
-                    Text("Rendering…").foregroundColor(.black.opacity(0.5))
+                    ZStack {
+                        Color.clear
+                        Text("Rendering…")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.black.opacity(0.6))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    }
                 }
                 // Status pill (queued/running/done/error)
                 if let status = scene.animation, ["queued","running","done","error"].contains(status.lowercased()) {

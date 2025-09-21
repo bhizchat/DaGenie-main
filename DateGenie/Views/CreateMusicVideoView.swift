@@ -133,9 +133,6 @@ struct CreateMusicVideoView: View {
                         }
                     )
                     .disabled(referenceImage == nil || audioURL == nil || selectedSettingId.isEmpty)
-                    .simultaneousGesture(TapGesture().onEnded {
-                        // Future: could kick avatar gen prefetch here
-                    })
 
                     Spacer().frame(height: 16)
                 }

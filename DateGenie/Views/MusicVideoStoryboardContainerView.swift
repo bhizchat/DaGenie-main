@@ -40,13 +40,30 @@ struct MusicVideoStoryboardContainerView: View {
             guard let docs = snap?.documents else { return }
             print("[MV] initial_scenes_count=\(docs.count) uid=\(uid) projectId=\(projectId) storyboardId=\(storyboardId)")
             if docs.isEmpty { return }
-            self.plan = buildPlan(from: docs)
+            // Verbose per-doc logging to verify fields present
+            for d in docs {
+                let data = d.data()
+                let idx = (data["index"] as? NSNumber)?.intValue ?? (data["index"] as? Int) ?? -1
+                let image = data["imageUrl"] as? String ?? ""
+                let action = data["action"] as? String ?? ""
+                let anim = data["animation"] as? String ?? ""
+                print("[MV] initial_scene id=\(d.documentID) idx=\(idx) imgLen=\(image.count) actionLen=\(action.count) animLen=\(anim.count)")
+            }
+            DispatchQueue.main.async { self.plan = buildPlan(from: docs) }
         }
         listener = base.order(by: "index").addSnapshotListener { snap, _ in
             guard let docs = snap?.documents else { return }
             print("[MV] snapshot_scenes_count=\(docs.count) uid=\(uid) projectId=\(projectId) storyboardId=\(storyboardId)")
             if docs.isEmpty { return }
-            self.plan = buildPlan(from: docs)
+            for d in docs {
+                let data = d.data()
+                let idx = (data["index"] as? NSNumber)?.intValue ?? (data["index"] as? Int) ?? -1
+                let image = data["imageUrl"] as? String ?? ""
+                let action = data["action"] as? String ?? ""
+                let anim = data["animation"] as? String ?? ""
+                print("[MV] snapshot_scene id=\(d.documentID) idx=\(idx) imgLen=\(image.count) actionLen=\(action.count) animLen=\(anim.count)")
+            }
+            DispatchQueue.main.async { self.plan = buildPlan(from: docs) }
         }
     }
 

@@ -110,16 +110,7 @@ struct MusicVideoStoryboardView: View {
             // Kick off avatar generation immediately so the user lands on a stylized preview
             Task { await generateAvatarIfNeeded() }
         }
-        .overlay(alignment: .center) {
-            if isGeneratingStoryboard {
-                ZStack {
-                    Color.black.opacity(0.25).ignoresSafeArea()
-                    Text("Generating storyboard…")
-                        .padding(16)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
-                }
-            }
-        }
+        // Removed loading overlay by request
     }
 
     private func configurePlayer() {
@@ -157,7 +148,7 @@ struct MusicVideoStoryboardView: View {
 
             // Call backend to generate storyboard and enqueue scenes (WAN)
             let gcpId = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev"
-            let url = URL(string: "https://us-central1-\(gcpId).cloudfunctions.net/generateMusicStoryboard")!
+            let url = URL(string: "https://us-central1-\(gcpId).cloudfunctions.net/generateMusicStoryboardV2")!
             var req = URLRequest(url: url)
             req.httpMethod = "POST"
             req.addValue("application/json", forHTTPHeaderField: "Content-Type")

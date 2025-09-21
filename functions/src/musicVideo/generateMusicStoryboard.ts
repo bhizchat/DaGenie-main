@@ -20,17 +20,16 @@ type Shot = {
  * For now, this scaffolds an 8-shot plan and enqueues WAN generation for each shot.
  * Later, replace the shot planning with Nano Banana + beats-aware logic.
  */
-export const generateMusicStoryboard = functions
-  .runWith({timeoutSeconds: 300, memory: "512MB"})
-  .region("us-central1")
-  .https.onRequest(async (req, res) => {
+// Core handler used by both V1 and V2 exports
+const generateMusicStoryboardHandler = async (req: functions.https.Request, res: functions.Response<any>) => {
     try {
       if (req.method !== "POST") { res.status(405).json({error: "method_not_allowed"}); return; }
-      const {uid, projectId, settingId, referenceImageUrl, audioGsPath, promptKit, ideaText} = (req.body || {}) as any;
+      const {uid, projectId, settingId, referenceImageUrl, audioGsPath, promptKit, ideaText, storyboardId} = (req.body || {}) as any;
       if (!uid || !projectId || !referenceImageUrl) { res.status(400).json({error: "bad_request"}); return; }
 
-      // Create storyboard doc
-      const sbRef = db.collection("users").doc(uid).collection("musicVideos").doc(projectId).collection("storyboards").doc();
+      // Create storyboard doc (use provided storyboardId if present to allow immediate client navigation)
+      const sbColl = db.collection("users").doc(uid).collection("musicVideos").doc(projectId).collection("storyboards");
+      const sbRef = storyboardId ? sbColl.doc(String(storyboardId)) : sbColl.doc();
       const now = Timestamp.now();
       const idea = String(ideaText || "").toLowerCase();
       await sbRef.set({
@@ -139,7 +138,8 @@ export const generateMusicStoryboard = functions
           index: s.index,
           action: s.action,
           animation: s.animation || null,
-          imageUrl: s.imageUrl,
+          // Seed with empty image so Firestore onCreate trigger and background job will fill it
+          imageUrl: "",
           script: s.action,
           durationSec: 5.0,
           video: {status: "idle"},
@@ -151,7 +151,11 @@ export const generateMusicStoryboard = functions
       await batch.commit();
       functions.logger.info("generateMusicStoryboard.scenes_written", {storyboardId: sbRef.id, written: shots.length, path: `${sbRef.path}/scenes`});
 
-      // Generate storyboard images using the avatar as the i2i anchor
+      // Respond immediately so the client isn't blocked by long-running image generation
+      functions.logger.info("generateMusicStoryboard.ok", {uid, projectId, storyboardId: sbRef.id, shots: shots.length, audio: !!audioGsPath});
+      res.status(200).json({ok: true, storyboardId: sbRef.id, shots: shots.length});
+
+      // Best-effort background image generation (may be pre-empted by platform). Primary path is Firestore triggers.
       try {
         const project = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || (process.env.FIREBASE_CONFIG ? JSON.parse(String(process.env.FIREBASE_CONFIG)).projectId : "");
         const base = `https://us-central1-${project}.cloudfunctions.net`;
@@ -179,13 +183,21 @@ export const generateMusicStoryboard = functions
       } catch (e: any) {
         functions.logger.warn("generateMusicStoryboard.images_failed", {message: String(e?.message || e)});
       }
-
-      functions.logger.info("generateMusicStoryboard.ok", {uid, projectId, storyboardId: sbRef.id, shots: shots.length, audio: !!audioGsPath});
-      res.status(200).json({ok: true, storyboardId: sbRef.id, shots: shots.length});
     } catch (e: any) {
       functions.logger.error("generateMusicStoryboard.failed", {message: String(e?.message || e)});
       res.status(500).json({error: "internal_error", message: String(e?.message || e)});
     }
-  });
+  };
 
+export const generateMusicStoryboard = functions
+  .runWith({timeoutSeconds: 300, memory: "512MB"})
+  .region("us-central1")
+  .https.onRequest(generateMusicStoryboardHandler);
+
+
+// Alias a V2 endpoint name to avoid deployment blockage on the original function
+export const generateMusicStoryboardV2 = functions
+  .runWith({timeoutSeconds: 300, memory: "512MB"})
+  .region("us-central1")
+  .https.onRequest(generateMusicStoryboardHandler);
 

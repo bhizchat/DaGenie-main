@@ -118,6 +118,116 @@ enum MusicVideoSettingsCatalog {
                 cameraGrammar: ["orbit 8–15°", "parallax hallway passes", "crane-up reveals", "rack-focus from glyphs to dancers"],
                 fpsHint: "14–16 fps with slight grain/jitter"
             )
+        ),
+        MusicVideoSetting(
+            id: "astro_world",
+            name: "Astro-World",
+            imageAssetName: "astro-world",
+            environment: "surreal theme-park city with golden head portal, parade midways, coasters and sky balloons; pastel day that flips to neon night",
+            palette: ["#f6a623", "#66ccff", "#ff66cc", "#0b1023"],
+            bio: "A mythic amusement world crowned by a golden head portal. Parade midways, retro Houston easter eggs, and sky carnivals flip from pastel day to neon night. Built for ride‑POV hooks, funhouse loops, and giant‑scale concert moments.",
+            promptKit: PromptKit(
+                worldPillars: [
+                    "Golden head portal opening to different park ‘lands’",
+                    "Pastel day palette → neon night palette transformation",
+                    "Giant‑scale performer in miniature park",
+                    "Sky carnival of balloons, blimps, dirigibles",
+                    "Homages to historic Houston AstroWorld rides",
+                    "Zoetrope carousel logic for AI‑friendly loops"
+                ],
+                formatBeats: [
+                    "Intro: Portal Quest — enter through the glowing mouth into the park",
+                    "V1: Theme‑Park Takeover parade performance down the midway",
+                    "Hook: Ride‑POV montage — coaster climb/drop, ferris parallax, log‑flume splash",
+                    "V2: Dark‑Ride Funhouse — neon mirrors, lasers, animatronic toys",
+                    "Hook: Day–Night Flip + Sky Carnival blimps over park",
+                    "Finale: Giant‑Scale virtual show set with physics‑bending moments"
+                ],
+                setPacks: [
+                    "Golden Head Portal Gate",
+                    "Midway Parade Route & Floats",
+                    "Ride POV Pack (coaster, ferris wheel, log flume)",
+                    "Neon Funhouse / Tunnel‑of‑Love",
+                    "Day–Night Flip Park Lighting",
+                    "Giant‑Scale City Plaza",
+                    "Sky Carnival Airspace",
+                    "Houston Homage Retro Rides",
+                    "Midway Games Heist Alley",
+                    "Carousel Zoetrope Stage"
+                ],
+                loopGags: [
+                    "Coaster climb → drop timed to hook",
+                    "Ferris‑wheel parallax passes",
+                    "Log‑flume splash accents on ad‑libs",
+                    "Mirror room infinity reflections",
+                    "Blimp/balloon silhouettes drifting over chorus",
+                    "Ring‑toss / milk‑bottle win recurring plush prop",
+                    "Title signage nods (Texas Cyclone, Thunder River)"
+                ],
+                cameraGrammar: [
+                    "orbit 8–15° around floats and rides",
+                    "parallax dolly past props on the midway",
+                    "crane‑up reveals over gates and coasters",
+                    "slow aerial orbits for sky‑parade hooks",
+                    "rack‑focus from signage to performer"
+                ],
+                fpsHint: "12–16 fps with slight frame jitter for toy‑world/zoetrope vibe"
+            )
+        ),
+        MusicVideoSetting(
+            id: "grand_theft_arena",
+            name: "Grand Theft Arena",
+            imageAssetName: "grandtheftarena",
+            environment: "high‑octane drift coliseum with sand floor, neon LED megascreens, pyro, drones and roaring crowd",
+            palette: ["#ff3b6e", "#66ccff", "#f6a623", "#0b1023"],
+            bio: "A stadium‑scale drift arena turned concert stage. Choreographed cars, pyro and drone light shows surround the performer while the sand floor becomes a projection‑mapped canvas. Built for trap/EDM hooks, pop spectacle and cinematic gladiator stories.",
+            promptKit: PromptKit(
+                worldPillars: [
+                    "Drift choreography around center circle",
+                    "LED megascreens and hologram stage",
+                    "Pyro lines and fireworks synced to beat",
+                    "Drone swarm light shows overhead",
+                    "Projection‑mapped sand floor visuals",
+                    "Grand Drift Tournament: rivals, crowd, scoreboard"
+                ],
+                formatBeats: [
+                    "Intro: drone fly‑in over arena; lights ramp; artist steps into center",
+                    "V1: High‑Energy Rap Performance with choreographed car donuts",
+                    "Hook: Electronic/Dance Visualizer — LEDs, pyro bursts, fireworks",
+                    "V2: Futuristic Gladiator challenges with scoreboard drama",
+                    "Hook: Pop spectacle — dancers weaving between cars, ramps transform",
+                    "Finale: Virtual Collab hologram stage and synchronized drift closer"
+                ],
+                setPacks: [
+                    "Center Circle Stage",
+                    "Drift Track Patterns (figure‑8, donut, banked turns)",
+                    "LED Megascreens & Holograms",
+                    "Pyro Lines & Firework Racks",
+                    "Drone Light‑Show Grid",
+                    "Projection‑Mapped Sand Floor",
+                    "Grand Drift Tournament Props (ramps, obelisks, podium)",
+                    "Collab Hologram Stage",
+                    "Crowd & Scoreboard Package"
+                ],
+                loopGags: [
+                    "Donut drift smoke rings on snares",
+                    "Spark fountains on downbeats",
+                    "Drone swarm morphs into logo",
+                    "Scoreboard flips on drops",
+                    "Car LED outlines strobe",
+                    "Dancers weaving between cars",
+                    "Micro camera shake on engine revs"
+                ],
+                cameraGrammar: [
+                    "orbit 8–15° around center circle",
+                    "low‑angle dolly‑in across sand",
+                    "overhead crane‑down into formation",
+                    "tracking pan following drift path",
+                    "telephoto parallax through heat‑haze",
+                    "rack‑focus from LED screen to performer"
+                ],
+                fpsHint: "12–16 fps, slight jitter; add subtle camera vibration on hits"
+            )
         )
     ]
 }

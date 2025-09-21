@@ -47,3 +47,5 @@ export {runSceneVideo} from "./runSceneVideo";
 export {createOriginalCharacter} from "./createOriginalCharacter";
 export {generateMusicStoryboard} from "./musicVideo/generateMusicStoryboard";
 export {generateFluxAvatar} from "./musicVideo/generateFluxAvatar";
+export {startMusicStoryboardOnCreate} from "./musicVideo/startMusicStoryboardOnCreate";
+export {generateMusicStoryboardV2} from "./musicVideo/generateMusicStoryboard";

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ProjectsRootTab: View {
-    @State private var selected: Int = 1 // 0 projects, 1 stories, 2 profile (default to stories)
+    @State private var selected: Int = 0 // 0 projects, 1 stories, 2 profile (default to projects)
     @StateObject private var keyboard = KeyboardObserver()
 
     var body: some View {
