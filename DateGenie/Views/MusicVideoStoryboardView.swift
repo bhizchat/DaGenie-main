@@ -72,9 +72,9 @@ struct MusicVideoStoryboardView: View {
                 }
                 .padding(.horizontal, 24)
 
-                // NEXT button: go to Idea (assets ready first)
+                // Select Avatar button: triggers avatar render/upload then proceed
                 Button(action: { Task { await ensureUploadsAndAvatarThenOpenIdea() } }) {
-                    Text("NEXT")
+                    Text(isGeneratingAvatar || isUploading ? "Selecting Avatar..." : "Select Avatar")
                         .font(.system(size: 22, weight: .heavy))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -83,6 +83,7 @@ struct MusicVideoStoryboardView: View {
                         .cornerRadius(14)
                         .padding(.horizontal, 24)
                 }
+                .disabled(isGeneratingAvatar || isUploading)
 
                 // Hidden link driven by openIdea flag
                 NavigationLink(isActive: $openIdea) {

@@ -143,10 +143,30 @@ export const wanI2vFast = functions
       const replicate = new Replicate({auth: token});
       functions.logger.info("wanI2vFast: start", {hasImage: image.startsWith("gs://") || image.startsWith("http"), promptLen: prompt.length, num_frames, frames_per_second, resolution, sample_shift, go_fast});
 
-      // Run synchronously to obtain file output (mp4 URL or blob)
+      // Prefer predictions API so we can capture a predictionId for cancellation/traceability
       let output: any;
+      let predictionId: string | undefined;
       try {
-        output = await replicate.run("wan-video/wan-2.2-i2v-fast", {input: modelInput});
+        const created: any = await (replicate as any).predictions.create({
+          model: "wan-video/wan-2.2-i2v-fast",
+          input: modelInput,
+        });
+        predictionId = created?.id;
+        // Poll until completion (success/failed/canceled)
+        const startedAt = Date.now();
+        while (true) {
+          // safety timeout ~8 minutes
+          if (Date.now() - startedAt > 8 * 60 * 1000) {
+            throw new Error("replicate_timeout");
+          }
+          const pred: any = await (replicate as any).predictions.get(created.id);
+          const status = String(pred?.status || "");
+          if (status === "succeeded") { output = pred?.output; break; }
+          if (status === "failed" || status === "canceled") {
+            throw new Error(`replicate_${status}`);
+          }
+          await new Promise(r => setTimeout(r, 2000));
+        }
       } catch (e:any) {
         const msg = String(e?.message || e);
         // Surface clear diagnostics for common errors
@@ -173,7 +193,7 @@ export const wanI2vFast = functions
           replicateUrl = output;
         }
       } catch (_) { /* noop */ }
-      functions.logger.info("wanI2vFast: replicate_url", {present: !!replicateUrl, prefix: replicateUrl ? String(replicateUrl).slice(0, 80) : null});
+      functions.logger.info("wanI2vFast: replicate_url", {present: !!replicateUrl, prefix: replicateUrl ? String(replicateUrl).slice(0, 80) : null, predictionId});
 
       // Attempt to download and persist in Cloud Storage. If it fails, return replicateUrl.
       let finalUrl = replicateUrl;
@@ -197,8 +217,8 @@ export const wanI2vFast = functions
         }
       }
 
-      functions.logger.info("wanI2vFast: success", {hasVideo: !!finalUrl, hasReplicateUrl: !!replicateUrl});
-      res.status(200).json({videoUrl: finalUrl || null, replicateUrl: replicateUrl || null});
+      functions.logger.info("wanI2vFast: success", {hasVideo: !!finalUrl, hasReplicateUrl: !!replicateUrl, predictionId});
+      res.status(200).json({videoUrl: finalUrl || null, replicateUrl: replicateUrl || null, predictionId: predictionId || null});
     } catch (err) {
       const msg = (err as any)?.message || String(err);
       functions.logger.error("wanI2vFast failed", msg);

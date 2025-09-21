@@ -20,7 +20,7 @@ struct CreateMusicVideoView: View {
             ZStack {
                 Color(hex: 0xF7B451).ignoresSafeArea()
                 VStack(spacing: 28) {
-                    Spacer().frame(height: 24)
+                    Spacer().frame(height: 29)
                     Text("CREATE MUSIC VIDEO")
                         .font(.system(size: 28, weight: .heavy))
                         .foregroundColor(.black)
@@ -39,6 +39,15 @@ struct CreateMusicVideoView: View {
                                             .frame(width: 260, height: 260)
                                             .clipped()
                                             .cornerRadius(16)
+                                            .overlay(alignment: .topTrailing) {
+                                                Button(action: { referenceImage = nil }) {
+                                                    ZStack {
+                                                        Circle().fill(Color.white).frame(width: 22, height: 22)
+                                                        Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundColor(.black)
+                                                    }
+                                                }
+                                                .padding(6)
+                                            }
                                     } else {
                                         Button(action: { isShowingImagePicker = true }) {
                                             Text("Upload Reference\nImage")
@@ -117,9 +126,7 @@ struct CreateMusicVideoView: View {
                         destination: {
                             if let ui = referenceImage, let url = audioURL {
                                 MusicVideoStoryboardView(referenceImage: ui, audioURL: url, settingId: selectedSettingId)
-                            } else {
-                                EmptyView()
-                            }
+                            } else { EmptyView() }
                         },
                         label: {
                             Text("NEXT")
@@ -136,6 +143,7 @@ struct CreateMusicVideoView: View {
 
                     Spacer().frame(height: 16)
                 }
+                .padding(.bottom, 20)
             }
         }
         .sheet(isPresented: $isShowingImagePicker) {

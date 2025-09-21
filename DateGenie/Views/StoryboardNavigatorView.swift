@@ -32,8 +32,8 @@ struct StoryboardNavigatorView: View {
     @State private var isRendering: Bool = false
     @State private var index: Int = 0
     @State private var scriptHeight: CGFloat = 140
-    @State private var actionHeight: CGFloat = 96
-    @State private var speechHeight: CGFloat = 96
+    @State private var actionHeight: CGFloat = 72
+    @State private var speechHeight: CGFloat = 72
     @State private var focusAction: Bool = false
     @State private var focusSpeech: Bool = false
     @State private var isGenerating: Bool = false
@@ -73,11 +73,11 @@ struct StoryboardNavigatorView: View {
                     height: height,
                     availableWidth: width,
                     minHeight: 72,
-                    maxHeight: 200,
+                    maxHeight: 72,
                     trailingInset: 0,
                     isFirstResponder: isEditing
                 )
-                .frame(height: min(max(72, height.wrappedValue), 200))
+                .frame(height: 72)
                 // Lock editing unless the blue Edit button was tapped
                 .allowsHitTesting(isEditing.wrappedValue)
                 .padding(8)
@@ -419,11 +419,6 @@ struct StoryboardNavigatorView: View {
 
     fileprivate func generateAll() {
         Task { @MainActor in
-            // Emergency guard: block generation if kill switch enabled
-            if FeatureFlags.disableVeoStoryboards {
-                showDone = true
-                return
-            }
             // Extra tap guard: if already generating, bail immediately
             if isGenerating { return }
             isGenerating = true
@@ -433,7 +428,7 @@ struct StoryboardNavigatorView: View {
                 await persistStoryboard(reason: "generate_all_pre_enqueue")
                 guard let uid = Auth.auth().currentUser?.uid, let sbId = storyboardId, let pid = projectId else { return }
                 // Enqueue all scenes with images sequentially with spacing
-                let spacing = 6 // base seconds between scheduled tasks (reduced from 15)
+                let spacing = 3 // tighten spacing; enqueue faster
                 let runId = Int(Date().timeIntervalSince1970)
                 let scenesWithImages = plan.scenes.enumerated().filter { !($0.element.imageUrl ?? "").isEmpty }
                 for (iTuple, pair) in scenesWithImages.enumerated() {
@@ -448,7 +443,7 @@ struct StoryboardNavigatorView: View {
                         storyboardId: sbId,
                         sceneId: sid,
                         provider: "wan",
-                        requestId: UUID().uuidString,
+                        requestId: "wan-\(runId)-\(sid)",
                         delaySeconds: i * spacing + jitter,
                         nameSuffix: "r\(runId)-\(i)"
                     )
@@ -596,8 +591,8 @@ private struct SceneEditorRow: View {
     let onDelete: () -> Void
     let onEdit: () -> Void
 
-    @State private var actionHeight: CGFloat = 96
-    @State private var speechHeight: CGFloat = 96
+    @State private var actionHeight: CGFloat = 72
+    @State private var speechHeight: CGFloat = 72
     @State private var focusAction: Bool = false
     @State private var focusSpeech: Bool = false
     @State private var showDeleteControl: Bool = false
@@ -736,8 +731,8 @@ private struct GrowingField: View {
             }
             GeometryReader { geo in
                 let width = geo.size.width - 16
-                GrowingTextViewFixed(text: $text, height: $height, availableWidth: width, minHeight: 72, maxHeight: 200, trailingInset: 0, isFirstResponder: $isEditing)
-                    .frame(height: min(max(72, height), 200))
+                GrowingTextViewFixed(text: $text, height: $height, availableWidth: width, minHeight: 72, maxHeight: 72, trailingInset: 0, isFirstResponder: $isEditing)
+                    .frame(height: 72)
                     // Lock editing unless the blue Edit button was tapped
                     .allowsHitTesting(isEditing)
                     .padding(8)
