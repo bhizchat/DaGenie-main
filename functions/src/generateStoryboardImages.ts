@@ -25,7 +25,7 @@ export const generateStoryboardImages = functions
         res.status(405).json({error: "method_not_allowed"});
         return;
       }
-      const {scenes = [], style = "3D stylized", referenceImageUrls = [], character = "", provider = "", characterName = "", environment = "", aspectRatio = "9:16", ideaText = ""} = (req.body || {}) as any;
+      const {scenes = [], style = "3D stylized", referenceImageUrls = [], character = "", provider = "", characterName = "", environment = "", aspectRatio = "9:16", ideaText = "", uid = "", projectId = "", storyboardId = "", debugPrompts = false} = (req.body || {}) as any;
       const requestId = `SBIMG_${Date.now()}`;
       // Startup/env diagnostics
       console.log("[SBIMG] env", {
@@ -95,6 +95,20 @@ export const generateStoryboardImages = functions
         // Strong identity clause to reduce character swaps
         const identityLine = characterName ? `Identity anchor: the person is ${characterName}. Do not change identity.` : (character ? `Identity anchor id: ${character}.` : "");
         const fullPrompt = identityLine ? `${identityLine} ${prompt}` : prompt;
+
+        // Optional Firestore debug write of the final prompt
+        try {
+          if (debugPrompts && uid && projectId && storyboardId) {
+            const {getFirestore, FieldValue} = await import("firebase-admin/firestore");
+            const db = getFirestore();
+            const sceneId = String(index).padStart(4, "0");
+            await db.collection("users").doc(uid).collection("musicVideos").doc(projectId).collection("storyboards").doc(storyboardId).collection("scenes").doc(sceneId)
+              .set({ debug: { fullPrompt, updatedAt: FieldValue.serverTimestamp() } }, { merge: true });
+            console.log("[SBIMG] debug_fullPrompt_written", { id: requestId, idx: index, sceneId });
+          }
+        } catch (e) {
+          console.warn("[SBIMG] debug_fullPrompt_write_failed", { id: requestId, idx: index, msg: String((e as any)?.message || e) });
+        }
 
         // Parts (edit flow): anchor image FIRST → then text (stronger identity anchoring)
         const parts: any[] = [];

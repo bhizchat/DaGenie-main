@@ -63,7 +63,7 @@ struct SceneSettingsPickerView: View {
                 .padding(.top, 56)
                 .padding(.bottom, 24)
             }
-            .background(Color(hex: 0xF7B451).ignoresSafeArea())
+            .background(Color(hex: 0xF3B529).ignoresSafeArea())
             .sheet(item: $selected) { item in
                 SceneSettingDetailSheet(item: item, onSelect: { chosen in
                     selected = nil
@@ -125,7 +125,7 @@ private struct SceneSettingDetailSheet: View {
             }
             .padding(.top, 12)
         }
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
         .overlay(alignment: .topLeading) {
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")

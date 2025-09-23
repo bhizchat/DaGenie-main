@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Users upload a reference image, choose an audio file, pick a setting, then proceed.
 struct CreateMusicVideoView: View {
     // Inputs
+    @Environment(\.dismiss) private var dismiss
     @State private var referenceImage: UIImage? = nil
     @State private var audioURL: URL? = nil
     @State private var isShowingImagePicker: Bool = false
@@ -18,12 +19,20 @@ struct CreateMusicVideoView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                Color(hex: 0xF7B451).ignoresSafeArea()
+                Color(hex: 0xF3B529).ignoresSafeArea()
                 VStack(spacing: 28) {
-                    Spacer().frame(height: 29)
-                    Text("CREATE MUSIC VIDEO")
-                        .font(.system(size: 28, weight: .heavy))
-                        .foregroundColor(.black)
+                    HStack {
+                        Button(action: { dismiss() }) {
+                            Image("back_arrow")
+                                .resizable()
+                                .renderingMode(.original)
+                                .scaledToFit()
+                                .frame(width: 28, height: 28)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 6)
 
                     // Reference image
                     VStack(spacing: 8) {
@@ -50,11 +59,18 @@ struct CreateMusicVideoView: View {
                                             }
                                     } else {
                                         Button(action: { isShowingImagePicker = true }) {
-                                            Text("Upload Reference\nImage")
-                                                .font(.system(size: 16, weight: .bold))
-                                                .multilineTextAlignment(.center)
-                                                .foregroundColor(.black)
-                                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                            VStack(spacing: 8) {
+                                                Image(systemName: "photo.on.rectangle")
+                                                    .resizable()
+                                                    .scaledToFit()
+                                                    .foregroundColor(Color.black.opacity(0.5))
+                                                    .frame(width: 180, height: 150)
+                                                Text("Upload Reference\nImage")
+                                                    .font(.system(size: 16, weight: .bold))
+                                                    .multilineTextAlignment(.center)
+                                                    .foregroundColor(.black.opacity(0.7))
+                                            }
+                                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                                         }
                                     }
                                 }

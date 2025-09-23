@@ -45,19 +45,18 @@ final class AuthViewModel: NSObject, ObservableObject {
         }
     }
 
-    func signUp(email: String, password: String, firstName: String, lastName: String) async {
+    func signUp(email: String, password: String, artistName: String) async {
         do {
             let result = try await Auth.auth().createUser(withEmail: email, password: password)
             let user = result.user
-            let display = "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
+            let display = artistName.trimmingCharacters(in: .whitespaces)
             let change = user.createProfileChangeRequest()
             change.displayName = display.isEmpty ? nil : display
             try? await change.commitChanges()
             // Persist to Firestore
             let db = FirebaseFirestore.Firestore.firestore()
             try? await db.collection("users").document(user.uid).setData([
-                "firstName": firstName,
-                "lastName": lastName,
+                "username": display,
                 "displayName": display
             ], merge: true)
         } catch {
@@ -81,7 +80,7 @@ final class AuthViewModel: NSObject, ObservableObject {
 
     // MARK: - Apple Sign-In
     func appleButton() -> some View {
-        SignInWithAppleButton(.signIn) { request in
+        SignInWithAppleButton(.continue) { request in
             let nonce = self.randomNonce()
             self.currentNonce = nonce
             request.requestedScopes = [.fullName, .email]

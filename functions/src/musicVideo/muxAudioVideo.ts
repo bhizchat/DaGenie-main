@@ -42,7 +42,7 @@ export const muxAudioVideo = functions
       if (activeRunId && activeRunId !== runId) { res.status(409).json({error: "stale_run"}); return; }
 
       const videoUrl = sb?.finishing?.lipsync?.outputUrl || sb?.finishing?.concat?.masterVideoUrl;
-      const audioUrl = sb?.finishing?.audioGsPath;
+      const audioUrl = sb?.finishing?.audioNUrl || sb?.finishing?.audio60Url || sb?.finishing?.audioGsPath;
       if (!videoUrl || !audioUrl) { res.status(400).json({error: "missing_inputs"}); return; }
 
       const tmp = fs.mkdtempSync(path.join(process.cwd(), "mux-"));
@@ -52,7 +52,14 @@ export const muxAudioVideo = functions
 
       const outPath = path.join(tmp, "final.mp4");
       const ff = (ffmpegPath as unknown as string);
-      await run(ff, ["-i", videoPath, "-i", audioPath, "-c:v", "copy", "-c:a", "aac", "-shortest", outPath]);
+      await run(ff, [
+        "-i", videoPath, "-i", audioPath,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac",
+        "-movflags", "+faststart",
+        "-shortest",
+        outPath
+      ]);
 
       const bucket = storage.bucket();
       const objectPath = `masters/${uid}/${projectId}/${storyboardId}/final_${Date.now()}.mp4`;

@@ -109,8 +109,25 @@ struct StoryboardNavigatorView: View {
             VStack(spacing: 24) {
                 // Header
                 ZStack {
-                    HStack { Button(action: { dismiss() }) { Image(systemName: "xmark").font(.system(size: 16, weight: .bold)).foregroundColor(.black).padding(8) }; Spacer() }
-                    HStack { Spacer(); Text("STORYBOARD").font(.system(size: 22, weight: .heavy)).foregroundColor(.black); Image("storyboard").resizable().renderingMode(.original).scaledToFit().frame(width: 28, height: 28); Spacer() }
+                    HStack {
+                        Button(action: { dismiss() }) {
+                            Image("back_arrow")
+                                .resizable()
+                                .renderingMode(.original)
+                                .scaledToFit()
+                                .frame(width: 28, height: 28)
+                        }
+                        Spacer()
+                    }
+                    HStack {
+                        Spacer()
+                        Text("SCROLL THROUGH YOUR VISUALS AND TAP AN IMAGE TO EDIT")
+                            .font(.system(size: 18, weight: .heavy))
+                            .foregroundColor(.black)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        Spacer()
+                    }
                 }
 
                 // Vertical scenes list
@@ -146,7 +163,7 @@ struct StoryboardNavigatorView: View {
             .padding(.bottom, 16)
         }
         }
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
         .task { if autoRenderMissingImages { await renderIfNeeded() } }
         .onChange(of: inputSyncKey) { _ in
             // Re-sync local editable copy with upstream changes (e.g., new imageUrls, action/animation)
@@ -183,6 +200,32 @@ struct StoryboardNavigatorView: View {
         }
     }
     // Close body
+
+    // MARK: - Helpers (sanitizer + plan builder)
+    private func sanitizeHandsOnly(_ s: String?) -> String {
+        guard let t = s else { return "" }
+        var out = t.replacingOccurrences(of: "(?i)\\b(handheld\\s+)?microphones?\\b", with: "hand gestures", options: .regularExpression)
+        out = out.replacingOccurrences(of: "(?i)\\bmic\\b", with: "hand gestures", options: .regularExpression)
+        out = out.replacingOccurrences(of: "\\([^)]*?microphone[^)]*\\)", with: "", options: .regularExpression)
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func buildPlan(from docs: [QueryDocumentSnapshot]) -> StoryboardPlan {
+        var scenes: [PlanScene] = []
+        for d in docs {
+            let data = d.data()
+            let idx = (data["index"] as? NSNumber)?.intValue ?? (data["index"] as? Int) ?? 0
+            let rawAction = data["action"] as? String
+            let action = sanitizeHandsOnly(rawAction)
+            let anim = data["animation"] as? String
+            let image = data["imageUrl"] as? String
+            var s = PlanScene(index: idx, prompt: action, script: action, durationSec: 5.0, wordsPerSec: nil, wordBudget: nil, imageUrl: image, action: action, speechType: nil, speech: nil, animation: anim, speakerSlot: nil)
+            scenes.append(s)
+        }
+        scenes.sort { $0.index < $1.index }
+        let refs = inputPlan.referenceImageUrls ?? plan.referenceImageUrls
+        return StoryboardPlan(character: plan.character, settings: plan.settings, scenes: scenes, referenceImageUrls: refs)
+    }
 
     fileprivate func next() { if index < plan.scenes.count-1 { index += 1 } }
     fileprivate func prev() { if index > 0 { index -= 1 } }
@@ -503,6 +546,16 @@ struct StoryboardNavigatorView: View {
             .order(by: "index")
         scenesListener = coll.addSnapshotListener { snap, _ in
             guard let docs = snap?.documents else { return }
+            for d in docs {
+                let data = d.data()
+                let idx = (data["index"] as? NSNumber)?.intValue ?? (data["index"] as? Int) ?? -1
+                let image = data["imageUrl"] as? String ?? ""
+                let rawAction = data["action"] as? String ?? ""
+                let action = self.sanitizeHandsOnly(rawAction)
+                let anim = data["animation"] as? String ?? ""
+                print("[MV] snapshot_scene id=\(d.documentID) idx=\(idx) imgLen=\(image.count) actionLen=\(action.count) animLen=\(anim.count)")
+            }
+            DispatchQueue.main.async { self.plan = self.buildPlan(from: docs) }
             for doc in docs {
                 let data = doc.data()
                 let video = data["video"] as? [String: Any]
@@ -617,10 +670,6 @@ private struct SceneEditorRow: View {
     let onDelete: () -> Void
     let onEdit: () -> Void
 
-    @State private var actionHeight: CGFloat = 72
-    @State private var speechHeight: CGFloat = 72
-    @State private var focusAction: Bool = false
-    @State private var focusSpeech: Bool = false
     @State private var showDeleteControl: Bool = false
 
     var body: some View {
@@ -668,9 +717,8 @@ private struct SceneEditorRow: View {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 withAnimation { showDeleteControl = true }
             }
-            // Swallow taps on the image so that outer row tap (which hides the delete control)
-            // doesn't fire when tapping inside the image region
-            .highPriorityGesture(TapGesture().onEnded({ }))
+            // Tapping the storyboard image opens the edit sheet (no inline fields)
+            .highPriorityGesture(TapGesture().onEnded({ onEdit() }))
             .overlay(alignment: .topLeading) {
                 if showDeleteControl {
                     Button(action: onDelete) {
@@ -696,27 +744,6 @@ private struct SceneEditorRow: View {
                 }
             }
             .frame(height: 300)
-
-            // Removed heavy SCRIPT label to reduce repetition
-            VStack(alignment: .leading, spacing: 18) {
-                // Action
-                GrowingField(title: "Action", text: Binding(get: { scene.action ?? "" }, set: { v in
-                    scene.action = limitWords(v, cap: 20)
-                }), isEditing: $focusAction, height: $actionHeight, onEdit: onEdit)
-                .onChange(of: scene.action ?? "") { _ in
-                    DispatchQueue.main.async { scene.script = composeForRow(scene) }
-                }
-
-                // Animation (replaces Dialogue)
-                GrowingField(title: "Animation", text: Binding(get: { scene.animation ?? "" }, set: { v in
-                    scene.animation = limitWords(v, cap: 20)
-                }), isEditing: $focusSpeech, height: $speechHeight)
-                .onChange(of: scene.animation ?? "") { _ in
-                    DispatchQueue.main.async { scene.script = composeForRow(scene) }
-                }
-
-                // Single model (WAN); Veo removed from UI
-            }
         }
         // Tapping anywhere in the row outside of the image dismisses the delete control
         .contentShape(Rectangle())
@@ -725,15 +752,6 @@ private struct SceneEditorRow: View {
                 withAnimation { showDeleteControl = false }
             }
         }
-    }
-
-    private func composeForRow(_ s: PlanScene) -> String {
-        let a = s.action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let anim = s.animation?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        var lines: [String] = []
-        if !a.isEmpty { lines.append("Action: \(a)") }
-        if !anim.isEmpty { lines.append("Animation: \(anim)") }
-        return lines.joined(separator: "\n")
     }
 }
 
@@ -829,7 +847,7 @@ private struct StoryboardFirstRunOnboarding: View {
 
     var body: some View {
         ZStack {
-            Color(hex: 0xF7B451).ignoresSafeArea()
+            Color(hex: 0xF3B529).ignoresSafeArea()
             VStack {
                 Spacer()
                 Image(page == 0 ? "story_onboard" : "story_onboard2")

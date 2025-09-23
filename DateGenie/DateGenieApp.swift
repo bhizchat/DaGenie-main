@@ -84,7 +84,7 @@ struct DateGenieApp: App {
                     ProjectsRootTab()
                         .task { await userRepo.loadProfile() }
                 } else {
-                    SignInView()
+                    AuthLandingView()
                 }
             }
             .environmentObject(authVM)

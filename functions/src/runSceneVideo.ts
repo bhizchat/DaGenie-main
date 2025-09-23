@@ -3,7 +3,7 @@ import * as functions from "firebase-functions/v1";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getFirestore, FieldValue} from "firebase-admin/firestore";
 import axios from "axios";
-import Replicate from "replicate";
+// Replicate was used for Veo; removed for WAN-only path
 // axios not needed in scaffold; keep imports minimal
 
 if (!getApps().length) { initializeApp({credential: applicationDefault()}); }
@@ -73,54 +73,9 @@ export const runSceneVideo = functions
       let outputUrl: string | null = null;
       let providerJobId: string | null = null;
 
-      // Provider dispatch (default VEO-3 via Replicate)
-      const normalizedProvider = (provider || data?.video?.provider || "veo").toString().toLowerCase();
-      // Emergency guard: disable Veo runs entirely (return 200 to avoid Cloud Tasks retries)
-      if (normalizedProvider === "veo" || normalizedProvider.includes("veo")) {
-        await sceneRef.set({
-          video: { ...(data.video || {}), status: "error", provider: provider || null, lastError: "veo_storyboards_disabled" },
-          videoStatus: "error",
-          updatedAt: FieldValue.serverTimestamp(),
-        }, {merge: true});
-        res.status(200).json({ok: true, blocked: true, reason: "veo_storyboards_disabled"});
-        return;
-      }
-      if (normalizedProvider === "veo") {
-        // Build a minimal prompt from available scene fields
-        const action = (data?.action || "").toString().trim();
-        const anim = (data?.animation || "").toString().trim();
-        const speech = (data?.speech || "").toString().trim();
-        const script = (data?.script || "").toString().trim();
-        const prompt = script || [action, anim, speech].filter(Boolean).join(". ");
-        const image = (data?.imageUrl || "").toString();
-
-        if (!image || !prompt) {
-          functions.logger.error("run_scene_video.bad_input", {hasImage: !!image, hasPrompt: !!prompt});
-          res.status(400).json({error: "bad_scene_data"});
-          return;
-        }
-
-        try {
-          const replicate = new Replicate();
-          const input: any = { image, prompt };
-          const output: any = await replicate.run("google/veo-3-fast", { input });
-          if (output && typeof output.url === "function") {
-            outputUrl = output.url();
-          } else if (typeof output === "string") {
-            outputUrl = output;
-          } else if (output && typeof output.arrayBuffer === "function") {
-            outputUrl = null;
-          }
-          providerJobId = `veo_${Date.now()}`;
-          functions.logger.info("run_scene_video.provider_veo_ok", {hasOutput: !!outputUrl});
-        } catch (err: any) {
-          const msg = String(err?.response?.data?.error || err?.message || err);
-          functions.logger.error("run_scene_video.provider_veo_failed", {message: msg});
-          await sceneRef.set({ video: { ...(data.video || {}), status: "failed", lastError: msg }, videoStatus: "failed", updatedAt: FieldValue.serverTimestamp() }, {merge: true});
-          res.status(200).json({ok: false, reason: "provider_failed"});
-          return;
-        }
-      } else if (normalizedProvider === "wan") {
+      // Provider dispatch: force WAN for all storyboard clips
+      const normalizedProvider = (provider || data?.video?.provider || "wan").toString().toLowerCase();
+      {
         const project = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || (process.env.FIREBASE_CONFIG ? JSON.parse(String(process.env.FIREBASE_CONFIG)).projectId : "dategenie-dev");
         const wanUrl = process.env.WAN_I2V_URL || `https://us-central1-${project}.cloudfunctions.net/wanI2vFast`;
 
@@ -189,7 +144,7 @@ export const runSceneVideo = functions
 
       await sceneRef.update({
         "video.status": "done",
-        "video.provider": provider || data?.video?.provider || null,
+        "video.provider": "wan",
         "video.providerJobId": providerJobId,
         "video.outputUrl": outputUrl,
         "video.thumbUrl": data?.imageUrl || null,

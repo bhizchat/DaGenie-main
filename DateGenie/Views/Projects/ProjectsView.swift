@@ -11,7 +11,7 @@ struct ProjectsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Spacer().frame(height: 24)
-            HStack { Spacer(); Image("Logo_DG").resizable().scaledToFit().frame(width: 120, height: 120); Spacer() }
+            HStack { Spacer(); Image("app_icon").resizable().scaledToFit().frame(width: 120, height: 120); Spacer() }
 
             Button(action: { showCreationOptions = true }) {
                 ZStack {
@@ -35,7 +35,7 @@ struct ProjectsView: View {
             }
             .disabled(isCreating)
             .fullScreenCover(isPresented: $showCreationOptions) {
-                CreateMusicVideoView()
+                MVUploadImageStepView()
             }
 
             if !FeatureFlags.disableProjectSaving {

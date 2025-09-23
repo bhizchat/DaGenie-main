@@ -51,39 +51,38 @@ export type RapFramePromptInput = {
 };
 
 export function buildRapFramePrompt(i: RapFramePromptInput): string {
-  const style = i.style || "3D stylized";
-  const ar = i.aspectRatio || "9:16";
-  const idHeader = (() => {
-    const c1 = i.slotToNameMap?.char1 ? `Character 1 = ${i.slotToNameMap?.char1}` : undefined;
-    const c2 = i.slotToNameMap?.char2 ? `Character 2 = ${i.slotToNameMap?.char2}` : undefined;
-    const parts = [c1, c2].filter(Boolean).join("; ");
-    return parts ? `Identity anchors: ${parts}. Do not swap identities.` : "";
+  // Compact, Google-friendly scene template
+  // [Avatar action] — setting — camera/framing — lighting — style/palette — props — constraints — negatives
+  const style = i.style || "glossy 3D stylized";
+  const ar = (i.aspectRatio || "4:5").trim();
+  const action = (i.actionHint || "").trim();
+  const setting = (i.environment || "stylized island set").trim();
+  const camera = (i.animationHint || i.cameraMovementHint || "medium shot, eye‑level, gentle dolly‑in").trim();
+  const lighting = (i.lightingHint || "soft key on face, neon rim, subtle fill").trim();
+  const props = (i.creativeHint || "").trim();
+
+  const idLine = (() => {
+    const c1 = i.slotToNameMap?.char1 ? `Identity anchor: the person is ${i.slotToNameMap?.char1}.` : "";
+    const c2 = i.slotToNameMap?.char2 ? ` Second anchor: ${i.slotToNameMap?.char2}.` : "";
+    return (c1 + c2).trim();
   })();
 
-  const action = i.actionHint ? `Action intent: ${i.actionHint}.` : "";
-  const anim = i.animationHint ? `Animation/camera intent: ${i.animationHint}.` : "";
-  const env = i.environment ? `Environment: ${i.environment}.` : "";
-  const cam = i.cameraMovementHint ? `Camera grammar: ${i.cameraMovementHint}.` : "";
-  const light = i.lightingHint ? `Lighting: ${i.lightingHint}.` : "";
-  const creative = (i.creativeHint || "").trim() ? `Creative guidance (soft): ${(i.creativeHint || "").trim()}. Honor only if consistent with identity and action/animation.` : "";
+  const constraints = `vertical ${ar}, one avatar only, face readable and centered priority, no duplicate characters, no text, no watermarks`;
+  const negatives = `avoid crowds, avoid heavy fog, avoid extreme motion blur, avoid duplicate avatar`; // concise negatives
 
-  const core = [
-    `Make a Highly stylized 3D render with a cartoonish character look, bold high‑contrast color, smooth CGI materials.`,
-    `Use the FIRST reference image as the strict identity/style anchor. Preserve face geometry, hair, skin tone, eyebrows, and jewelry. Do not alter identity.`,
-    `Primary subject is a rapper performing or posing to camera or three‑quarter – strong stage presence without explicit stage/club/crowd visuals. If a microphone is implied, render a realistic handheld mic with correct grip; avoid deformed fingers.`,
-    action,
-    anim,
-    env,
-    cam,
-    light,
-    creative,
-    `Aspect ratio ${ar}; compose cleanly with readable forms.`,
-    `Do NOT add any captions, logos, or watermarks. Avoid duplicate faces, extra limbs, or deformed hands.`,
+  const subject = action ? `Avatar ${action}` : `Avatar poses to camera`;
+  const parts = [
+    subject,
+    setting ? `— ${setting}` : "",
+    camera ? `— ${camera}` : "",
+    lighting ? `— ${lighting}` : "",
+    `— ${style}`,
+    props ? `— ${props}` : "",
+    `— ${constraints}`,
+    `— ${negatives}`,
   ].filter(Boolean).join(" ");
 
-  const styleLine = `Style: ${style}.`;
-  const safety = `Negative: text, caption, watermark, signature, deformed hands, extra fingers, extra limbs, duplicate head/face, heavy blur.`;
-  return [idHeader, styleLine, core, safety].filter(Boolean).join(" \n");
+  return [idLine, parts].filter(Boolean).join(" \n").trim();
 }
 
 export type StoryboardPromptInput = {

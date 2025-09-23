@@ -8,6 +8,7 @@ struct MusicVideoIdeaView: View {
     let settingId: String
     let referenceImageUrl: String
     let audioGsPath: String
+    let audioDurationSec: Double
     let promptKit: [String: Any]
 
     @State private var ideaText: String = ""
@@ -30,6 +31,7 @@ struct MusicVideoIdeaView: View {
                         .padding(20)
                 }
                 .scrollContentBackground(.hidden)
+                .padding(.top, 50)
 
             Button(action: { Task { await submit() } }) {
                 Text("Create Video Visuals")
@@ -41,18 +43,31 @@ struct MusicVideoIdeaView: View {
                     .cornerRadius(14)
             }
             .disabled(isSubmitting)
+            .padding(.top, 50)
 
-            if let sbId = storyboardId {
-                NavigationLink(isActive: $openStoryboard) {
-                    MusicVideoStoryboardContainerView(uid: uid, projectId: projectId, storyboardId: sbId, settingId: settingId, referenceUrl: referenceImageUrl)
-                } label: { EmptyView() }
-                .hidden()
-            }
+            NavigationLink(isActive: $openStoryboard) {
+                if let sbId = storyboardId {
+                    MusicVideoStoryboardContainerView(uid: uid, projectId: projectId, storyboardId: sbId, settingId: settingId, referenceUrl: referenceImageUrl, audioGsPath: audioGsPath, audioDurationSec: audioDurationSec)
+                } else { EmptyView() }
+            } label: { EmptyView() }
+            .hidden()
 
             Spacer()
         }
         .padding(.horizontal, 24)
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .overlay(alignment: .topLeading) {
+            Button(action: { UIApplication.shared.topMostViewController()?.dismiss(animated: true) }) {
+                Image("back_arrow")
+                    .resizable()
+                    .renderingMode(.original)
+                    .scaledToFit()
+                    .frame(width: 28, height: 28)
+            }
+            .padding(.leading, 6)
+            .padding(.top, 6)
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { isSubmitting = false }

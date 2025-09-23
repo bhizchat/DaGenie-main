@@ -10,17 +10,12 @@ import SwiftUI
 private struct BrandHeader: View {
     var body: some View {
         VStack(spacing: 12) {
-            Image("Logo_DG")
+            Image("genie_logo")
                 .resizable()
                 .renderingMode(.original)
                 .scaledToFit()
                 .frame(width: 160, height: 160)
-            Text("✨ DaGenie ✨")
-                .font(.system(size: 28, weight: .bold, design: .default).width(.condensed))
-                .foregroundColor(.accentPrimary)
-            Text("Create Animated Stories")
-                .font(.system(size: 20, weight: .regular, design: .serif))
-                .foregroundColor(.accentPrimary)
+            // Slogan shown on landing; secondary screens keep logo only
         }
         .padding(.bottom, 24)
     }
@@ -36,6 +31,13 @@ struct SignInView: View {
         ScrollView {
             VStack(spacing: 16) {
                 BrandHeader()
+                    .padding(.top, 8)
+                auth.appleButton()
+                Text("or with Email")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.black)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
 
                 Group {
                     TextField("", text: $email, prompt: Text("Email").foregroundColor(Color.gray))
@@ -50,7 +52,7 @@ struct SignInView: View {
                 .background(RoundedRectangle(cornerRadius: 6).stroke(Color.stroke))
 
                 Button(action: { Task { await auth.signIn(email: email, password: password) } }) {
-                    Text("Sign In")
+                    Text("Log in")
                         .font(.system(size: 17, weight: .semibold, design: .default).width(.condensed))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -59,19 +61,17 @@ struct SignInView: View {
                 }
                 .disabled(email.isEmpty || password.isEmpty)
 
-                auth.appleButton()
-
                 Button {
                     showSignUp = true
                 } label: {
-                    Text("No Account Yet ? ") + Text("Create Account").bold()
+                    Text("No account yet? ") + Text("Create Account").bold()
                 }
                 .font(.system(size: 15, weight: .regular, design: .default).width(.condensed))
                 .padding(.top, 8)
             }
             .padding()
         }
-        .hideKeyboardOnTap()
+        // Avoid attaching global tap gestures that can interfere with SignInWithAppleButton taps
         .background(Color.white)
         .ignoresSafeArea()
         .sheet(isPresented: $showSignUp) { SignUpView() }
@@ -87,15 +87,14 @@ struct SignUpView: View {
     @State private var isSubmitting = false
     @EnvironmentObject var auth: AuthViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var firstName = ""
-    @State private var lastName = ""
+    @State private var artistName = ""
     @State private var email = ""
     @State private var password = ""
     @State private var confirm = ""
     @FocusState private var focusedField: SignUpField?
     @State private var keyboardHeight: CGFloat = 0
 
-    private enum SignUpField: Hashable { case firstName, lastName, email, password, confirm }
+    private enum SignUpField: Hashable { case artistName, email, password, confirm }
 
     var body: some View {
         NavigationStack {
@@ -103,6 +102,14 @@ struct SignUpView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         BrandHeader()
+                            .padding(.top, 8)
+                        // Apple sign in option at top
+                        auth.appleButton()
+                        Text("or with Email")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 6)
                         credentialFields
 
                         submitButton
@@ -115,7 +122,7 @@ struct SignUpView: View {
                     if let f = field { withAnimation { proxy.scrollTo(f, anchor: .center) } }
                 }
             }
-            .hideKeyboardOnTap()
+            // Do not attach hideKeyboardOnTap here; it can swallow taps intended for the Apple button
             .navigationTitle("")
             .background(Color.white)
             .ignoresSafeArea()
@@ -138,16 +145,15 @@ struct SignUpView: View {
     }
 
     private var canSubmit: Bool {
-        let f = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let l = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !email.isEmpty && password.count >= 6 && password == confirm && !f.isEmpty && !l.isEmpty && f.count <= 40 && l.count <= 40
+        let n = artistName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !email.isEmpty && password.count >= 6 && password == confirm && !n.isEmpty && n.count <= 40
     }
 
     private func createAccount() {
         guard !isSubmitting else { return }
         isSubmitting = true
         Task {
-            await auth.signUp(email: email, password: password, firstName: firstName.trimmingCharacters(in: .whitespacesAndNewlines), lastName: lastName.trimmingCharacters(in: .whitespacesAndNewlines))
+            await auth.signUp(email: email, password: password, artistName: artistName.trimmingCharacters(in: .whitespacesAndNewlines))
             isSubmitting = false
             if auth.authError == nil { dismiss() }
         }
@@ -157,16 +163,11 @@ struct SignUpView: View {
     @ViewBuilder
     private var credentialFields: some View {
         Group {
-            TextField("", text: $firstName, prompt: Text("First Name").foregroundColor(Color.gray))
-                        .foregroundColor(.black)
-                .textContentType(.givenName)
-                .id(SignUpField.firstName)
-                .focused($focusedField, equals: .firstName)
-            TextField("", text: $lastName, prompt: Text("Last Name").foregroundColor(Color.gray))
-                        .foregroundColor(.black)
-                .textContentType(.familyName)
-                .id(SignUpField.lastName)
-                .focused($focusedField, equals: .lastName)
+            TextField("", text: $artistName, prompt: Text("Artist Name").foregroundColor(Color.gray))
+                .foregroundColor(.black)
+                .textContentType(.username)
+                .id(SignUpField.artistName)
+                .focused($focusedField, equals: .artistName)
             TextField("", text: $email, prompt: Text("Email").foregroundColor(Color.gray))
                         .foregroundColor(.black)
                 .textContentType(.emailAddress)

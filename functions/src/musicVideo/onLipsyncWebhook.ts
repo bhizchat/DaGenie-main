@@ -2,6 +2,8 @@
 import * as functions from "firebase-functions/v1";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getFirestore, FieldValue} from "firebase-admin/firestore";
+import axios from "axios";
+import * as crypto from "crypto";
 
 if (!getApps().length) { initializeApp({credential: applicationDefault()}); }
 const db = getFirestore();
@@ -9,14 +11,30 @@ const db = getFirestore();
 /**
  * Replicate webhook receiver for lipsync predictions.
  * Body reflects Replicate prediction schema.
- * We expect metadata fields to find the storyboard; since we didn't send metadata, we
- * look up by scanning storyboards for matching predictionId under finishing.lipsync.
+ * Prefer addressing the exact storyboard via prediction.metadata
+ * to avoid expensive scans. Fallback to scan if metadata missing.
  */
 export const onLipsyncWebhook = functions
   .runWith({timeoutSeconds: 60})
   .region("us-central1")
   .https.onRequest(async (req, res) => {
     try {
+      // Verify Replicate signed webhook if secret is configured
+      const secret = process.env.REPLICATE_WEBHOOK_SECRET;
+      if (secret) {
+        try {
+          const sig = String(req.header("X-Replicate-Signature") || "");
+          const bodyRaw = JSON.stringify(req.body || {});
+          const h = crypto.createHmac("sha256", secret).update(bodyRaw).digest("hex");
+          if (!sig || sig !== h) {
+            res.status(200).json({ignored: true, reason: "bad_signature"});
+            return;
+          }
+        } catch {
+          res.status(200).json({ignored: true, reason: "verify_failed"});
+          return;
+        }
+      }
       const body = req.body || {};
       const status = String(body?.status || "");
       const predId = String(body?.id || "");
@@ -24,22 +42,66 @@ export const onLipsyncWebhook = functions
 
       if (!predId) { res.status(400).json({error: "bad_request"}); return; }
 
-      // Find the storyboard document that holds this predictionId (small scans in practice)
-      // Scope to musicVideos collections only.
-      const usersSnap = await db.collection("users").get();
+      const meta = body?.metadata || {};
+      const uid: string | undefined = meta.uid;
+      const projectId: string | undefined = meta.projectId;
+      const storyboardId: string | undefined = meta.storyboardId;
+      const outUrl = Array.isArray(output) ? output[0] : output;
+      const ok = status === "succeeded";
+
       let updated = false;
-      for (const u of usersSnap.docs) {
-        const mvSnap = await u.ref.collection("musicVideos").get();
-        for (const mv of mvSnap.docs) {
-          const sbs = await mv.ref.collection("storyboards").where("finishing.lipsync.predictionId", "==", predId).get();
-          for (const sb of sbs.docs) {
-            const outUrl = Array.isArray(output) ? output[0] : output;
-            const ok = status === "succeeded";
-            await sb.ref.set({
-              finishing: { lipsync: { status: ok ? "done" : status, predictionId: predId, outputUrl: ok ? String(outUrl || "") : null, lastError: ok ? null : String(body?.error || body?.logs || status) }, },
-              updatedAt: FieldValue.serverTimestamp(),
-            }, {merge: true});
-            updated = true;
+      if (uid && projectId && storyboardId) {
+        const sbRef = db.collection("users").doc(uid).collection("musicVideos").doc(projectId).collection("storyboards").doc(storyboardId);
+        const snap = await sbRef.get();
+        const cur = (snap.data() || {}) as any;
+        const curPred = cur?.finishing?.lipsync?.predictionId || null;
+        const curStatus = cur?.finishing?.lipsync?.status || "";
+        // Idempotency: ignore mismatched or already-done predictions
+        if (curPred && curPred !== predId) {
+          res.status(200).json({ignored: true});
+          return;
+        }
+        if (curStatus === "done" && status === "succeeded") {
+          res.status(200).json({dup: true});
+          return;
+        }
+        await sbRef.set({
+          finishing: { lipsync: { status: ok ? "done" : status, predictionId: predId, outputUrl: ok ? String(outUrl || "") : null, lastError: ok ? null : String(body?.error || body?.logs || status) } },
+          updatedAt: FieldValue.serverTimestamp(),
+        }, {merge: true});
+        updated = true;
+
+        // If lipsync succeeded, kick off mux immediately (best-effort)
+        if (ok) {
+          try {
+            await db.runTransaction(async (tx) => {
+              const s = await tx.get(sbRef);
+              const d = (s.data() || {}) as any;
+              const mux = d?.finishing?.mux || {};
+              if (mux?.status === "queued" || mux?.status === "done") return; // idempotent
+              tx.set(sbRef, { finishing: { mux: { status: "queued", finalUrl: null, lastError: null } } }, {merge: true});
+            });
+            const project = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || (process.env.FIREBASE_CONFIG ? JSON.parse(String(process.env.FIREBASE_CONFIG)).projectId : "");
+            const muxUrl = `https://us-central1-${project}.cloudfunctions.net/muxAudioVideo`;
+            await axios.post(muxUrl, {uid, projectId, storyboardId, runId: meta.runId}, {timeout: 300000});
+          } catch (e:any) {
+            await sbRef.set({ finishing: { mux: { status: "idle", lastError: String(e?.message || e) } } }, {merge: true}).catch(()=>{});
+          }
+        }
+      } else {
+        // Fallback: find by predictionId scan
+        const usersSnap = await db.collection("users").get();
+        for (const u of usersSnap.docs) {
+          const mvSnap = await u.ref.collection("musicVideos").get();
+          for (const mv of mvSnap.docs) {
+            const sbs = await mv.ref.collection("storyboards").where("finishing.lipsync.predictionId", "==", predId).get();
+            for (const sb of sbs.docs) {
+              await sb.ref.set({
+                finishing: { lipsync: { status: ok ? "done" : status, predictionId: predId, outputUrl: ok ? String(outUrl || "") : null, lastError: ok ? null : String(body?.error || body?.logs || status) } },
+                updatedAt: FieldValue.serverTimestamp(),
+              }, {merge: true});
+              updated = true;
+            }
           }
         }
       }

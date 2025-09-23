@@ -166,7 +166,7 @@ struct ScenePlannerView: View, Identifiable {
             }
         }
         .hideKeyboardOnTap()
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
         .overlay {
             if isPlanning { ZStack { Color.black.opacity(0.25).ignoresSafeArea(); ProgressView("Planning…").padding(14).background(RoundedRectangle(cornerRadius: 12).fill(Color.white)) } }
         }

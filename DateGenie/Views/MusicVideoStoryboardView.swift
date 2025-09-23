@@ -11,7 +11,7 @@ struct MusicVideoStoryboardView: View {
     let settingId: String
 
     @EnvironmentObject var userRepo: UserRepository
-    @State private var player: AVPlayer = AVPlayer()
+    @Environment(\.dismiss) private var navDismiss
     @State private var isGeneratingStoryboard: Bool = false
     @State private var storyboard: StoryboardPlan? = nil
     @State private var isUploading: Bool = false
@@ -24,14 +24,19 @@ struct MusicVideoStoryboardView: View {
     @State private var openIdea: Bool = false
     @State private var audioGsPath: String? = nil
     @State private var referenceUrl: String? = nil
+    @State private var audioDurationSec: Double? = nil
+    @State private var showAvatarEdit: Bool = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 ZStack {
-                    HStack { Spacer() }
-                    Text("CREATE MUSIC VIDEO")
-                        .font(.system(size: 22, weight: .heavy))
+                    HStack {
+                        Button(action: { /* no-op back hidden here */ }) { EmptyView() }
+                        Spacer()
+                    }
+                    Text("Tap to Edit your Avatar")
+                        .font(.system(size: 26, weight: .heavy))
                         .foregroundColor(.black)
                 }
 
@@ -48,6 +53,20 @@ struct MusicVideoStoryboardView: View {
                     .frame(maxWidth: .infinity)
                     .cornerRadius(16)
                     .padding(.horizontal, 24)
+                    .contentShape(Rectangle())
+                    .onTapGesture { showAvatarEdit = true }
+                    .overlay(alignment: .topTrailing) {
+                        Button(action: { UIApplication.shared.topMostViewController()?.dismiss(animated: true) }) {
+                            ZStack {
+                                Circle().fill(Color.white).frame(width: 24, height: 24)
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.black)
+                            }
+                        }
+                        .padding(.top, 8)
+                        .padding(.trailing, 13)
+                    }
                 } else if isGeneratingAvatar {
                     Text("Rendering...")
                         .font(.system(size: 16, weight: .heavy))
@@ -63,27 +82,30 @@ struct MusicVideoStoryboardView: View {
                         .frame(maxWidth: .infinity)
                         .cornerRadius(16)
                         .padding(.horizontal, 24)
+                        .contentShape(Rectangle())
+                        .onTapGesture { showAvatarEdit = true }
                 }
 
-                // Simple audio scrubber
-                VStack(alignment: .leading, spacing: 8) {
-                    AudioScrubber(player: player)
-                        .frame(height: 52)
+                // Helper bullets
+                VStack(alignment: .leading, spacing: 12) {
+                    bullet("Your avatar is the star of your music video and appears in every scene.")
+                    bullet("Tap the avatar to customize: change your fit or add accessories (chains, durag, glasses).")
+                    bullet("Edits apply throughout music video")
                 }
                 .padding(.horizontal, 24)
 
-                // Select Avatar button: triggers avatar render/upload then proceed
-                Button(action: { Task { await ensureUploadsAndAvatarThenOpenIdea() } }) {
-                    Text(isGeneratingAvatar || isUploading ? "Selecting Avatar..." : "Select Avatar")
+                // Select Avatar button -> go to upload song step
+                Button(action: { openUploadSong() }) {
+                    Text(isGeneratingAvatar || isUploading ? "Selecting Avatar..." : "SELECT AVATAR")
                         .font(.system(size: 22, weight: .heavy))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 64)
-                        .background(Color.black)
-                        .cornerRadius(14)
+                        .background((isGeneratingAvatar || isUploading) ? Color.composerGray : Color.black)
+                        .cornerRadius(32)
                         .padding(.horizontal, 24)
                 }
-                .disabled(isGeneratingAvatar || isUploading)
+                .disabled(isGeneratingAvatar)
 
                 // Hidden link driven by openIdea flag
                 NavigationLink(isActive: $openIdea) {
@@ -97,6 +119,7 @@ struct MusicVideoStoryboardView: View {
                             settingId: settingId,
                             referenceImageUrl: ref,
                             audioGsPath: audio,
+                            audioDurationSec: audioDurationSec ?? 0,
                             promptKit: promptKitFor(settingId: settingId)
                         )
                     } else { EmptyView() }
@@ -105,18 +128,35 @@ struct MusicVideoStoryboardView: View {
                 Spacer().frame(height: 16)
             }
         }
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
-            configurePlayer()
+            let asset = AVURLAsset(url: audioURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+            self.audioDurationSec = CMTimeGetSeconds(asset.duration)
             // Kick off avatar generation immediately so the user lands on a stylized preview
             Task { await generateAvatarIfNeeded() }
         }
         // Removed loading overlay by request
-    }
-
-    private func configurePlayer() {
-        player.replaceCurrentItem(with: AVPlayerItem(url: audioURL))
-        player.pause()
+        .overlay(alignment: .topLeading) {
+            Button(action: { navDismiss() }) {
+                Image("back_arrow")
+                    .resizable()
+                    .renderingMode(.original)
+                    .scaledToFit()
+                    .frame(width: 28, height: 28)
+            }
+            .padding(.leading, 6)
+            .padding(.top, 6)
+        }
+        .sheet(isPresented: $showAvatarEdit) {
+            AvatarEditSheet(referenceImage: referenceImage, currentAvatarUrl: avatarUrl, onDismiss: { showAvatarEdit = false }, onRegenerate: { prompt, done in
+                Task {
+                    let ok = await regenerateAvatar(prompt: prompt)
+                    await MainActor.run { done(ok) }
+                }
+            })
+        }
     }
 
     private func generateStoryboard() async {
@@ -221,8 +261,6 @@ struct MusicVideoStoryboardView: View {
     private func promptKitFor(settingId: String) -> [String: Any] {
         guard let cat = MusicVideoSettingsCatalog.all.first(where: { $0.id == settingId }) else { return [:] }
         return [
-            "worldPillars": cat.promptKit.worldPillars,
-            "formatBeats": cat.promptKit.formatBeats,
             "setPacks": cat.promptKit.setPacks,
             "loopGags": cat.promptKit.loopGags,
             "cameraGrammar": cat.promptKit.cameraGrammar,
@@ -230,6 +268,7 @@ struct MusicVideoStoryboardView: View {
             "bio": cat.bio,
             "environment": cat.environment,
             "palette": cat.palette,
+            "storyTemplates": cat.promptKit.storyTemplates,
         ]
     }
 
@@ -248,13 +287,143 @@ struct MusicVideoStoryboardView: View {
                 let video = (data["video"] as? [String: Any])
                 let status = (video?["status"] as? String) ?? "idle"
                 let prompt = action ?? ""
-                var s = PlanScene(index: idx, prompt: prompt, script: prompt, durationSec: 3.0, wordsPerSec: nil, wordBudget: nil, imageUrl: image, action: action, speechType: nil, speech: nil, animation: nil, speakerSlot: nil)
+            var s = PlanScene(index: idx, prompt: prompt, script: prompt, durationSec: 3.0, wordsPerSec: nil, wordBudget: nil, imageUrl: image, action: action, speechType: nil, speech: nil, animation: nil, speakerSlot: nil)
                 // Reuse animation field to reflect status for now
                 s.animation = status
                 scenes.append(s)
             }
             scenes.sort { $0.index < $1.index }
             self.storyboard = StoryboardPlan(character: PlanCharacter(id: "user"), settings: PlanSettings(aspectRatio: "9:16", style: settingId, camera: nil), scenes: scenes, referenceImageUrls: storyboard?.referenceImageUrls)
+        }
+    }
+
+    // MARK: - Navigation to Upload Song
+    private func openUploadSong() {
+        // Present a lightweight upload-song screen using a hosting controller
+        let host = UIHostingController(rootView: MVUploadAudioStepView(referenceImage: referenceImage, settingId: settingId, initialAvatarUrl: avatarUrl))
+        host.modalPresentationStyle = .overFullScreen
+        UIApplication.shared.topMostViewController()?.present(host, animated: true)
+    }
+
+    // MARK: - Helpers
+    @ViewBuilder
+    private func bullet(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("•").font(.system(size: 18, weight: .heavy))
+            Text(text).font(.system(size: 15, weight: .semibold)).foregroundColor(.black)
+            Spacer()
+        }
+    }
+
+    // MARK: - Avatar regenerate
+    private func regenerateAvatar(prompt: String?) async -> Bool {
+        isGeneratingAvatar = true
+        defer { isGeneratingAvatar = false }
+        do {
+            let newUrl: String
+            if let existing = avatarUrl, !existing.isEmpty {
+                newUrl = try await MusicVideoRepository.shared.generateAvatar(referenceImageUrl: existing, prompt: prompt)
+            } else {
+                newUrl = try await MusicVideoRepository.shared.generateAvatar(from: referenceImage, prompt: prompt)
+            }
+            await MainActor.run {
+                self.avatarUrl = newUrl
+                self.showAvatarEdit = false
+            }
+            return true
+        } catch {
+            print("[Avatar] regenerate failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+}
+
+// MARK: - Avatar Edit Sheet
+private struct AvatarEditSheet: View {
+    let referenceImage: UIImage
+    let currentAvatarUrl: String?
+    let onDismiss: () -> Void
+    let onRegenerate: (String?, @escaping (Bool) -> Void) -> Void
+
+    @State private var prompt: String = ""
+    @State private var isRegenerating: Bool = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.15)).frame(height: 1).opacity(0)
+            if let a = currentAvatarUrl, let url = URL(string: a), !a.isEmpty {
+                AsyncImage(url: url) { ph in
+                    switch ph {
+                    case .empty: ProgressView()
+                    case .success(let img): img.resizable().scaledToFit()
+                    case .failure: Image(uiImage: referenceImage).resizable().scaledToFit()
+                    @unknown default: Image(uiImage: referenceImage).resizable().scaledToFit()
+                    }
+                }
+                .frame(maxHeight: 240)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            } else {
+                Image(uiImage: referenceImage).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+
+            GeometryReader { geo in
+                let width = geo.size.width - 16
+                GrowingTextViewFixed(text: $prompt, height: .constant(120), availableWidth: width, minHeight: 96, maxHeight: 200, trailingInset: 0, isFirstResponder: .constant(true))
+                    .frame(height: 140)
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.08)))
+            }
+            .frame(height: 160)
+
+            HStack {
+                Button("Cancel") { if !isRegenerating { onDismiss() } }
+                    .font(.system(size: 16, weight: .semibold))
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.2)))
+                Spacer()
+                Button(action: {
+                    guard !isRegenerating else { return }
+                    isRegenerating = true
+                    onRegenerate(prompt.trimmingCharacters(in: .whitespacesAndNewlines)) { ok in
+                        if !ok {
+                            // Show a clear failure toast inline
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                    }
+                }) {
+                    Text(isRegenerating ? "Regenerating Avatar…" : "Regenerate Avatar")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(isRegenerating ? Color.gray : Color.blue))
+                }
+                .disabled(isRegenerating)
+            }
+            .overlay(alignment: .center) {
+                if isRegenerating {
+                    ZStack {
+                        Color.black.opacity(0.4).ignoresSafeArea()
+                        ProgressView("Regenerating Avatar…")
+                            .padding(16)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .overlay(alignment: .bottom) {
+            if !isRegenerating && prompt.lowercased().contains("ovo") {
+                Text("Your edit may be blocked due to sensitive brand terms.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.7)))
+                    .padding(.bottom, 8)
+            }
         }
     }
 }
@@ -333,53 +502,6 @@ private func limitWordsMV(_ s: String, cap: Int) -> String {
     if words.count <= cap { return s }
     let limited = words.prefix(cap).joined(separator: " ")
     return String(limited)
-}
-
-
-private struct AudioScrubber: View {
-    let player: AVPlayer
-    @State private var duration: Double = 0
-    @State private var current: Double = 0
-    @State private var isDragging: Bool = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Button(action: toggle) {
-                    Image(systemName: player.timeControlStatus == .playing ? "pause.fill" : "play.fill")
-                        .foregroundColor(.black)
-                }
-                Slider(value: Binding(get: { current }, set: { newVal in
-                    current = newVal
-                    if isDragging { seek(to: newVal) }
-                }), in: 0...max(duration, 0.001))
-                Text(String(format: "%02d:%02d", Int(current) / 60, Int(current) % 60))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(.black)
-            }
-        }
-        .onAppear { setupObservers() }
-        .onDisappear { NotificationCenter.default.removeObserver(self) }
-        .gesture(DragGesture(minimumDistance: 0).onChanged { _ in isDragging = true }.onEnded { _ in isDragging = false })
-    }
-
-    private func setupObservers() {
-        if let item = player.currentItem {
-            duration = CMTimeGetSeconds(item.asset.duration)
-        }
-        player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.05, preferredTimescale: 600), queue: .main) { t in
-            if !isDragging { current = CMTimeGetSeconds(t) }
-        }
-    }
-
-    private func toggle() {
-        if player.timeControlStatus == .playing { player.pause() } else { player.play() }
-    }
-
-    private func seek(to seconds: Double) {
-        let time = CMTime(seconds: seconds, preferredTimescale: 600)
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-    }
 }
 
 

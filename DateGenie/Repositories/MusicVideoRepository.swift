@@ -88,4 +88,56 @@ extension MusicVideoRepository {
     }
 }
 
+// MARK: - Finishing pipeline client calls
+extension MusicVideoRepository {
+    func startMusicFinishing(uid: String, projectId: String, storyboardId: String, runId: String, audioGsPath: String, audioDurationSec: Double) async throws {
+        let gcp = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev"
+        let url = URL(string: "https://us-central1-\(gcp).cloudfunctions.net/startMusicFinishing")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "uid": uid,
+            "projectId": projectId,
+            "storyboardId": storyboardId,
+            "runId": runId,
+            "audioGsPath": audioGsPath,
+            "audioDurationSec": audioDurationSec
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "MusicVideoRepository", code: (resp as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "startMusicFinishing_failed"])
+        }
+    }
+
+    func submitLipsync(uid: String, projectId: String, storyboardId: String, runId: String) async throws {
+        let gcp = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev"
+        let url = URL(string: "https://us-central1-\(gcp).cloudfunctions.net/submitLipsync")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["uid": uid, "projectId": projectId, "storyboardId": storyboardId, "runId": runId]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "MusicVideoRepository", code: (resp as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_failed"])
+        }
+    }
+
+    func muxAudioVideo(uid: String, projectId: String, storyboardId: String, runId: String) async throws {
+        let gcp = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev"
+        let url = URL(string: "https://us-central1-\(gcp).cloudfunctions.net/muxAudioVideo")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["uid": uid, "projectId": projectId, "storyboardId": storyboardId, "runId": runId]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "MusicVideoRepository", code: (resp as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "muxAudioVideo_failed"])
+        }
+    }
+}
+
 

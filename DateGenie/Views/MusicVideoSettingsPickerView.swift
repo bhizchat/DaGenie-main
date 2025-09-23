@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct MusicVideoSettingsPickerView: View {
+    // Simple picker: parent handles selection & navigation
     var onBack: (() -> Void)? = nil
     var onPick: ((MusicVideoSetting) -> Void)? = nil
+    var title: String = "SETTINGS"
 
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 18, alignment: .top),
@@ -11,11 +13,13 @@ struct MusicVideoSettingsPickerView: View {
 
     @State private var selected: MusicVideoSetting? = nil
 
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             ScrollView {
                 VStack(spacing: 18) {
-                    Text("SETTINGS")
+                    Text(title.uppercased())
                         .font(.system(size: 34, weight: .heavy))
                         .foregroundColor(.black)
                         .padding(.top, 18)
@@ -40,7 +44,7 @@ struct MusicVideoSettingsPickerView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .background(Color(hex: 0xF7B451).ignoresSafeArea())
+            .background(Color(hex: 0xF3B529).ignoresSafeArea())
             .sheet(item: Binding(get: { selected.map(IdentifiableSetting.init(from:)) }, set: { newVal in
                 selected = newVal?.value
             })) { wrap in
@@ -51,16 +55,17 @@ struct MusicVideoSettingsPickerView: View {
                 }
             }
 
-            Button(action: { onBack?() }) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(.black)
-                    .frame(width: 48, height: 48)
-                    .contentShape(Rectangle())
+            Button(action: { if let onBack = onBack { onBack() } else { dismiss() } }) {
+                Image("back_arrow")
+                    .resizable()
+                    .renderingMode(.original)
+                    .scaledToFit()
+                    .frame(width: 28, height: 28)
             }
             .padding(.leading, 6)
             .padding(.top, 6)
         }
+        .navigationBarBackButtonHidden(true)
     }
 }
 
@@ -97,7 +102,7 @@ private struct MusicVideoSettingDetailSheet: View {
                     .padding(.horizontal, 24)
                     .multilineTextAlignment(.leading)
 
-                Button(action: { onSelect(item) }) {
+                Button(action: { onSelect(item); dismiss() }) {
                     Text("Select \(item.name)")
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(.black)
@@ -110,7 +115,7 @@ private struct MusicVideoSettingDetailSheet: View {
             }
             .padding(.top, 12)
         }
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
         .overlay(alignment: .topLeading) {
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")

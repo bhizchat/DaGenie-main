@@ -25,7 +25,7 @@ export const startMusicFinishing = functions
   .https.onRequest(async (req, res) => {
     try {
       if (req.method !== "POST") { res.status(405).json({error: "method_not_allowed"}); return; }
-      const {uid, projectId, storyboardId, runId, audioGsPath, audioDurationSec} = (req.body || {}) as any;
+      const {uid, projectId, storyboardId, runId, audioGsPath, audioDurationSec, programVideoUrl} = (req.body || {}) as any;
       if (!uid || !projectId || !storyboardId || !runId || !audioGsPath) { res.status(400).json({error: "bad_request"}); return; }
 
       const sbRef = db.collection("users").doc(uid).collection("musicVideos").doc(projectId).collection("storyboards").doc(storyboardId);
@@ -45,6 +45,7 @@ export const startMusicFinishing = functions
           concat: { status: "queued", masterVideoUrl: null, lastError: null, durationSec: Number(audioDurationSec || 0) || null },
           lipsync: { status: "idle", predictionId: null, outputUrl: null, lastError: null },
           mux: { status: "idle", finalUrl: null, lastError: null },
+          programVideoUrl: programVideoUrl || null,
         },
         updatedAt: FieldValue.serverTimestamp(),
       }, {merge: true});

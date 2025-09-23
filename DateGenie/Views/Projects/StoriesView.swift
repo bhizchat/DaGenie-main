@@ -65,7 +65,7 @@ struct StoriesView: View {
                     .padding(.bottom, 120) // space for dock
                 }
             }
-            .background(Color(hex: 0xF7B451).ignoresSafeArea())
+            .background(Color(hex: 0xF3B529).ignoresSafeArea())
             .hideKeyboardOnTap()
 
             StoriesTypingDock(text: $draftText,
@@ -211,7 +211,7 @@ private struct CharacterDetailSheet: View {
             }
             .padding(.top, 12)
         }
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
         .overlay(alignment: .topLeading) {
             Button(action: { dismiss() }) {
                 Image(systemName: "xmark")
@@ -355,7 +355,7 @@ private struct StoriesTypingDock: View {
                                 .frame(width: 46, height: 46)
                         }
                     }
-                    .background((text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && thumbnail == nil) || isLoading ? Color(hex: 0x999CA0) : Color(hex: 0xF7B451))
+                    .background((text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && thumbnail == nil) || isLoading ? Color(hex: 0x999CA0) : Color(hex: 0xF3B529))
                     .clipShape(Circle())
                 }
                 .disabled(isLoading)

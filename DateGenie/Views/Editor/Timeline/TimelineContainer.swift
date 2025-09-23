@@ -10,17 +10,30 @@ struct TimelineContainer: View {
     // Optional actions for Audio/Text quick-add buttons
     let onAddAudio: (() -> Void)?
     let onAddText: (() -> Void)?
+    // Minimal presentation flags
+    var hideAudioLane: Bool = false
+    var hideTextLane: Bool = false
+    var showsPlus: Bool = true
+    var playheadScale: CGFloat = 1.0
 
     init(state: EditorState,
          onAddAudio: (() -> Void)? = nil,
          onAddText: (() -> Void)? = nil,
          onAddEnding: (() -> Void)? = nil,
-         onPlusTapped: (() -> Void)? = nil) {
+         onPlusTapped: (() -> Void)? = nil,
+         hideAudioLane: Bool = false,
+         hideTextLane: Bool = false,
+         showsPlus: Bool = true,
+         playheadScale: CGFloat = 1.0) {
         self.state = state
         self.onAddAudio = onAddAudio
         self.onAddText = onAddText
         self.onAddEnding = onAddEnding
         self.onPlusTapped = onPlusTapped
+        self.hideAudioLane = hideAudioLane
+        self.hideTextLane = hideTextLane
+        self.showsPlus = showsPlus
+        self.playheadScale = playheadScale
     }
 
     // MARK: - Small helpers to tame type-checker in video row
@@ -171,6 +184,14 @@ struct TimelineContainer: View {
     private let basePlayheadExtension: CGFloat = 80
     private var extraPlayheadExtension: CGFloat { basePlayheadExtension + verticalLift }
 
+    // Additional targeted vertical adjustments (positive moves DOWN)
+    // Move the time counter lower and bring the ruler/rows closer to the playhead/background
+    private let timeCounterDownshift: CGFloat = 60
+    private let rulerDownshift: CGFloat = 100
+    private let rowsDownshift: CGFloat = 100
+    private let additionalDownshift: CGFloat = 55
+    private let timeCounterFineNudge: CGFloat = -7 // move up by 7pt
+
     // Config
     private let minPPS: CGFloat = 20
     private let maxPPS: CGFloat = 300
@@ -313,15 +334,15 @@ struct TimelineContainer: View {
                             + belowCount * TimelineStyle.laneRowHeight
                             + belowCount * TimelineStyle.rowSpacing
                         ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: TimelineStyle.rowSpacing) {
-                                videoRow(geo)
-                                if hasExtractedAudio { extractedAudioRow(geo) }
-                                if hasClip {
-                                    extraAudioRow(geo)
-                                    if hasMediaOverlays { mediaOverlayRow(geo) }
-                                    textRow(geo)
-                                }
-                            }
+                VStack(spacing: TimelineStyle.rowSpacing) {
+                    videoRow(geo)
+                    if hasExtractedAudio { extractedAudioRow(geo) }
+                    if hasClip {
+                        if !hideAudioLane { extraAudioRow(geo) }
+                        if hasMediaOverlays { mediaOverlayRow(geo) }
+                        if !hideTextLane { textRow(geo) }
+                    }
+                }
                             .frame(height: stackedRowsHeight)
                             .background(VerticalScrollBridge { _, _, _, _ in })
                         }
@@ -987,11 +1008,13 @@ struct TimelineContainer: View {
 
     private var headerOffsetY: CGFloat {
         -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
+        + rulerDownshift + additionalDownshift
     }
 
     // Shared rows vertical offset used by both the ScrollView rows and the selection overlay
     private var rowsOffsetY: CGFloat {
         -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
+        + rowsDownshift + additionalDownshift
     }
 
     // Fixed container height for the stacked rows to prevent layout jumps when overlay appears
@@ -1005,7 +1028,7 @@ struct TimelineContainer: View {
 
     // Extend playhead to span video + all timeline lanes below
     private var playheadHeight: CGFloat {
-        return rulerHeight + spacingAboveStrip + stackedRowsHeight + extraPlayheadExtension
+        return (rulerHeight + spacingAboveStrip + stackedRowsHeight + extraPlayheadExtension) * max(0.2, playheadScale)
     }
 
     private var hasClip: Bool {
@@ -1029,7 +1052,7 @@ struct TimelineContainer: View {
     }
 
     // Centralized vertical anchors so both states (no-clip/has-clip) align consistently
-    private var rowsBaseY: CGFloat { -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift }
+    private var rowsBaseY: CGFloat { -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift + rowsDownshift + additionalDownshift }
     private var filmstripCenterY: CGFloat { rowsBaseY + (TimelineStyle.videoRowHeight / 2) }
     private var noClipButtonDelta: CGFloat { hasClip ? 0 : 120 }
     private var clipButtonDelta: CGFloat { hasClip ? 80 : 0 }
@@ -1346,7 +1369,7 @@ struct TimelineContainer: View {
             
             // Audio quick button (aligned by centralized anchors)
             .overlay(alignment: .center) {
-                if !hasClip {
+                if !hasClip && showsPlus {
                 Button(action: { onAddAudio?() }) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
@@ -1365,7 +1388,7 @@ struct TimelineContainer: View {
             }
             // Text quick button (aligned by centralized anchors)
             .overlay(alignment: .center) {
-                if !hasClip {
+                if !hasClip && showsPlus {
                 Button(action: { onAddText?() }) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
@@ -1386,24 +1409,26 @@ struct TimelineContainer: View {
             // Plus button fixed to the trailing edge; does not move with scroll/zoom
             .overlay(alignment: .trailing) {
                 // Vertically center on the video (filmstrip) row; when there is no clip, nudge the plus 20pt lower
-                let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift
+                let baseY = -((stripHeight + spacingAboveStrip + rulerHeight)/2) - 10 - 50 - verticalLift + rowsDownshift + additionalDownshift
                 // Push the plus button down by an additional ~15pt
                 let plusY = baseY + (TimelineStyle.videoRowHeight / 2) + (hasClip ? -10 : 20) + 15
-                Button(action: { onPlusTapped?() }) {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
-                        .frame(width: 36, height: 36)
-                        .overlay(
-                            Image("iconplus")
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 16, height: 16)
-                                .foregroundColor(.black)
-                        )
+                if showsPlus {
+                    Button(action: { onPlusTapped?() }) {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(red: 0xD9/255.0, green: 0xD9/255.0, blue: 0xD9/255.0))
+                            .frame(width: 36, height: 36)
+                            .overlay(
+                                Image("iconplus")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 16, height: 16)
+                                    .foregroundColor(.black)
+                            )
+                    }
+                    .padding(.trailing, 12)
+                    .offset(y: plusY)
+                    .zIndex(1)
                 }
-                .padding(.trailing, 12)
-                .offset(y: plusY)
-                .zIndex(1)
             }
             // Fixed left time counter (mm:ss / mm:ss) drawn last to sit above everything
             .overlay(alignment: .topLeading) {
@@ -1412,7 +1437,7 @@ struct TimelineContainer: View {
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.leading, 12)
                     .padding(.top, 0)
-                    .offset(y: -verticalLift) // moved down by ~10pt
+                    .offset(y: -verticalLift + timeCounterDownshift + additionalDownshift + timeCounterFineNudge)
                     .zIndex(1000)
                     .allowsHitTesting(false)
             }

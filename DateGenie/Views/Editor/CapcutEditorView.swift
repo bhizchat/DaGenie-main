@@ -4,6 +4,7 @@ import UIKit
 import FirebaseAuth
 import UniformTypeIdentifiers
 import PhotosUI
+import FirebaseFirestore
 
 struct CapcutEditorView: View {
     let url: URL
@@ -47,6 +48,7 @@ struct CapcutEditorView: View {
     // Logo error alert
     @State private var logoErrorMessage: String? = nil
     @State private var sceneGenMessage: String? = nil
+    @State private var didSubmitLipsync: Bool = false
     
 
     init(url: URL, initialGenerating: Bool = false, storyboardId: String? = nil, currentSceneIndex: Int? = nil, totalScenes: Int? = nil) {
@@ -226,6 +228,9 @@ struct CapcutEditorView: View {
                         }
                     }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("EditorDurationTick"))) { _ in
+                    maybeTriggerLipsyncAt54()
+                }
                 .padding(.horizontal, 12)
                 .padding(.top, max(0, safeTopInset() - 36))
                 .offset(y: -42) // lowered by an additional 10pt
@@ -262,7 +267,7 @@ struct CapcutEditorView: View {
                                     .foregroundColor(.white)
                                     .font(.system(size: 18, weight: .bold))
                             }
-                            .offset(y: 10) // moved play button ~30pt lower
+                            .offset(y: 115) // move play button an additional ~40pt down
                             HStack {
                                 Text(timeLabel(state.displayTime, duration: state.duration))
                                     .font(.system(size: 16, weight: .semibold))
@@ -282,21 +287,22 @@ struct CapcutEditorView: View {
             .overlay(alignment: .bottom) {
                 VStack(spacing: 0) {
                     ZStack(alignment: .leading) {
-                        TimelineContainer(state: state,
-                                          onAddAudio: { showAudioImporter = true },
-                                          onAddText: {
-                                              state.insertCenteredTextAndSelect(canvasRect: canvasRect)
-                                              isTyping = true
-                                              dockFocused = true
-                                              withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true }
-                                          },
-                                          onAddEnding: nil,
-                                          onPlusTapped: { })
-                        // Timeline no longer shows the generating pill; canvas overlay handles it
+                        TimelineContainer(
+                            state: state,
+                            onAddAudio: nil,
+                            onAddText: nil,
+                            onAddEnding: nil,
+                            onPlusTapped: nil,
+                            hideAudioLane: true,
+                            hideTextLane: true,
+                            showsPlus: false,
+                            playheadScale: 0.5
+                        )
                     }
                     .frame(height: dynamicTimelineHeight())
+                    .padding(.bottom, -55) // push entire timeline background lower by ~55pt
                     // Inline Volume dock sits between timeline and toolbar to avoid intercepting timeline gestures
-                    if showVolumeDock {
+                    if false {
                         HStack(spacing: 12) {
                             Text("Volume")
                                 .foregroundColor(.white)
@@ -327,7 +333,7 @@ struct CapcutEditorView: View {
                         .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
                     // Inline Speed dock (Standard)
-                    if showSpeedDock {
+                    if false {
                         SpeedDockView(
                             speedUnit: $speedSliderUnit,
                             preservePitch: $preservePitchToggle,
@@ -350,7 +356,7 @@ struct CapcutEditorView: View {
                         .padding(.horizontal, 12)
                         .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
-                    if showEditBar {
+                    if false {
                         EditToolsBar(state: state, onClose: {
                             withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false; showVolumeDock = false }
                             // Ensure timeline scroll is re-enabled after closing tools
@@ -403,7 +409,7 @@ struct CapcutEditorView: View {
                             }
                         })
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
-                    } else if showOverlayBar {
+                    } else if false {
                         OverlayToolsBar(state: state,
                                         onClose: { withAnimation(.easeInOut(duration: 0.2)) { showOverlayBar = false } },
                                         onAddMedia: {
@@ -412,21 +418,6 @@ struct CapcutEditorView: View {
                                                 showOverlayPicker = true
                                             }
                                         })
-                            .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
-                    } else {
-                        EditorBottomToolbar(
-                            onEdit: { withAnimation(.easeInOut(duration: 0.2)) { showEditBar = true } },
-                            onAudio: { showAudioImporter = true },
-                            onText: {
-                                state.insertCenteredTextAndSelect(canvasRect: canvasRect)
-                                isTyping = true
-                                dockFocused = true
-                            },
-                            onAspect: {
-                                // Toggle the new Ratio dock
-                                withAnimation(.easeInOut(duration: 0.2)) { showRatioDock.toggle() }
-                            }
-                        )
                             .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
@@ -724,6 +715,46 @@ struct CapcutEditorView: View {
             try session.setActive(true)
         } catch {
             print("[Editor] Audio session error: \(error)")
+        }
+    }
+
+    // MARK: - 54s Lipsync Trigger
+    private func maybeTriggerLipsyncAt54() {
+        guard !didSubmitLipsync else { return }
+        let dur = CMTimeGetSeconds(state.duration)
+        if dur.isFinite && dur >= 54.0 {
+            Task { await triggerLipsyncNow(currentDuration: dur) }
+        }
+    }
+
+    @MainActor
+    private func fetchAudioGsPath(uid: String, projectId: String) async -> String? {
+        let db = Firestore.firestore()
+        do {
+            let snap = try await db.collection("users").document(uid).collection("musicVideos").document(projectId).getDocument()
+            if let a = (snap.data()? ["audio"] as? [String: Any])? ["gs"] as? String, !a.isEmpty { return a }
+        } catch {}
+        return nil
+    }
+
+    @MainActor
+    private func triggerLipsyncNow(currentDuration: Double) async {
+        guard let user = Auth.auth().currentUser else { return }
+        let fallbackId = await ProjectsRepository.shared.projects.first?.id
+        guard let pid = activeProjectId ?? fallbackId else { return }
+        guard let audioGs = await fetchAudioGsPath(uid: user.uid, projectId: pid) else {
+            print("[MV] lipsync.trigger.skip missing_audioGs projectId=\(pid)"); return
+        }
+        let runId = RunManager.shared.currentRunId ?? RunManager.shared.startNewRun()
+        let storyboard = storyboardId ?? "default"
+        // Start finishing and submit lipsync; backend will handle duration and assembly
+        do {
+            print("[MV] lipsync.trigger.start pid=\(pid) storyboardId=\(storyboard) dur=\(currentDuration)")
+            try await MusicVideoRepository.shared.startMusicFinishing(uid: user.uid, projectId: pid, storyboardId: storyboard, runId: runId, audioGsPath: audioGs, audioDurationSec: currentDuration)
+            try await MusicVideoRepository.shared.submitLipsync(uid: user.uid, projectId: pid, storyboardId: storyboard, runId: runId)
+            didSubmitLipsync = true
+        } catch {
+            print("[MV] lipsync.trigger.error \(error.localizedDescription)")
         }
     }
 }
@@ -1521,6 +1552,8 @@ final class EditorState: ObservableObject {
             if wasPlaying { self.player.play() }
             self.startDisplayLink()
         }
+        // Emit duration tick; owner may decide to trigger actions
+        NotificationCenter.default.post(name: NSNotification.Name("EditorDurationTick"), object: nil, userInfo: ["duration": CMTimeGetSeconds(duration)])
     }
 
     // Generate filmstrip thumbnails for a single clip (progressive & cancellable)
@@ -1603,6 +1636,8 @@ final class EditorState: ObservableObject {
                     Task { await self.generateThumbnails(forClipAt: idx) }
                 }
             }
+            // Emit duration tick periodically during editing
+            NotificationCenter.default.post(name: NSNotification.Name("EditorDurationTick"), object: nil, userInfo: ["duration": CMTimeGetSeconds(self.duration)])
         }
     }
 
@@ -1699,6 +1734,8 @@ final class EditorState: ObservableObject {
         let clamped = min(max(0, seconds), max(0, totalS - visibleLen))
         textOverlays[i].start = CMTime(seconds: clamped, preferredTimescale: 600)
     }
+
+    // Owner trigger bridge removed; notifications are emitted above
 }
 
 // MARK: - Selection and clip timing helpers
