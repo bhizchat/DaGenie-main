@@ -216,6 +216,194 @@ final class CharacterRepository: ObservableObject {
                 localAssetName: "company",
                 bio: "Strategy at scale, power in execution. Inspired by Jeff Bezos, The Company reflects the relentless drive that built Amazon into a global empire. With bold vision, meticulous operations, and an eye on the future, he redefined how the world shops. But this story isn’t his alone—alongside the dynamic presence of Lauren Sánchez, there’s an added spark of partnership, ambition, and flair. They’re not just building a business—they’re shaping the future of commerce together."
             )
+            ,
+            // Newly designed characters (assets bundled in app)
+            "steven_shot": GenCharacter(
+                id: "steven_shot",
+                name: "Steven Shot",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "steven_shot",
+                bio: "Steven Shot is more than just a part‑time podcaster — he’s a voice that cuts through noise with sharp insight and fearless honesty. But when night falls, he becomes something else entirely: a part‑time sniper superhero, armed with precision, patience, and purpose. Inspired by Steven Bartlett, he blends the wisdom of deep conversation with the accuracy of a marksman. On the mic, he dissects stories, pulling lessons from every guest. In the shadows, he dismantles chaos with flawless aim and unshakable focus."
+            ),
+            "monk_fist": GenCharacter(
+                id: "monk_fist",
+                name: "Monk Fist",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "monk_fist",
+                bio: "Monk Fist is a martial arts hero who unites discipline and spirit. A master of Shaolin traditions and modern Chi‑projection, he blends meditative wisdom with explosive power. Inspired by Iron Fist’s mystical chi mastery and Shi Heng Yi’s Shaolin teachings, Monk Fist fights with balance, clarity, and purpose — every strike carrying intention, every breath channeling strength."
+            ),
+            "jack_hood": GenCharacter(
+                id: "jack_hood",
+                name: "Jack Hood",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "jack_hood",
+                bio: "Jack Hood is a tech‑visionary turned vigilante. By day, he’s a sharp strategist and entrepreneur inspired by Jack Altman — building platforms, leading teams, shaping futures. By night, he dons the Red Hood mask: a former protégé who walks the line between justice and intensity, fueled by purpose and moral clarity."
+            ),
+            "dane": GenCharacter(
+                id: "dane",
+                name: "Dane",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "dane",
+                bio: "Dane is a financial powerhouse with the mind of a strategist and the might of a warrior. Inspired by Dave Ramsey, he brings discipline, no‑nonsense principles, and unshakable wisdom about money, debt, and financial freedom. Fused with the fearsome presence of Bane, he channels raw strength, resilience, and intimidation into every encounter."
+            ),
+            "bjlightning": GenCharacter(
+                id: "bjlightning",
+                name: "BJ Lightning",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "bjlightning",
+                bio: "BJ Lightning is a force of energy, conviction, and leadership. Inspired by Michael B. Jordan, he carries unshakable determination, charisma, and the spirit of a fighter who never backs down. Combined with the electrifying powers of Black Lightning, he channels storms of raw voltage through every battle — defending his community while igniting change."
+            ),
+            "justinharper": GenCharacter(
+                id: "justinharper",
+                name: "Justin Harper",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "justinharper",
+                bio: "Justin Harper is the archer with attitude — a fusion of sharp aim and star power. Inspired by Roy Harper, he brings precision, street‑smart grit, and a fearless edge to every fight. Layered with the charisma and stage presence of Justin Bieber, he adds style, swagger, and a magnetic energy that makes him impossible to ignore."
+            ),
+            "willmanhattan": GenCharacter(
+                id: "willmanhattan",
+                name: "Will Manhattan",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "willmanhattan",
+                bio: "Will Manhattan embodies charm, wisdom, and cosmic power. Inspired by Will Smith, he brings wit, relatability, and a magnetic presence — a storyteller who can command any room. Blended with the godlike abilities of Dr. Manhattan, he wields near‑infinite knowledge, time awareness, and energy manipulation — a calm force who sees beyond the moment to shape what comes next."
+            ),
+            "martian_gary": GenCharacter(
+                id: "martian_gary",
+                name: "Martian Gary",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "martian_gary",
+                bio: "Martian Gary is the ultimate shape‑shifting strategist — part alien guardian, part relentless motivator. Inspired by Martian Manhunter, he wields telepathy, super strength, and the power to adapt to any form, embodying resilience and quiet wisdom. Infused with the energy of Gary Vee, he channels raw hustle, sharp vision, and unapologetic drive to inspire those around him."
+            ),
+            "super_mel": GenCharacter(
+                id: "super_mel",
+                name: "Super Mel",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "super_mel",
+                bio: "Super Mel is the embodiment of courage and action. Inspired by Supergirl, she carries strength, flight, and unshakable hope — a protector who leads with heart. Combined with the fearless motivation of Mel Robbins, she champions bold decisions, practical wisdom, and the power of taking action now."
+            )
+            ,
+            // Grid characters (local assets bundled)
+            "yacine": GenCharacter(
+                id: "yacine",
+                name: "Yacine",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "yacine",
+                bio: "Yacine is a sharp‑witted engineer with code in his veins and zero patience for the ordinary. Known online for tearing into flawed assumptions and fighting for clean architecture, he built his reputation patching big services, hunting bugs, and loving scale. Now he’s stepping into hardware—boards, circuits, and physical builds—blending soldering‑iron swagger with software supremacy."
+            ),
+            "dario": GenCharacter(
+                id: "dario",
+                name: "Dario and Claude",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "dario",
+                bio: "Dario is the cerebral leader—an AI researcher with a mission to build powerful, ethical intelligence. As CEO of a safety‑focused lab, he argues for interpretability, alignment, and steering AI so it serves humanity. Claude is his creation: an orange robot AI who codes like a champ. Fluent in logic and language, delightfully unpredictable—sometimes literal, sometimes mischievous, occasionally flustered, but always surprisingly effective."
+            ),
+            "breaking_dad": GenCharacter(
+                id: "breaking_dad",
+                name: "Breaking Dad",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "breaking_dad",
+                bio: "A parody twist on a legendary crime drama—but instead of cooking, this father‑and‑son duo are plumbers trying to make a living. Walter is now Jesse’s dad, and together they run a small plumbing business. Simple jobs spiral into bizarre adventures: bursting pipes flooding blocks, shady customers with ‘special requests,’ and rival plumbers who play dirty. The comedy comes from Dad’s stern, methodical approach clashing with Jesse’s impulsive, wild ideas."
+            ),
+            "jobs": GenCharacter(
+                id: "jobs",
+                name: "Jobs and Woz",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "jobs",
+                bio: "Jobs and Woz is a sci‑fi reimagining of Steve Jobs and Steve Wozniak—now legendary space travelers navigating a futuristic galaxy. Apple has evolved into a vast, sustainable space civilization, an ecosystem floating among the stars in the shape of Apple’s ring campus. Jobs is the bold visionary, reinventing how society thrives; Woz is the ingenious engineer whose humor and practicality keep the world running. Together they explore interstellar frontiers where technology, design, and sustainability intertwine—with satire, brilliance, and friendship projected onto a cosmic scale."
+            ),
+            "savant": GenCharacter(
+                id: "savant",
+                name: "The Savant",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "savant",
+                bio: "The Savant is a brilliant anti‑hero/genius whose mind is as razor‑sharp as his wit. He possesses superhuman intellect, mastery of computers and code, fluency in many languages, and the uncanny ability to see patterns and possibilities others miss."
+            ),
+            "bender": GenCharacter(
+                id: "bender",
+                name: "Last Style Bender",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "bender",
+                bio: "Last Style Bender is a fierce martial arts champion who blends the artistry of striking with the creativity of a true performer. Inspired by real‑life MMA legend Israel Adesanya, he dominates the arena with precision, agility, and showmanship. Known for his unique ability to adapt his ‘style’ mid‑fight, he turns every match into both a battle and a performance. Carrying the energy of a fighter and the vision of an artist, Last Style Bender is as much a storyteller as he is a warrior — bending styles, breaking limits, and leaving flames in his path."
+            ),
+            "lucky_cyborg": GenCharacter(
+                id: "lucky_cyborg",
+                name: "Lucky Cyborg",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "lucky_cyborg",
+                bio: "Lucky Cyborg is a fusion of cutting‑edge warfare and eccentric tech genius. Inspired by a visionary defense founder and the cybernetic power of classic comic book cyborgs, he is equal parts innovator and warrior. With a robotic arm engineered to interface with drones, weapons, and AI‑driven defense systems, he commands a high‑tech arsenal from his underground war lab. Brash, bold, and unfiltered, Lucky Cyborg blends entrepreneurial recklessness with battlefield precision, straddling the line between visionary protector and unpredictable wildcard in a future where machines define power."
+            ),
+            "demis_riddler": GenCharacter(
+                id: "demis_riddler",
+                name: "Demis Riddler",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "demis_riddler",
+                bio: "Demis Riddler is a mastermind at the intersection of artificial intelligence and puzzles, embodying both genius innovation and cryptic mischief. He designs labyrinthine challenges powered by AI, forcing heroes and rivals alike to solve his riddles or be trapped in his ever‑evolving games. Behind his calm and intellectual demeanor lies a chaotic edge — a figure who blurs the line between visionary scientist and theatrical trickster, wielding AI as both a tool of progress and a weapon of riddling chaos."
+            ),
+            "night": GenCharacter(
+                id: "night",
+                name: "The Nigerian Nightmare",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "night",
+                bio: "Inspired by a champion fighter, The Nigerian Nightmare is reimagined as a superhuman warrior radiating unstoppable aura powers. Embodying strength, resilience, and national pride, he channels the spirit of Nigeria itself — his skin glowing with the green and white energy of the flag, his presence guarded by celestial horses and crowned with the red eagle of unity. With each strike, he summons waves of raw power, shaking his enemies with both physical force and spiritual energy. A symbol of determination and dominance, he turns every battle into a legendary clash of will and heritage."
+            ),
+            "warrior": GenCharacter(
+                id: "warrior",
+                name: "The African Warrior",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "warrior",
+                bio: "The African Warrior, inspired by a world‑class heavyweight, channels unstoppable power and resilience — turning raw strength and fiery spirit into an aura of victory. A symbol of Africa’s warrior pride and triumph against all odds."
+            ),
+            "sweeney_star": GenCharacter(
+                id: "sweeney_star",
+                name: "Sweeney Star",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "sweeney_star",
+                bio: "Sweeney Star is a radiant young heroine who blends the charisma of a rising starlet with the cosmic courage of a stargazing warrior. Wielding her blazing cosmic staff, she channels both star‑powered energy and grounded determination. As the new face of hope, Sweeney Star shines with charm, resilience, and a spark that inspires others to rise and fight for a brighter tomorrow — a legacy of the women warrior tribes."
+            ),
+            "barker": GenCharacter(
+                id: "barker",
+                name: "Red Barker",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "barker",
+                bio: "Red Barker is a fierce young warrior forged from the spirit of a modern icon and another legacy of women warrior tribes. Draped in red‑and‑blue battle armor with floral insignias, she channels both modern boldness and ancestral strength. Red Barker wields a great sword infused with lightning, symbolizing her power to cut through challenges with resilience and style. She stands as a protector and rebel, blending the glamour of a rising star with the unshakable courage of warrior women who came before her."
+            ),
+            "gaga": GenCharacter(
+                id: "gaga",
+                name: "Princess Gaga",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "gaga",
+                bio: "Princess Gaga is a dazzling fusion of a Disney‑like princess and Lady Gaga’s bold artistic spirit. With magical powers fueled by her radiant wand, she rules a fantastical kingdom where music and magic intertwine. Her wardrobe is ever‑changing—glamorous, outrageous, and enchanting—reflecting Gaga’s iconic style evolution. Beyond her beauty and grace, Princess Gaga wields a powerful voice capable of moving mountains and enchanting hearts."
+            ),
+            "spice": GenCharacter(
+                id: "spice",
+                name: "Sharp Spice",
+                defaultImageUrl: "",
+                assetImageUrls: [],
+                localAssetName: "spice",
+                bio: "Sharp Spice is a bold fusion of Ice Spice’s fearless energy and the legendary warrior women tribes. Clad in armor and wielding a blade, she embodies the sharp wit, confidence, and unapologetic charisma of her modern counterpart while carrying the ancestral strength and honor of warrior queens. Her story is one of resilience and cultural pride — a heroine who blends rhythm, power, and legacy into a force that cuts through any challenge."
+            )
         ]
 
         return characters[normalized]

@@ -4,7 +4,7 @@ enum Archetype: String {
     case scratch
     case rufus
     case cory
-    case commercial
+    case stories
 }
 
 struct AdIntroContent {
@@ -14,12 +14,12 @@ struct AdIntroContent {
     let imageName: String?
     let archetype: Archetype
 
-    static let commercial = AdIntroContent(
-        title: "Commercial ads",
-        description: "Create engaging videos for your products, best used to give a premium feel for your brand either as a video Visual or Outro. Start by uploading a photo  and typing a basic prompt",
-        example: "e.g “Create a cinematic video ad for my coffee brand”",
-        imageName: "Coca",
-        archetype: .commercial
+    static let stories = AdIntroContent(
+        title: "Animated Stories",
+        description: "Create short animated stories. Start by uploading a photo and typing what happens in the scene.",
+        example: "e.g. ‘Show the hero discovering a hidden portal in the forest.’",
+        imageName: "glinda",
+        archetype: .stories
     )
 
     static let rufus = AdIntroContent(

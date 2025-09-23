@@ -1,0 +1,89 @@
+{
+  "ironline": {
+    "key": "ironline", "name": "Ironline Gym",
+    "bio": "The neighborhood fight-house where early mornings and late-night rounds shape character. Coaching, sparring, and found-family energy live here.",
+    "ties": "Kang (manager/coach), Oh (trainer), Lee (works out), Kang’s little sister (after-school hangout)."
+  },
+  "mid": {
+    "key": "mid", "name": "Mid-rise Apartment Exterior",
+    "bio": "A sunlit block of balconies, scooters, and everyday Seoul—perfect for arrivals, departures, and rooftop chats.",
+    "ties": "Kang & sister (home), Oh (nearby), Lee (visits/friends)."
+  },
+  "back": {
+    "key": "back", "name": "Back-Alley Service Lane",
+    "bio": "Neon bleed, humming AC units, puddles that remember secrets. Tense meet-ups, quick getaways, and off-the-books exchanges.",
+    "ties": "Moon (shadow routes), Kang (street run-ins), Seo (old hustler contacts)."
+  },
+  "eclat": {
+    "key": "eclat", "name": "Éclat Couture (Luxury Boutique)",
+    "bio": "Perfume, marble, and quiet power—fashion decisions and chance encounters behind a polite smile.",
+    "ties": "Ryu (works here), Seo/Nam (shop), Baek (celebrity client shoots), Jin (industry link)."
+  },
+  "seora": {
+    "key": "seora", "name": "Seora Designs (HQ Boardroom)",
+    "bio": "Glass views and harder choices—where furniture manufacturing meets real-estate deals and deadlines.",
+    "ties": "Seo (CEO), Choi (VP), Jin (fashion collabs), investors/clients."
+  },
+  "midnight": {
+    "key": "midnight", "name": "Midnight Node (Moon’s Hacker Den)",
+    "bio": "Lights low, code bright—a double-life command center with a bike helmet by the chair.",
+    "ties": "Moon (owner), discreet gigs touching Seo, Kwon (influencer leaks), wider cast for digital fixes."
+  },
+  "petal": {
+    "key": "petal", "name": "Petal & Thorn (Flower Studio)",
+    "bio": "A calm battlefield of invoices and peonies where grit smells like eucalyptus.",
+    "ties": "Im (owner), Park (buys gifts), Ryu (window displays), shoots by Han."
+  },
+  "shutterspace": {
+    "key": "shutterspace", "name": "ShutterSpace Loft (Photo Studio)",
+    "bio": "Backdrops, garment racks, and truth between clicks—Han’s playground for celeb and brand work.",
+    "ties": "Han (owner), bookings with Baek, Ryu/Jin (fashion), Kwon (sponsorships)."
+  },
+  "idolworks": {
+    "key": "idolworks", "name": "IdolWorks Practice Hub",
+    "bio": "Mirrors and scuffed floors—the beat on repeat until it’s perfect.",
+    "ties": "Baek (idol lead), guest choreo from Jin, behind-the-scenes shoots by Han."
+  },
+  "cheonho": {
+    "key": "cheonho", "name": "Cheonho High Classroom",
+    "bio": "Firm-but-warm lessons, pop-lyric drills, and real confidence under bright windows.",
+    "ties": "Yoon (English teacher), Lee (math teacher), cameos from Kang’s sister (student)."
+  },
+  "garosu": {
+    "key": "garosu", "name": "Garosu-gil, Sinsa-dong",
+    "bio": "Tree-lined runway of cafés and boutiques—date strolls, street style, soft-lux vibes.",
+    "ties": "Jin/Ryu (fashion pulls), Han (lookbook shoots), Kwon (campaign content)."
+  },
+  "cheongdam": {
+    "key": "cheongdam", "name": "Cheongdam-dong / Apgujeong Rodeo",
+    "bio": "Flagship glass and valet cones—status speaks softly but clearly.",
+    "ties": "Seo & Choi (meetings), Nam (chaebol orbit), Ryu/Jin (fittings), Baek (brand events)."
+  },
+  "dongdaemun": {
+    "key": "dongdaemun", "name": "Dongdaemun Design Plaza (DDP)",
+    "bio": "Neo-futurist curves and event-night electricity—fashion weeks and public spectacle.",
+    "ties": "Jin/Ryu (shows), Han (coverage), Baek (stage appearances), Seo/Choi (sponsorships)."
+  },
+  "myeong": {
+    "key": "myeong", "name": "Myeong-dong",
+    "bio": "Neon, noodles, nonstop—crowd energy for promos and chance collisions.",
+    "ties": "Kwon (activations), Baek (fan flash-mobs), Han (street editorials), cast crossovers."
+  },
+  "hongdae": {
+    "key": "hongdae", "name": "Hongdae",
+    "bio": "Murals, buskers, indie clubs—youth in motion and messy, alive choices.",
+    "ties": "Baek (guest stages), Han (night shoots), Lee (off-duty hangs), Moon (blends into noise)."
+  },
+  "seongsu": {
+    "key": "seongsu", "name": "Seongsu-dong Café Street (Seoul Forest edge)",
+    "bio": "Warehouse cafés turned creative hubs; green paths a block away—brainstorms and soft reconciliations.",
+    "ties": "Im (supplier meets), Han (brand/editorial shoots), Jin/Ryu (look-pulls), Moon (low-profile meets)."
+  },
+  "banpo": {
+    "key": "banpo", "name": "Banpo Hangang Park (Moonlight Rainbow Fountain)",
+    "bio": "Night rainbow over the river—quiet benches for big feelings; the bridge sings in color.",
+    "ties": "Park ↔ Ryu (romance beats), Kang & sister (late walks), cast epilogues and turning points."
+  }
+}
+
+

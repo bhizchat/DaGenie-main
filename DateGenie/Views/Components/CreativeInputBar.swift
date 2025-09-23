@@ -75,7 +75,7 @@ struct CreativeInputBar: View {
                         .padding(.vertical, textVerticalPadding)
                     }
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("Describe the Animation Idea...")
+                        Text("Describe the Animation Story...")
                             .foregroundColor(Color(hex: 0x808080))
                             .padding(.leading, textLeadingPadding)
                             .padding(.trailing, textTrailingPadding)

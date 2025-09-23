@@ -17,15 +17,15 @@ struct WelcomeCardView: View {
             Spacer(minLength: 0)
 
             // Genie image
-            Image("welcome_genie")
+            Image("genie_logo")
                 .resizable()
                 .scaledToFit()
                 .frame(maxWidth: 280)
                 .padding(.horizontal, 32)
 
             // Title
-            Text("Welcome to DateGenie!")
-                .font(.largeTitle.bold())
+            Text("Upload. Imagine. Animate.")
+                .font(.title.bold())
                 .multilineTextAlignment(.center)
                 .padding(.top, 8)
 

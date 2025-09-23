@@ -84,6 +84,11 @@ export const startStoryboardJobV2 = onCall({
   if (!apiKey) throw new HttpsError("failed-precondition", "missing_veo_api_key");
   const apiBase = "https://generativelanguage.googleapis.com/v1beta";
   const modelName = String(job.model || "veo-3.0-generate-001");
+  // Emergency guard: disable Veo models entirely for storyboard flow
+  if (/veo/i.test(modelName)) {
+    await jobRef.set({status: "error", updatedAt: Timestamp.now(), debug: {blocked: "veo_storyboards_disabled"}}, {merge: true});
+    throw new HttpsError("unavailable", "veo_storyboards_disabled");
+  }
   let aspect = (parsed?.format === "16:9" || parsed?.format === "9:16") ? parsed.format : "9:16";
   if (modelName === "veo-3.0-generate-001" && aspect === "9:16") aspect = "16:9";
   const parameters: any = {negativePrompt: "text, captions, subtitles, watermarks", aspectRatio: aspect};

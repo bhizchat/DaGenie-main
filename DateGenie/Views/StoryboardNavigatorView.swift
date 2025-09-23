@@ -6,18 +6,44 @@ import FirebaseAuth
 #endif
 
 struct StoryboardNavigatorView: View {
-    @State var plan: StoryboardPlan
+    @AppStorage("hasSeenStoryboardOnboarding") private var hasSeenStoryboardOnboarding: Bool = false
+    // Local editable copy of the plan used by the editor UI
+    @State private var plan: StoryboardPlan
+    // Source of truth coming from parent; used to re-sync when Firestore updates arrive
+    private let inputPlan: StoryboardPlan
+    /// When true, the view will attempt to synthesize missing images using `RenderService`.
+    /// Music‑video flow already generates images on the server, so this should be false there
+    /// to avoid momentary blank/black screens and unintended overrides.
+    let autoRenderMissingImages: Bool
+
+    init(plan: StoryboardPlan, autoRenderMissingImages: Bool = true) {
+        _plan = State(initialValue: plan)
+        self.inputPlan = plan
+        self.autoRenderMissingImages = autoRenderMissingImages
+    }
+
+    // Lightweight change-detection key so we can refresh local state when parent plan updates
+    private var inputSyncKey: String {
+        let parts = inputPlan.scenes.map { s in
+            "\(s.index):\(s.imageUrl ?? ""):\(s.action ?? ""):\(s.animation ?? "")"
+        }
+        return parts.joined(separator: "|")
+    }
     @State private var isRendering: Bool = false
     @State private var index: Int = 0
     @State private var scriptHeight: CGFloat = 140
-    @State private var actionHeight: CGFloat = 96
-    @State private var animationHeight: CGFloat = 96
-    @State private var speechHeight: CGFloat = 96
+    @State private var actionHeight: CGFloat = 72
+    @State private var speechHeight: CGFloat = 72
     @State private var focusAction: Bool = false
-    @State private var focusAnimation: Bool = false
     @State private var focusSpeech: Bool = false
     @State private var isGenerating: Bool = false
     @State private var showDone: Bool = false
+    @State private var editingSceneId: Int? = nil
+    @State private var editingText: String = ""
+    @State private var showStoryboardOnboarding: Bool = false
+    // Dirty/save tracking
+    @State private var planIsDirty: Bool = false
+    @State private var autosaveTask: Task<Void, Never>? = nil
     
     // Scene updates listener
     @State private var scenesListener: ListenerRegistration? = nil
@@ -47,11 +73,13 @@ struct StoryboardNavigatorView: View {
                     height: height,
                     availableWidth: width,
                     minHeight: 72,
-                    maxHeight: 200,
+                    maxHeight: 72,
                     trailingInset: 0,
                     isFirstResponder: isEditing
                 )
-                .frame(height: min(max(72, height.wrappedValue), 200))
+                .frame(height: 72)
+                // Lock editing unless the blue Edit button was tapped
+                .allowsHitTesting(isEditing.wrappedValue)
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.08)))
@@ -68,14 +96,11 @@ struct StoryboardNavigatorView: View {
     }
 
     private func composeScript(for s: PlanScene) -> String {
-        let label = s.speechType ?? "Dialogue"
         let a = s.action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let sp = s.speech?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let an = s.animation?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let anim = s.animation?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var lines: [String] = []
         if !a.isEmpty { lines.append("Action: \(a)") }
-        if !sp.isEmpty { lines.append("\(label): \(sp)") }
-        if !an.isEmpty { lines.append("Animation: \(an)") }
+        if !anim.isEmpty { lines.append("Animation: \(anim)") }
         return lines.joined(separator: "\n")
     }
 
@@ -84,14 +109,41 @@ struct StoryboardNavigatorView: View {
             VStack(spacing: 24) {
                 // Header
                 ZStack {
-                    HStack { Button(action: { dismiss() }) { Image(systemName: "xmark").font(.system(size: 16, weight: .bold)).foregroundColor(.black).padding(8) }; Spacer() }
-                    HStack { Spacer(); Text("STORYBOARD").font(.system(size: 22, weight: .heavy)).foregroundColor(.black); Image("storyboard").resizable().renderingMode(.original).scaledToFit().frame(width: 28, height: 28); Spacer() }
+                    HStack {
+                        Button(action: { dismiss() }) {
+                            Image("back_arrow")
+                                .resizable()
+                                .renderingMode(.original)
+                                .scaledToFit()
+                                .frame(width: 28, height: 28)
+                        }
+                        Spacer()
+                    }
+                    HStack {
+                        Spacer()
+                        Text("SCROLL THROUGH YOUR VISUALS AND TAP AN IMAGE TO EDIT")
+                            .font(.system(size: 18, weight: .heavy))
+                            .foregroundColor(.black)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        Spacer()
+                    }
                 }
 
                 // Vertical scenes list
                 VStack(spacing: 22) {
-                    ForEach(plan.scenes.indices, id: \.self) { i in
-                        SceneEditorRow(scene: $plan.scenes[i], isLast: i == plan.scenes.count - 1)
+                    ForEach($plan.scenes) { $s in
+                        let idx = plan.scenes.firstIndex(where: { $0.id == s.id }) ?? 0
+                        SceneEditorRow(
+                            scene: $s,
+                            isLast: idx == plan.scenes.count - 1,
+                            onDelete: {
+                                withAnimation { removeScene(withId: s.id) }
+                            },
+                            onEdit: {
+                                openEdit(for: s)
+                            }
+                        )
                     }
                 }
             .padding(.horizontal, 16)
@@ -111,18 +163,113 @@ struct StoryboardNavigatorView: View {
             .padding(.bottom, 16)
         }
         }
-        .background(Color(hex: 0xF7B451).ignoresSafeArea())
-        .task { await renderIfNeeded() }
+        .background(Color(hex: 0xF3B529).ignoresSafeArea())
+        .task { if autoRenderMissingImages { await renderIfNeeded() } }
+        .onChange(of: inputSyncKey) { _ in
+            // Re-sync local editable copy with upstream changes (e.g., new imageUrls, action/animation)
+            self.plan = inputPlan
+        }
         .overlay(alignment: .center) {
             if isGenerating { ZStack { Color.black.opacity(0.25).ignoresSafeArea(); ProgressView("Preparing…").padding(16).background(RoundedRectangle(cornerRadius: 12).fill(Color.white)) } }
         }
         .hideKeyboardOnTap()
         .alert("Generation failed", isPresented: $showDone) { Button("OK", role: .cancel) {} } message: { Text("Couldn't start video generation. Please try again.") }
+        .fullScreenCover(isPresented: $showStoryboardOnboarding) {
+            StoryboardFirstRunOnboarding {
+                hasSeenStoryboardOnboarding = true
+                showStoryboardOnboarding = false
+            }
+        }
+        .sheet(item: Binding(get: { editingSceneBinding() }, set: { _ in })) { item in
+            let sid = item.value
+            if let i = plan.scenes.firstIndex(where: { $0.id == sid }) {
+                SceneEditSheet(
+                    scene: $plan.scenes[i],
+                    initialText: editingText,
+                    onDismiss: { editingSceneId = nil },
+                    onRegenerate: { updatedAction in
+                        Task { await regenerateScene(id: sid, actionText: updatedAction) }
+                    }
+                )
+            }
+        }
+        .onAppear {
+            if !hasSeenStoryboardOnboarding {
+                showStoryboardOnboarding = true
+            }
+        }
     }
     // Close body
 
+    // MARK: - Helpers (sanitizer + plan builder)
+    private func sanitizeHandsOnly(_ s: String?) -> String {
+        guard let t = s else { return "" }
+        var out = t.replacingOccurrences(of: "(?i)\\b(handheld\\s+)?microphones?\\b", with: "hand gestures", options: .regularExpression)
+        out = out.replacingOccurrences(of: "(?i)\\bmic\\b", with: "hand gestures", options: .regularExpression)
+        out = out.replacingOccurrences(of: "\\([^)]*?microphone[^)]*\\)", with: "", options: .regularExpression)
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func buildPlan(from docs: [QueryDocumentSnapshot]) -> StoryboardPlan {
+        var scenes: [PlanScene] = []
+        for d in docs {
+            let data = d.data()
+            let idx = (data["index"] as? NSNumber)?.intValue ?? (data["index"] as? Int) ?? 0
+            let rawAction = data["action"] as? String
+            let action = sanitizeHandsOnly(rawAction)
+            let anim = data["animation"] as? String
+            let image = data["imageUrl"] as? String
+            var s = PlanScene(index: idx, prompt: action, script: action, durationSec: 5.0, wordsPerSec: nil, wordBudget: nil, imageUrl: image, action: action, speechType: nil, speech: nil, animation: anim, speakerSlot: nil)
+            scenes.append(s)
+        }
+        scenes.sort { $0.index < $1.index }
+        let refs = inputPlan.referenceImageUrls ?? plan.referenceImageUrls
+        return StoryboardPlan(character: plan.character, settings: plan.settings, scenes: scenes, referenceImageUrls: refs)
+    }
+
     fileprivate func next() { if index < plan.scenes.count-1 { index += 1 } }
     fileprivate func prev() { if index > 0 { index -= 1 } }
+
+    private func removeScene(withId id: Int) {
+        // Remove the scene and keep indices stable for remaining items by reassigning indices
+        var updated = plan.scenes.filter { $0.id != id }
+        for i in 0..<updated.count {
+            // Rebuild with updated index in-place while preserving other fields
+            var s = updated[i]
+            if s.index != i { s = PlanScene(index: i, prompt: s.prompt, script: s.script, durationSec: s.durationSec, wordsPerSec: s.wordsPerSec, wordBudget: s.wordBudget, imageUrl: s.imageUrl, action: s.action, speechType: s.speechType, speech: s.speech, animation: s.animation) }
+            updated[i] = s
+        }
+        plan.scenes = updated
+        if index >= plan.scenes.count { index = max(0, plan.scenes.count - 1) }
+    }
+
+    private func openEdit(for scene: PlanScene) {
+        editingSceneId = scene.id
+        editingText = scene.action ?? ""
+    }
+
+    private func editingSceneBinding() -> IdentifiableInt? {
+        if let id = editingSceneId { return IdentifiableInt(value: id) }
+        return nil
+    }
+
+    private func regenerateScene(id: Int, actionText: String) async {
+        guard let idx = plan.scenes.firstIndex(where: { $0.id == id }) else { return }
+        // Update action and set placeholder state
+        plan.scenes[idx].action = actionText
+        plan.scenes[idx].imageUrl = ""
+        do {
+            if let url = try await RenderService.shared.renderOne(scene: plan.scenes[idx], plan: plan) {
+                plan.scenes[idx].imageUrl = url
+                // Mark dirty and autosave the latest storyboard snapshot
+                planIsDirty = true
+                await autosaveStoryboard()
+            }
+        } catch {
+            // Restore previous image is not necessary; leave empty to indicate failure
+        }
+        editingSceneId = nil
+    }
 
     fileprivate func renderIfNeeded() async {
         // Render scenes one-by-one; update UI after each successful image
@@ -142,12 +289,18 @@ struct StoryboardNavigatorView: View {
             safety += 1
             if safety > (plan.scenes.count + 2) { break }
         }
-        await persistStoryboardIfNeeded()
+        // Persist the latest rendered state so downstream flows see the current snapshot
+        await persistStoryboard(reason: "batch_render")
     }
 
     fileprivate func persistStoryboardIfNeeded() async {
-        // Save only once; require at least one generated image (partial saves allowed)
-        guard storyboardId == nil else { return }
+        // Backward-compat wrapper – delegate to general saver
+        await persistStoryboard(reason: "compat_if_needed")
+    }
+
+    @MainActor
+    fileprivate func persistStoryboard(reason: String) async {
+        // Require at least one generated image (partial saves allowed)
         let hasAtLeastOneImage = plan.scenes.contains { !($0.imageUrl ?? "").isEmpty }
         guard hasAtLeastOneImage else { return }
         guard let uid = Auth.auth().currentUser?.uid else { return }
@@ -160,7 +313,7 @@ struct StoryboardNavigatorView: View {
                 }
             }
             guard let pid = projectId else { return }
-            let reqId = UUID().uuidString
+            let reqId = "save:\(reason):\(UUID().uuidString)"
             let idem = UUID().uuidString
             let sbId = try await StoryboardsRepository.shared.saveStoryboardSet(
                 userId: uid,
@@ -171,28 +324,47 @@ struct StoryboardNavigatorView: View {
                 bumpVersion: true
             )
             self.storyboardId = sbId
+            planIsDirty = false
             await ProjectsRepository.shared.attachStoryboardContext(userId: uid, projectId: pid, storyboardId: sbId, currentSceneIndex: 0, totalScenes: plan.scenes.count)
         } catch {
             print("[Storyboard] persist failed: \(error)")
         }
     }
 
+    private func autosaveStoryboard() async {
+        autosaveTask?.cancel()
+        let snapshot = plan
+        autosaveTask = Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            await MainActor.run { [snapshot] in
+                if planIsDirty { Task { await persistStoryboard(reason: "autosave") } }
+            }
+        }
+    }
+
     fileprivate func generateClip() {
         Task { @MainActor in
+            // Emergency guard: block generation if kill switch enabled
+            if FeatureFlags.disableVeoStoryboards {
+                showDone = true
+                return
+            }
             // Ensure no text field retains focus; prevent keyboard from auto-showing
             focusAction = false
-            focusAnimation = false
             focusSpeech = false
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             isGenerating = true
             do {
-                // If storyboard is saved, enqueue via fast WAN flow
+                // Ensure the latest storyboard is persisted before enqueueing
+                if !FeatureFlags.disableProjectSaving { await persistStoryboard(reason: "single_clip_pre_enqueue") }
                 if !FeatureFlags.disableProjectSaving,
                    let uid = Auth.auth().currentUser?.uid,
                    let sbId = storyboardId,
                    let pid = projectId {
                     let sceneId = String(format: "%04d", plan.scenes[index].index)
-                    try await StoryboardsRepository.shared.enqueueSceneVideo(userId: uid, projectId: pid, storyboardId: sbId, sceneId: sceneId, provider: "wan", requestId: UUID().uuidString)
+                    let runId = UUID().uuidString
+                    try? await StoryboardsRepository.shared.startStoryboardRun(userId: uid, projectId: pid, storyboardId: sbId, runId: runId)
+                    try await StoryboardsRepository.shared.enqueueSceneVideo(userId: uid, projectId: pid, storyboardId: sbId, sceneId: sceneId, provider: "wan", requestId: UUID().uuidString, delaySeconds: nil, nameSuffix: nil, runId: runId)
                     isGenerating = false
                     return
                 }
@@ -215,6 +387,11 @@ struct StoryboardNavigatorView: View {
                         "imageUrl": image,
                     ]
                     scenesPayload.append(obj)
+                }
+                // If kill switch is on, don't kick off remote job creation
+                if FeatureFlags.disableVeoStoryboards {
+                    showDone = true
+                    return
                 }
                 let modelName: String = "wan-video"
                 let body: [String: Any] = [
@@ -287,15 +464,19 @@ struct StoryboardNavigatorView: View {
 
     fileprivate func generateAll() {
         Task { @MainActor in
+            // Extra tap guard: if already generating, bail immediately
+            if isGenerating { return }
             isGenerating = true
             defer { isGenerating = false }
             do {
-                // Ensure storyboard is persisted
-                if storyboardId == nil { await persistStoryboardIfNeeded() }
+                // Ensure storyboard is persisted (always flush latest)
+                await persistStoryboard(reason: "generate_all_pre_enqueue")
                 guard let uid = Auth.auth().currentUser?.uid, let sbId = storyboardId, let pid = projectId else { return }
                 // Enqueue all scenes with images sequentially with spacing
-                let spacing = 6 // base seconds between scheduled tasks (reduced from 15)
-                let runId = Int(Date().timeIntervalSince1970)
+                let spacing = 3 // tighten spacing; enqueue faster
+                let runId = UUID().uuidString
+                // Start fenced run and cancel stale work server-side
+                try? await StoryboardsRepository.shared.startStoryboardRun(userId: uid, projectId: pid, storyboardId: sbId, runId: runId)
                 let scenesWithImages = plan.scenes.enumerated().filter { !($0.element.imageUrl ?? "").isEmpty }
                 for (iTuple, pair) in scenesWithImages.enumerated() {
                     let i = iTuple
@@ -309,9 +490,10 @@ struct StoryboardNavigatorView: View {
                         storyboardId: sbId,
                         sceneId: sid,
                         provider: "wan",
-                        requestId: UUID().uuidString,
+                        requestId: "wan-\(runId)-\(sid)",
                         delaySeconds: i * spacing + jitter,
-                        nameSuffix: "r\(runId)-\(i)"
+                        nameSuffix: "r\(i)",
+                        runId: runId
                     )
                 }
 
@@ -330,6 +512,28 @@ struct StoryboardNavigatorView: View {
         }
     }
 
+    fileprivate func exportWebcomic() {
+        Task { @MainActor in
+            isGenerating = true
+            defer { isGenerating = false }
+            do {
+                // Ensure all images available; try rendering missing ones
+                if plan.scenes.contains(where: { ($0.imageUrl ?? "").isEmpty }) {
+                    _ = try? await RenderService.shared.render(plan: plan)
+                }
+                let url = try await WebcomicExporter.export(plan: plan, width: 800)
+                // Present share sheet
+                if let vc = UIApplication.shared.topMostViewController() {
+                    let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                    vc.present(av, animated: true)
+                }
+            } catch {
+                print("[Storyboard] exportWebcomic failed: \(error)")
+                showDone = true
+            }
+        }
+    }
+
     fileprivate func startScenesListener(uid: String, projectId: String, storyboardId: String) {
         // Remove existing listener if any
         scenesListener?.remove()
@@ -342,11 +546,42 @@ struct StoryboardNavigatorView: View {
             .order(by: "index")
         scenesListener = coll.addSnapshotListener { snap, _ in
             guard let docs = snap?.documents else { return }
+            for d in docs {
+                let data = d.data()
+                let idx = (data["index"] as? NSNumber)?.intValue ?? (data["index"] as? Int) ?? -1
+                let image = data["imageUrl"] as? String ?? ""
+                let rawAction = data["action"] as? String ?? ""
+                let action = self.sanitizeHandsOnly(rawAction)
+                let anim = data["animation"] as? String ?? ""
+                print("[MV] snapshot_scene id=\(d.documentID) idx=\(idx) imgLen=\(image.count) actionLen=\(action.count) animLen=\(anim.count)")
+            }
+            DispatchQueue.main.async { self.plan = self.buildPlan(from: docs) }
             for doc in docs {
                 let data = doc.data()
                 let video = data["video"] as? [String: Any]
                 let status = (video?["status"] as? String) ?? (data["videoStatus"] as? String) ?? ""
                 guard status.lowercased() == "done" else { continue }
+                // Fence: only accept current run clips if available
+                if let vRun = video?["runId"] as? String,
+                   let uid = Auth.auth().currentUser?.uid {
+                    let pid: String = projectId
+                    let sbId: String = storyboardId
+                    // Fetch storyboard.activeRunId once; for simplicity, read live
+                    Firestore.firestore().collection("users").document(uid).collection("projects").document(pid).collection("storyboards").document(sbId).getDocument { sb, _ in
+                        let active = (sb?.data()? ["state"] as? [String: Any])? ["activeRunId"] as? String
+                        if active == nil || active == vRun {
+                            if let urlStr = video?["outputUrl"] as? String, let url = URL(string: urlStr) {
+                                if !processedSceneIds.contains(doc.documentID) {
+                                    processedSceneIds.insert(doc.documentID)
+                                    let doneCount = processedSceneIds.count
+                                    let totalCount = plan.scenes.count
+                                    NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: ["url": url, "doneCount": doneCount, "totalCount": totalCount])
+                                }
+                            }
+                        }
+                    }
+                    continue
+                }
                 guard let urlStr = video?["outputUrl"] as? String, let url = URL(string: urlStr) else { continue }
                 if !processedSceneIds.contains(doc.documentID) {
                     processedSceneIds.insert(doc.documentID)
@@ -358,27 +593,94 @@ struct StoryboardNavigatorView: View {
         }
     }
 }
+// Lightweight identifiable wrapper for sheet presentation
+private struct IdentifiableInt: Identifiable { let value: Int; var id: Int { value } }
+
+// MARK: - Edit sheet
+private struct SceneEditSheet: View {
+    @Binding var scene: PlanScene
+    let initialText: String
+    let onDismiss: () -> Void
+    let onRegenerate: (String) -> Void
+
+    @State private var text: String = ""
+
+    var body: some View {
+        VStack(spacing: 16) {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.gray.opacity(0.15))
+                .frame(height: 1)
+                .opacity(0)
+            if let urlStr = scene.imageUrl, let url = URL(string: urlStr), !urlStr.isEmpty {
+                AsyncImage(url: url) { ph in
+                    switch ph {
+                    case .empty: ProgressView()
+                    case .success(let img): img.resizable().scaledToFit()
+                    case .failure: Image(systemName: "photo").resizable().scaledToFit().padding(30).foregroundColor(.black.opacity(0.4))
+                    @unknown default: EmptyView()
+                    }
+                }
+                .frame(maxHeight: 240)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            } else {
+                ZStack { RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.2)); Text("Rendering…").foregroundColor(.black.opacity(0.6)) }
+                .frame(height: 200)
+            }
+
+            GeometryReader { geo in
+                let width = geo.size.width - 16
+                GrowingTextViewFixed(text: $text, height: .constant(120), availableWidth: width, minHeight: 96, maxHeight: 240, trailingInset: 0, isFirstResponder: .constant(true))
+                    .frame(height: 140)
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.08)))
+            }
+            .frame(height: 160)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
+
+            HStack {
+                Button("Cancel") { onDismiss() }
+                    .font(.system(size: 16, weight: .semibold))
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.2)))
+                Spacer()
+                Button(action: { onRegenerate(text) }) {
+                    Text("Regenerate Scene")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.blue))
+                }
+            }
+        }
+        .padding(16)
+        .onAppear { text = initialText }
+    }
+}
 
 // MARK: - Scene row (vertical)
 private struct SceneEditorRow: View {
     @Binding var scene: PlanScene
     let isLast: Bool
+    let onDelete: () -> Void
+    let onEdit: () -> Void
 
-    @State private var actionHeight: CGFloat = 96
-    @State private var animationHeight: CGFloat = 96
-    @State private var speechHeight: CGFloat = 96
-    @State private var focusAction: Bool = false
-    @State private var focusAnimation: Bool = false
-    @State private var focusSpeech: Bool = false
+    @State private var showDeleteControl: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 14).fill(Color.gray.opacity(0.2))
-                if let urlStr = scene.imageUrl, let url = URL(string: urlStr) {
+                if let urlStr = scene.imageUrl, let url = URL(string: urlStr), !urlStr.isEmpty {
                     AsyncImage(url: url) { ph in
                         switch ph {
-                        case .empty: ProgressView()
+                        case .empty:
+                            ZStack { Color.clear; ProgressView() }
                         case .success(let img): img.resizable().scaledToFit()
                         case .failure: Image(systemName: "photo").resizable().scaledToFit().padding(30).foregroundColor(.black.opacity(0.4))
                         @unknown default: EmptyView()
@@ -387,54 +689,69 @@ private struct SceneEditorRow: View {
                     .id(scene.imageUrl ?? "")
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 } else {
-                    Text("Rendering…").foregroundColor(.black.opacity(0.5))
+                    ZStack {
+                        Color.clear
+                        Text("Rendering…")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.black.opacity(0.6))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    }
+                }
+                // Status pill (queued/running/done/error)
+                if let status = scene.animation, ["queued","running","done","error"].contains(status.lowercased()) {
+                    Text(status.capitalized)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8).fill(
+                                status.lowercased() == "done" ? Color.green : (status.lowercased() == "error" ? Color.red : Color.blue)
+                            )
+                        )
+                        .padding(8)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .onLongPressGesture {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                withAnimation { showDeleteControl = true }
+            }
+            // Tapping the storyboard image opens the edit sheet (no inline fields)
+            .highPriorityGesture(TapGesture().onEnded({ onEdit() }))
+            .overlay(alignment: .topLeading) {
+                if showDeleteControl {
+                    Button(action: onDelete) {
+                        Image("minus-button")
+                            .resizable()
+                            .renderingMode(.original)
+                            .frame(width: 28, height: 28)
+                    }
+                    .padding(8)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if showDeleteControl {
+                    Button(action: onEdit) {
+                        Image("edit_button")
+                            .resizable()
+                            .renderingMode(.original)
+                            .frame(width: 28, height: 28)
+                    }
+                    .padding(8)
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
             .frame(height: 300)
-
-            Text("SCRIPT").font(.system(size: 18, weight: .heavy)).foregroundColor(.black)
-
-            VStack(alignment: .leading, spacing: 18) {
-                // Action
-                GrowingField(title: "Action", text: Binding(get: { scene.action ?? "" }, set: { v in
-                    scene.action = limitWords(v, cap: 20)
-                }), isEditing: $focusAction, height: $actionHeight)
-                .onChange(of: scene.action ?? "") { _ in
-                    DispatchQueue.main.async { scene.script = composeForRow(scene) }
-                }
-
-                // Animation
-                GrowingField(title: "Animation", text: Binding(get: { scene.animation ?? "" }, set: { v in
-                    scene.animation = limitWords(v, cap: 20)
-                }), isEditing: $focusAnimation, height: $animationHeight)
-                .onChange(of: scene.animation ?? "") { _ in
-                    DispatchQueue.main.async { scene.script = composeForRow(scene) }
-                }
-
-                // Dialogue/Narration
-                let label = (scene.speechType ?? "Dialogue")
-                GrowingField(title: label, text: Binding(get: { scene.speech ?? "" }, set: { v in
-                    let trimmed = limitWords(v, cap: 20); scene.speech = trimmed; if scene.speechType == nil { scene.speechType = "Dialogue" }
-                }), isEditing: $focusSpeech, height: $speechHeight)
-                .onChange(of: scene.speech ?? "") { _ in
-                    DispatchQueue.main.async { scene.script = composeForRow(scene) }
-                }
-
-                // Single model (WAN); Veo removed from UI
+        }
+        // Tapping anywhere in the row outside of the image dismisses the delete control
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if showDeleteControl {
+                withAnimation { showDeleteControl = false }
             }
         }
-    }
-
-    private func composeForRow(_ s: PlanScene) -> String {
-        let label = s.speechType ?? "Dialogue"
-        let a = s.action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let sp = s.speech?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let an = s.animation?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        var lines: [String] = []
-        if !a.isEmpty { lines.append("Action: \(a)") }
-        if !sp.isEmpty { lines.append("\(label): \(sp)") }
-        if !an.isEmpty { lines.append("Animation: \(an)") }
-        return lines.joined(separator: "\n")
     }
 }
 
@@ -443,14 +760,25 @@ private struct GrowingField: View {
     @Binding var text: String
     @Binding var isEditing: Bool
     @Binding var height: CGFloat
+    var onEdit: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack { Text(title).font(.system(size: 14, weight: .heavy)).foregroundColor(.black); Spacer(); Button("Edit") { isEditing = true }.font(.system(size: 13, weight: .semibold)) }
+            HStack {
+                Text(title).font(.system(size: 14, weight: .heavy)).foregroundColor(.black)
+                Spacer()
+                Button("Edit") {
+                    if let onEdit = onEdit { onEdit() }
+                    else { isEditing = true }
+                }
+                .font(.system(size: 13, weight: .semibold))
+            }
             GeometryReader { geo in
                 let width = geo.size.width - 16
-                GrowingTextViewFixed(text: $text, height: $height, availableWidth: width, minHeight: 72, maxHeight: 200, trailingInset: 0, isFirstResponder: $isEditing)
-                    .frame(height: min(max(72, height), 200))
+                GrowingTextViewFixed(text: $text, height: $height, availableWidth: width, minHeight: 72, maxHeight: 72, trailingInset: 0, isFirstResponder: $isEditing)
+                    .frame(height: 72)
+                    // Lock editing unless the blue Edit button was tapped
+                    .allowsHitTesting(isEditing)
                     .padding(8)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.08)))
@@ -510,3 +838,39 @@ fileprivate func extractAccent(from text: String) -> String? {
 }
 
 // Veo model and picker removed; WAN is the only path
+
+// MARK: - Storyboard First-run Onboarding
+private struct StoryboardFirstRunOnboarding: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var page: Int = 0
+    let onFinish: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color(hex: 0xF3B529).ignoresSafeArea()
+            VStack {
+                Spacer()
+                Image(page == 0 ? "story_onboard" : "story_onboard2")
+                    .resizable()
+                    .renderingMode(.original)
+                    .scaledToFit()
+                    .frame(maxWidth: 520)
+                    .padding(.horizontal, 24)
+                Spacer()
+                Button(action: next) {
+                    Text("NEXT")
+                        .font(.system(size: 22, weight: .heavy))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white))
+                }
+                .padding(.bottom, 30)
+            }
+        }
+    }
+
+    private func next() {
+        if page == 0 { page = 1 } else { onFinish(); dismiss() }
+    }
+} 

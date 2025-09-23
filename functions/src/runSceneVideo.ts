@@ -3,6 +3,7 @@ import * as functions from "firebase-functions/v1";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getFirestore, FieldValue} from "firebase-admin/firestore";
 import axios from "axios";
+// Replicate was used for Veo; removed for WAN-only path
 // axios not needed in scaffold; keep imports minimal
 
 if (!getApps().length) { initializeApp({credential: applicationDefault()}); }
@@ -16,13 +17,13 @@ function verifyOidcFromTasks(req: functions.https.Request): void {
 }
 
 export const runSceneVideo = functions
-  .runWith({timeoutSeconds: 540, memory: "1GB"})
+  .runWith({timeoutSeconds: 540, memory: "1GB", secrets: ["REPLICATE_API_TOKEN"]})
   .region("us-central1")
-  .https.onRequest(async (req, res) => {
+  .https.onRequest(async (req, res): Promise<void> => {
     try {
       if (req.method !== "POST") { res.status(405).json({error: "method_not_allowed"}); return; }
       verifyOidcFromTasks(req);
-      const {uid, projectId, storyboardId, sceneId, provider, requestId} = (req.body || {}) as any;
+      const {uid, projectId, storyboardId, sceneId, provider, requestId, idempotencyKey, runId} = (req.body || {}) as any;
       if (!uid || !projectId || !storyboardId || !sceneId) { res.status(400).json({error: "bad_request"}); return; }
 
       const sbRef = db.collection("users").doc(uid).collection("projects").doc(projectId).collection("storyboards").doc(storyboardId);
@@ -36,21 +37,35 @@ export const runSceneVideo = functions
       if (!snap.exists) { res.status(404).json({error: "scene_not_found"}); return; }
       const data = snap.data() || {} as any;
 
-      // Idempotency: if already done, short-circuit
-      if (data?.video?.status === "done") {
-        res.status(200).json({ok: true, noop: true});
-        return;
-      }
+      // Run fence before any provider call
+      try {
+        const sb = await sbRef.get();
+        const activeRunId = (sb.data() as any)?.state?.activeRunId;
+        const vCheck = (data.video || {}) as any;
+        if ((activeRunId && runId && activeRunId !== runId) || (vCheck.runId && runId && vCheck.runId !== runId) || vCheck.status === "canceled") {
+          functions.logger.info("run_scene_video.skip_stale_or_canceled", {sceneId: id4, runId, activeRunId, vRunId: vCheck.runId, status: vCheck.status});
+          res.status(200).json({skipped: true});
+          return;
+        }
+      } catch {}
 
-      await sceneRef.update({
-        "video.status": "running",
-        "video.provider": provider || data?.video?.provider || null,
-        videoStatus: "running",
-        updatedAt: FieldValue.serverTimestamp(),
-      }).catch(async () => {
-        // fallback if document missing fields
-        await sceneRef.set({ video: { ...(data.video || {}), status: "running", provider: provider || null }, videoStatus: "running", updatedAt: FieldValue.serverTimestamp() }, {merge: true});
+      // Idempotent claim: if already processing/done for veo, no-op
+      let duplicate = false;
+      await db.runTransaction(async (tx) => {
+        const snap2 = await tx.get(sceneRef);
+        const d2 = snap2.data() || {} as any;
+        const v2 = (d2.video || {}) as any;
+        const status = String(v2.status || "").toLowerCase();
+        const prov = String(v2.provider || provider || "").toLowerCase();
+        if (["running", "processing", "queued", "done"].includes(status) && (prov === "veo")) {
+          duplicate = true;
+          return;
+        }
+        const base: any = { status: "running", provider: provider || null };
+        if (idempotencyKey) base.lock = { ...(v2.lock || {}), idempotencyKey };
+        tx.set(sceneRef, { video: base, videoStatus: "running", updatedAt: FieldValue.serverTimestamp() }, {merge: true});
       });
+      if (duplicate) { res.status(200).json({ok: true, deduped: true}); return; }
 
       // Build a provider-agnostic input from the scene fields
       // Build provider-agnostic input (placeholder for future integration)
@@ -58,9 +73,9 @@ export const runSceneVideo = functions
       let outputUrl: string | null = null;
       let providerJobId: string | null = null;
 
-      // Provider dispatch (WAN)
+      // Provider dispatch: force WAN for all storyboard clips
       const normalizedProvider = (provider || data?.video?.provider || "wan").toString().toLowerCase();
-      if (normalizedProvider === "wan") {
+      {
         const project = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || (process.env.FIREBASE_CONFIG ? JSON.parse(String(process.env.FIREBASE_CONFIG)).projectId : "dategenie-dev");
         const wanUrl = process.env.WAN_I2V_URL || `https://us-central1-${project}.cloudfunctions.net/wanI2vFast`;
 
@@ -78,6 +93,7 @@ export const runSceneVideo = functions
           return;
         }
 
+        // 5s@16fps ~= 80 frames; stick to 480p fast for throughput
         try {
           const resp = await axios.post(wanUrl, {
             image,
@@ -89,6 +105,10 @@ export const runSceneVideo = functions
           }, {timeout: 540_000});
           providerJobId = `wan_${Date.now()}`;
           outputUrl = (resp.data && (resp.data.videoUrl as string)) || null;
+          const predictionId = (resp.data && (resp.data.predictionId as string)) || undefined;
+          if (predictionId) {
+            try { await sceneRef.set({ video: { predictionId }, updatedAt: FieldValue.serverTimestamp() }, {merge: true}); } catch {}
+          }
           functions.logger.info("run_scene_video.provider_wan_ok", {wanUrl, hasOutput: !!outputUrl});
         } catch (err: any) {
           const msg = String(err?.response?.data?.error || err?.message || err);
@@ -100,18 +120,31 @@ export const runSceneVideo = functions
       // Treat missing video URL as failure, not done
       if (!outputUrl) {
         await sceneRef.set({
-          video: { ...(data.video || {}), status: "error", provider: provider || null, lastError: "wan_no_output" },
-          videoStatus: "error",
+          video: { ...(data.video || {}), status: "failed", provider: provider || null, lastError: `${normalizedProvider}_no_output` },
+          videoStatus: "failed",
           updatedAt: FieldValue.serverTimestamp(),
         }, {merge: true});
-        functions.logger.error("run_scene_video.no_output_url", {docPath: sceneRef.path});
-        res.status(502).json({error: "wan_no_output"});
+        functions.logger.error("run_scene_video.no_output_url", {docPath: sceneRef.path, provider: normalizedProvider});
+        res.status(200).json({ok: false, reason: `${normalizedProvider}_no_output`});
         return;
       }
 
+      // Re-check fence just before writing done
+      try {
+        const sb2 = await sbRef.get();
+        const a2 = (sb2.data() as any)?.state?.activeRunId;
+        const s2 = await sceneRef.get();
+        const v2 = (s2.data() as any)?.video || {};
+        if ((a2 && runId && a2 !== runId) || (v2.runId && runId && v2.runId !== runId) || v2.status === "canceled") {
+          functions.logger.info("run_scene_video.stale_after_provider", {sceneId: id4, runId, activeRunId: a2});
+          res.status(200).json({stale: true});
+          return;
+        }
+      } catch {}
+
       await sceneRef.update({
         "video.status": "done",
-        "video.provider": provider || data?.video?.provider || null,
+        "video.provider": "wan",
         "video.providerJobId": providerJobId,
         "video.outputUrl": outputUrl,
         "video.thumbUrl": data?.imageUrl || null,
@@ -154,7 +187,16 @@ export const runSceneVideo = functions
       res.status(200).json({ok: true, outputUrl});
     } catch (e: any) {
       functions.logger.error("run_scene_video.failed", {message: String(e?.message || e)});
-      res.status(500).json({error: "internal_error", message: String(e?.message || e)});
+      // sceneRef may be undefined if we failed before computing it
+      try {
+        const {uid, projectId, storyboardId, sceneId} = (req.body || {}) as any;
+        if (uid && projectId && storyboardId && sceneId) {
+          const id4 = String(sceneId).padStart(4, "0");
+          const sr = db.collection("users").doc(uid).collection("projects").doc(projectId).collection("storyboards").doc(storyboardId).collection("scenes").doc(id4);
+          await sr.set({ video: { status: "failed", lastError: String(e?.message || e) }, videoStatus: "failed", updatedAt: FieldValue.serverTimestamp() }, {merge: true});
+        }
+      } catch {}
+      res.status(200).json({ok: false, error: "internal_error"});
     }
   });
 
