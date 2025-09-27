@@ -17,14 +17,20 @@ final class MusicVideoRepository {
     func createProjectAndUpload(userId: String, referenceImageData: Data, audioURL: URL) async throws -> CreateProjectResult {
         let projectId = UUID().uuidString
         let root = "users/\(userId)/musicVideos/\(projectId)"
-        // Upload reference image
+        // Upload reference image (set correct content type)
         let refRef = storage.reference(withPath: "\(root)/reference.jpg")
-        _ = try await refRef.putDataAsync(referenceImageData, metadata: nil)
+        let imgMeta = StorageMetadata()
+        imgMeta.contentType = "image/jpeg"
+        _ = try await refRef.putDataAsync(referenceImageData, metadata: imgMeta)
         let refUrl = try await refRef.downloadURL().absoluteString
-        // Upload audio
-        let audioRef = storage.reference(withPath: "\(root)/audio/track\(audioURL.pathExtension.isEmpty ? ".m4a" : ".\(audioURL.pathExtension)")")
+        // Upload audio with explicit content type (so server preflight sees audio/*)
+        let ext = audioURL.pathExtension.isEmpty ? "m4a" : audioURL.pathExtension.lowercased()
+        let audioRef = storage.reference(withPath: "\(root)/audio/track.\(ext)")
         let data = try Self.loadAudioData(from: audioURL)
-        _ = try await audioRef.putDataAsync(data, metadata: nil)
+        let audioMeta = StorageMetadata()
+        // Basic mapping; extend if you support more formats
+        audioMeta.contentType = (ext == "mp3" ? "audio/mpeg" : (ext == "wav" ? "audio/wav" : (ext == "aac" ? "audio/aac" : "audio/mp4")))
+        _ = try await audioRef.putDataAsync(data, metadata: audioMeta)
         let audioGs = "gs://\(storage.reference().bucket)/\(audioRef.fullPath)"
         // Seed firestore doc
         try await db.collection("users").document(userId).collection("musicVideos").document(projectId).setData([
@@ -92,7 +98,7 @@ extension MusicVideoRepository {
 extension MusicVideoRepository {
     func startMusicFinishing(uid: String, projectId: String, storyboardId: String, runId: String, audioGsPath: String, audioDurationSec: Double) async throws {
         let gcp = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev"
-        let url = URL(string: "https://us-central1-\(gcp).cloudfunctions.net/startMusicFinishing")!
+        let url = URL(string: "https://us-central1-\(gcp).cloudfunctions.net/startMusicFinishingV2")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -111,18 +117,53 @@ extension MusicVideoRepository {
         }
     }
 
-    func submitLipsync(uid: String, projectId: String, storyboardId: String, runId: String) async throws {
+    func submitLipsync(uid: String, projectId: String, storyboardId: String, runId: String, videoUrlOverride: URL? = nil, audioUrlOverride: String? = nil) async throws {
         let gcp = (Bundle.main.object(forInfoDictionaryKey: "FirebaseProjectID") as? String) ?? "dategenie-dev"
-        let url = URL(string: "https://us-central1-\(gcp).cloudfunctions.net/submitLipsync")!
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = ["uid": uid, "projectId": projectId, "storyboardId": storyboardId, "runId": runId]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
-        let (_, resp) = try await URLSession.shared.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw NSError(domain: "MusicVideoRepository", code: (resp as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_failed"])
+        let url = URL(string: "https://us-central1-\(gcp).cloudfunctions.net/submitLipsyncV2")!
+        var payload: [String: Any] = ["uid": uid, "projectId": projectId, "storyboardId": storyboardId, "runId": runId]
+        if let v = videoUrlOverride { payload["videoUrl"] = v.absoluteString }
+        if let a = audioUrlOverride, !a.isEmpty { payload["audioUrl"] = a }
+
+        // Small transient retry with jitter
+        var lastError: Error?
+        for attempt in 0..<3 {
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                guard let http = resp as? HTTPURLResponse else {
+                    throw NSError(domain: "MusicVideoRepository", code: -1, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_no_http_response"])
+                }
+                if (200..<300).contains(http.statusCode) {
+                    // Success; optionally parse replayed flag
+                    return
+                }
+                // 422 validation: decode server error body
+                if http.statusCode == 422 {
+                    if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        let code = (obj["code"] as? String) ?? "validation_error"
+                        let which = (obj["which"] as? String)
+                        throw NSError(domain: "MusicVideoRepository", code: 422, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_validation", "code": code, "which": which ?? ""])
+                    }
+                    throw NSError(domain: "MusicVideoRepository", code: 422, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_validation"])
+                }
+                // Treat 5xx/timeout-like as transient and retry
+                if http.statusCode >= 500 || http.statusCode == 408 || http.statusCode == 429 {
+                    lastError = NSError(domain: "MusicVideoRepository", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_transient_\(http.statusCode)"])
+                } else {
+                    throw NSError(domain: "MusicVideoRepository", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_failed_\(http.statusCode)"])
+                }
+            } catch {
+                lastError = error
+            }
+            // Backoff with jitter
+            let baseMs = 300 * Int(pow(2.0, Double(attempt)))
+            let jitter = Int.random(in: 0..<(baseMs))
+            try? await Task.sleep(nanoseconds: UInt64((baseMs + jitter) * 1_000_000))
         }
+        throw lastError ?? NSError(domain: "MusicVideoRepository", code: -1, userInfo: [NSLocalizedDescriptionKey: "submitLipsync_failed_after_retries"])
     }
 
     func muxAudioVideo(uid: String, projectId: String, storyboardId: String, runId: String) async throws {

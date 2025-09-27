@@ -37,6 +37,7 @@ export const submitLipsync = functions
       if (!uid || !projectId || !storyboardId || !runId) { res.status(400).json({error: "bad_request"}); return; }
 
       const sbRef = db.collection("users").doc(uid).collection("musicVideos").doc(projectId).collection("storyboards").doc(storyboardId);
+      const runRef = db.collection("runs").doc(runId);
       const snap = await sbRef.get();
       const sb = snap.data() || {} as any;
       const activeRunId = sb?.state?.activeRunId;
@@ -93,13 +94,29 @@ export const submitLipsync = functions
       }
 
       const project = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || (process.env.FIREBASE_CONFIG ? JSON.parse(String(process.env.FIREBASE_CONFIG)).projectId : "");
-      const base = `https://us-central1-${project}.cloudfunctions.net`;
-      const webhook = `${base}/onLipsyncWebhook`;
+      // Prefer explicit v2 Cloud Run URL if provided; fallback to legacy path for local/dev
+      const webhook = process.env.LIPSYNC_WEBHOOK_V2_URL || `https://us-central1-${project}.cloudfunctions.net/onLipsyncWebhook`;
 
       const replicate = new Replicate({auth: process.env.REPLICATE_API_TOKEN as string});
+      // Upsert run envelope (single source of truth)
+      await runRef.set({ uid, projectId, storyboardId, state: "submitted", createdAt: FieldValue.serverTimestamp() }, {merge: true});
+      // Upsert canonical storyboard doc (eliminate 404s and allow idempotent writes later)
+      await sbRef.set({
+        finishing: { ...(sb.finishing || {}), storyboardId, runId, status: "submitted", lipsync: { ...(sb?.finishing?.lipsync || {}), status: "running", predictionId: null, outputUrl: null, lastError: null } },
+        updatedAt: FieldValue.serverTimestamp(),
+      }, {merge: true});
+
+      // Basic projectId validation: ensure asset URLs reference the same projectId
+      const pathHasPid = (s: string | null | undefined): boolean => !!s && (s.includes(`/musicVideos/${projectId}/`) || s.includes(`/projects/${projectId}/`) || s.includes(projectId));
+      if (!pathHasPid(masterVideoUrl) || (!audio60Url && !audioNUrl)) {
+        res.status(422).json({error: "mixed_project_ids_or_audio_missing"}); return;
+      }
+      const audioForModel = (N < 60 && audioNUrl) ? audioNUrl : audio60Url;
+      if (!pathHasPid(audioForModel)) { res.status(422).json({error: "mixed_project_ids_audio"}); return; }
+
       const created: any = await (replicate as any).predictions.create({
         model: "sync/lipsync-2-pro",
-        input: { video: masterVideoUrl, audio: (N < 60 && audioNUrl) ? audioNUrl : audio60Url },
+        input: { video: masterVideoUrl, audio: audioForModel },
         // Include metadata so the webhook can address the exact doc with no scans
         metadata: { uid, projectId, storyboardId, runId },
         webhook,
@@ -108,9 +125,10 @@ export const submitLipsync = functions
       });
 
       await sbRef.set({
-        finishing: { ...(sb.finishing || {}), lipsync: { status: "running", predictionId: created?.id || null, outputUrl: null, lastError: null } },
+        finishing: { ...(sb.finishing || {}), storyboardId, runId, lipsync: { status: "running", predictionId: created?.id || null, outputUrl: null, lastError: null } },
         updatedAt: FieldValue.serverTimestamp(),
       }, {merge: true});
+      await runRef.set({ predictionId: created?.id || null }, {merge: true});
 
       res.status(200).json({ok: true, predictionId: created?.id || null});
     } catch (e: any) {

@@ -102,37 +102,22 @@ struct AdGenChoiceView: View {
         }
     }
 
-    private func openComposer(initial: UIImage?, intro: AdIntroContent = .stories) {
-        let view = CustomCameraView(presentEditorOnSend: presentEditorOnSend, initialImage: initial, intro: intro)
-        let host = UIHostingController(rootView: view)
-        host.modalPresentationStyle = .overFullScreen
-        UIApplication.shared.topMostViewController()?.present(host, animated: true)
-    }
-
     private func openCreateOriginalCharacter() {
         let host = UIHostingController(rootView: CreateOriginalCharacterView())
-        host.modalPresentationStyle = .overFullScreen
+        host.modalPresentationStyle = UIModalPresentationStyle.overFullScreen
         UIApplication.shared.topMostViewController()?.present(host, animated: true)
     }
 
     
 
+    // Removed camera composer; route to creator flow instead
     private func openComposer(initialNamed name: String) {
-        let img = UIImage(named: name)
-        // Choose intro by name
-        let intro: AdIntroContent
-        switch name {
-        case "Rufus": intro = .rufus
-        case "Cory": intro = .cory
-        case "Coca": intro = .stories
-        default: intro = .stories
-        }
-        openComposer(initial: img, intro: intro)
+        openCreateOriginalCharacter()
     }
 
     private func openMemeverse() {
         let host = UIHostingController(rootView: MemeverseArchetypesView(presentEditorOnSend: presentEditorOnSend))
-        host.modalPresentationStyle = .overFullScreen
+        host.modalPresentationStyle = UIModalPresentationStyle.overFullScreen
         UIApplication.shared.topMostViewController()?.present(host, animated: true)
     }
 }
@@ -372,37 +357,22 @@ struct MemeverseArchetypesView: View {
         }
         if supportedIds.contains(canonicalId) {
             let host = UIHostingController(rootView: CharacterComposerView(characterId: canonicalId))
-            host.modalPresentationStyle = .overFullScreen
+            host.modalPresentationStyle = UIModalPresentationStyle.overFullScreen
             UIApplication.shared.topMostViewController()?.present(host, animated: true)
         } else {
-            openComposer(initialNamed: assetName)
+            // Fallback: open the creator flow
+            let host = UIHostingController(rootView: CreateOriginalCharacterView())
+            host.modalPresentationStyle = UIModalPresentationStyle.overFullScreen
+            UIApplication.shared.topMostViewController()?.present(host, animated: true)
         }
     }
 
     private func openUserCharacter(id: String) {
         let host = UIHostingController(rootView: CharacterComposerView(characterId: id))
-        host.modalPresentationStyle = .overFullScreen
+        host.modalPresentationStyle = UIModalPresentationStyle.overFullScreen
         UIApplication.shared.topMostViewController()?.present(host, animated: true)
     }
-
-    private func openComposer(initial: UIImage?, intro: AdIntroContent = .stories) {
-        let view = CustomCameraView(presentEditorOnSend: presentEditorOnSend, initialImage: initial, intro: intro)
-        let host = UIHostingController(rootView: view)
-        host.modalPresentationStyle = .overFullScreen
-        UIApplication.shared.topMostViewController()?.present(host, animated: true)
-    }
-
-    private func openComposer(initialNamed name: String) {
-        let img = UIImage(named: name)
-        let intro: AdIntroContent
-        switch name {
-        case "Rufus": intro = .rufus
-        case "Cory": intro = .cory
-        case "Coca": intro = .stories
-        default: intro = .scratch
-        }
-        openComposer(initial: img, intro: intro)
-    }
+    
 
     private struct Character: Hashable {
         let displayName: String

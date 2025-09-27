@@ -2,6 +2,7 @@
 import * as functions from "firebase-functions/v1";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getFirestore, FieldValue} from "firebase-admin/firestore";
+import {getMessaging} from "firebase-admin/messaging";
 import {getStorage} from "firebase-admin/storage";
 import ffmpegPath from "ffmpeg-static";
 import {spawn} from "child_process";
@@ -71,6 +72,25 @@ export const muxAudioVideo = functions
         finishing: { ...(sb.finishing || {}), mux: { status: "done", finalUrl: signedUrl, lastError: null } },
         updatedAt: FieldValue.serverTimestamp(),
       }, {merge: true});
+
+      // Background push nudge: notify user topic to wake iOS for a quick fetch
+      try {
+        const topic = `user_${uid}`;
+        await getMessaging().send({
+          topic,
+          apns: {
+            headers: {
+              "apns-push-type": "background",
+              "apns-priority": "5",
+              "apns-collapse-id": runId,
+            },
+            payload: { aps: { "content-available": 1 } },
+          },
+          data: { uid, projectId, storyboardId, runId },
+        });
+      } catch (e:any) {
+        functions.logger.warn("muxAudioVideo.push_warn", {message: String(e?.message || e)});
+      }
 
       res.status(200).json({ok: true, finalUrl: signedUrl});
     } catch (e: any) {

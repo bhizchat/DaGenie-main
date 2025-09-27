@@ -40,6 +40,10 @@ final class PushNotificationManager: NSObject, ObservableObject {
     private func uploadFCMToken(_ token: String) {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         db.collection("users").document(uid).setData(["fcmToken": token], merge: true)
+        // Subscribe device to user topic for background nudges during long runs
+        Messaging.messaging().subscribe(toTopic: "user_\(uid)") { err in
+            print(err == nil ? "[Push] sub ok" : "[Push] sub err \(String(describing: err))")
+        }
     }
 }
 
@@ -57,6 +61,44 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken
+    }
+
+    // Best-effort background fetch on silent push to nudge a server-truth read
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable : Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // Only react in background; foreground is handled by live observers
+        guard application.applicationState != .active else { completionHandler(.noData); return }
+        guard let uid = Auth.auth().currentUser?.uid else { completionHandler(.noData); return }
+        let pid = ProjectsRepository.shared.projects.first?.id
+        let sid = RunManager.shared.currentStoryboardId ?? "default"
+        guard let projectId = pid else { completionHandler(.noData); return }
+
+        let ref = Firestore.firestore()
+            .collection("users").document(uid)
+            .collection("musicVideos").document(projectId)
+            .collection("storyboards").document(sid)
+
+        Task.detached(priority: .background) {
+            do {
+                print("[Push] fetch.server_check path=\(ref.path) sid=\(sid)")
+                _ = try await ref.getDocument(source: .server) // bypass cache; warms state
+                // Optional success log to confirm the run
+                if let d = try? await ref.getDocument(source: .server).data(),
+                   let f = d["finishing"] as? [String: Any] {
+                    let mux = ((f["mux"] as? [String: Any])?["finalUrl"] as? String) ?? ""
+                    let lip = ((f["lipsync"] as? [String: Any])?["outputUrl"] as? String) ?? ""
+                    if !(mux.isEmpty && lip.isEmpty) {
+                        let s = mux.isEmpty ? lip : mux
+                        print("[Push] fetch.server_success url_short=\(s.prefix(64)) path=\(ref.path)")
+                    }
+                }
+                completionHandler(.newData)
+            } catch {
+                print("[Push] background_fetch_error \(error.localizedDescription) path=\(ref.path)")
+                completionHandler(.failed)
+            }
+        }
     }
 }
 

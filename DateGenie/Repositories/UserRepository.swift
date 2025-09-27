@@ -1,7 +1,7 @@
 //  UserRepository.swift
 //  DateGenie
 //
-//  Persists HuntPrefs to Firestore and caches via AppStorage.
+//  User profile repository
 //
 import Foundation
 import FirebaseAuth
@@ -13,11 +13,11 @@ final class UserRepository: ObservableObject {
     static let shared = UserRepository()
     private init() {}
 
-    @AppStorage("cachedPrefs") private var cachedPrefsData: Data = Data()
     @AppStorage("cachedProfile") private var cachedProfileData: Data = Data()
     // Local cache path for the user's processed transparent logo PNG (Documents URL path)
     @AppStorage("cachedBrandLogoPath") private var cachedBrandLogoPath: String = ""
-    @Published private(set) var prefs: HuntPrefs = HuntPrefs()
+    // Removed HuntPrefs; keep a simple placeholder for compile compatibility
+    @Published private(set) var prefsLoaded: Bool = false
 
     private let db = Firestore.firestore()
     private var listener: ListenerRegistration?
@@ -122,30 +122,12 @@ final class UserRepository: ObservableObject {
     }
 
     func loadPrefs() async throws {
-        // 1. Use AppStorage cache if available (offline support)
-        if let decoded = try? JSONDecoder().decode(HuntPrefs.self, from: cachedPrefsData) {
-            self.prefs = decoded
-        }
-
-        // 2. Try network fetch
-        guard let uid = Auth.auth().currentUser?.uid else { return }
-        let doc = try await db.collection("users").document(uid).getDocument()
-        if let remotePrefs = try? doc.data(as: HuntPrefs.self) {
-            self.prefs = remotePrefs
-            cache(prefs: remotePrefs)
-        }
+        // Preferences feature removed. Mark as loaded for callers that awaited this.
+        self.prefsLoaded = true
     }
 
-    func updatePrefs(_ newPrefs: HuntPrefs) async throws {
-        self.prefs = newPrefs
-        cache(prefs: newPrefs)
-        guard let uid = Auth.auth().currentUser?.uid else { return }
-        try await db.collection("users").document(uid).setData(from: newPrefs, merge: true)
-    }
+    // Preferences feature removed; keep a no-op for compatibility
+    func updatePrefs() async throws { /* no-op */ }
 
-    private func cache(prefs: HuntPrefs) {
-        if let data = try? JSONEncoder().encode(prefs) {
-            cachedPrefsData = data
-        }
-    }
+    private func cachePrefsPlaceholder() { /* no-op */ }
 }

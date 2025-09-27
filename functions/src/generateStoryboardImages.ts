@@ -3,12 +3,22 @@ import axios from "axios";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getStorage} from "firebase-admin/storage";
 import crypto from "crypto";
-import {buildRapFramePrompt} from "./storyboardPromptBuilder";
+import {buildRapFramePrompt} from "./storyboardPromptBuilder.js";
 import sharp from "sharp";
 import Replicate from "replicate";
 
+function defaultBucketName(): string {
+  const cfg = process.env.FIREBASE_CONFIG ? JSON.parse(String(process.env.FIREBASE_CONFIG)) : undefined as any;
+  const fromCfg: string | undefined = cfg?.storageBucket;
+  const fromEnv: string | undefined = process.env.FIREBASE_STORAGE_BUCKET as (string | undefined);
+  const proj = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
+  const fallback: string | undefined = proj ? `${proj}.appspot.com` : undefined;
+  return String(fromEnv || fromCfg || fallback || "").trim();
+}
+
 if (!getApps().length) {
-  initializeApp({credential: applicationDefault()});
+  const bucket = defaultBucketName();
+  initializeApp(bucket ? {credential: applicationDefault(), storageBucket: bucket} : {credential: applicationDefault()});
 }
 const storage = getStorage();
 
@@ -33,7 +43,7 @@ export const generateStoryboardImages = functions
         project: process.env.GOOGLE_CLOUD_PROJECT,
         service: process.env.K_SERVICE,
         revision: process.env.K_REVISION,
-        defaultBucket: storage.bucket().name,
+        defaultBucket: defaultBucketName(),
       });
       console.log("[SBIMG] req", {id: requestId, scenes: Array.isArray(scenes) ? scenes.length : null, refs: Array.isArray(referenceImageUrls) ? referenceImageUrls.length : null, style, character, provider});
       const apiKey = (process.env.GEMINI_API_KEY as string) || (req.get("x-api-key") as string) || "";
@@ -233,7 +243,7 @@ export const generateStoryboardImages = functions
               buf = Buffer.from(output as any);
             }
             if (!buf) throw new Error("replicate_no_output");
-            const bucket = storage.bucket();
+            const bucket = storage.bucket(defaultBucketName());
             const objectPath = `storyboards/${Date.now()}_${index}.png`;
             const file = bucket.file(objectPath);
             const tokenUp: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -295,7 +305,7 @@ export const generateStoryboardImages = functions
               buf = Buffer.from(dl.data as any);
             }
             if (!buf) throw new Error("replicate_no_output");
-            const bucket = storage.bucket();
+            const bucket = storage.bucket(defaultBucketName());
             const objectPath = `storyboards/${Date.now()}_${index}.png`;
             const file = bucket.file(objectPath);
             const tokenUp: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;

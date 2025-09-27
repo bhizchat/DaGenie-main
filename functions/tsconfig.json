@@ -1,20 +1,25 @@
 {
   "compilerOptions": {
-    "module": "NodeNext",
-    "esModuleInterop": true,
-    "moduleResolution": "nodenext",
-    "noImplicitReturns": true,
-    "noUnusedLocals": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Node",
     "outDir": "lib",
-    "sourceMap": true,
+    "rootDir": "src",
     "strict": true,
-    "isolatedModules": true,
-    "skipLibCheck": true,
-    "types": ["node", "jest"],
-    "target": "es2017"
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true
   },
-  "compileOnSave": true,
   "include": [
-    "src"
+    "src/index.ts",
+    "src/saveStoryboardSet.ts",
+    "src/startStoryboardRun.ts",
+    "src/enqueueSceneVideo.ts",
+    "src/runSceneVideo.ts",
+    "src/wanI2VFast.ts",
+    "src/utils/storageHelpers.ts",
+    "src/musicVideo/generateFluxAvatar.ts",
+    "src/musicVideo/generateMusicStoryboard.ts"
   ]
 }

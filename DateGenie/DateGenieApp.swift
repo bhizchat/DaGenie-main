@@ -73,7 +73,6 @@ struct DateGenieApp: App {
     }
 
     @StateObject private var authVM = AuthViewModel()
-    @StateObject private var huntsRepo = HuntsRepository.shared
     @StateObject private var userRepo  = UserRepository.shared
     
     var body: some Scene {
@@ -88,7 +87,6 @@ struct DateGenieApp: App {
                 }
             }
             .environmentObject(authVM)
-            .environmentObject(huntsRepo)
             .environmentObject(userRepo)
             .accentColor(.accentPrimary)
             // Configure analytics once we know the user

@@ -60,15 +60,6 @@ struct TimelineContainer: View {
                           leadingInset: CGFloat,
                           geoWidth: CGFloat) -> some View {
         ZStack(alignment: .leading) {
-            if state.selectedClipId == clip.id && !state.isReorderMode {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.white, lineWidth: 3)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
-                    .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
-                    .offset(x: 0, y: 0)
-                    .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
-                    .zIndex(-1)
-            }
             Rectangle()
                 .fill(Color.gray.opacity(0.15))
                 .frame(width: clipWidth, height: TimelineStyle.videoRowHeight)
@@ -190,7 +181,7 @@ struct TimelineContainer: View {
     private let rulerDownshift: CGFloat = 100
     private let rowsDownshift: CGFloat = 100
     private let additionalDownshift: CGFloat = 55
-    private let timeCounterFineNudge: CGFloat = -7 // move up by 7pt
+    private let timeCounterFineNudge: CGFloat = -17 // move up by ~17pt total (~10pt more)
 
     // Config
     private let minPPS: CGFloat = 20

@@ -34,7 +34,7 @@ enum FeatureFlags {
     static var disableProjectSaving: Bool {
         get {
             if let v = UserDefaults.standard.object(forKey: "ff_disableProjectSaving") as? Bool { return v }
-            return true
+            return false
         }
         set { UserDefaults.standard.set(newValue, forKey: "ff_disableProjectSaving") }
     }

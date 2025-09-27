@@ -162,16 +162,10 @@ struct GenerateView: View {
                     Text(errorMsg ?? "Unknown error")
                 }
             }
-            .sheet(isPresented: $showSaved) { SavedDatesView().environmentObject(savedPlansVM) }
+            // SavedDatesView removed with legacy flow
+            .sheet(isPresented: $showSaved) { EmptyView() }
                 .sheet(isPresented: $showPaywall) { PaywallView() }
             .onAppear { UIScrollView.appearance().delaysContentTouches = false }
-                .onReceive(NotificationCenter.default.publisher(for: .pointsAwarded)) { _ in
-                    SoundPlayer.shared.playSuccess()
-                    withAnimation { showMenu = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now()+1.5) {
-                        withAnimation { showMenu = false }
-                    }
-                }
             if isLoading {
                 LoadingBarOverlay(progress: $progress)
             } else if showDone {
@@ -595,16 +589,7 @@ struct PlanCardView: View {
                     .disabled(UserDefaults.standard.bool(forKey: "awarded_\(plan.id)"))
                 }
                 .padding(.top, 8)
-                .sheet(isPresented: $showTutorial) {
-                    PointsTutorialView {
-                        hasSeenPointsTutorial = true
-                        showTutorial = false
-                        showCamera = true
-                    }
-                }
-                .fullScreenCover(isPresented: $showCamera) {
-                    PointsPhotoCaptureView(points: Int((plan.scores?.romance ?? 0).rounded()), planId: plan.id, planTitle: plan.title)
-                }
+                // Legacy tutorial/camera flow removed
             }
             .padding()
             

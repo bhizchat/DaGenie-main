@@ -43,9 +43,19 @@ export const onLipsyncWebhook = functions
       if (!predId) { res.status(400).json({error: "bad_request"}); return; }
 
       const meta = body?.metadata || {};
-      const uid: string | undefined = meta.uid;
-      const projectId: string | undefined = meta.projectId;
-      const storyboardId: string | undefined = meta.storyboardId;
+      const envRef = meta?.runId ? db.collection("runs").doc(String(meta.runId)) : null;
+      let uid: string | undefined = meta.uid;
+      let projectId: string | undefined = meta.projectId;
+      let storyboardId: string | undefined = meta.storyboardId;
+      if (envRef) {
+        try {
+          const envSnap = await envRef.get();
+          const env = (envSnap.data() || {}) as any;
+          uid = env?.uid || uid;
+          projectId = env?.projectId || projectId;
+          storyboardId = env?.storyboardId || storyboardId;
+        } catch {/* envelope optional */}
+      }
       const outUrl = Array.isArray(output) ? output[0] : output;
       const ok = status === "succeeded";
 
@@ -54,6 +64,10 @@ export const onLipsyncWebhook = functions
         const sbRef = db.collection("users").doc(uid).collection("musicVideos").doc(projectId).collection("storyboards").doc(storyboardId);
         const snap = await sbRef.get();
         const cur = (snap.data() || {}) as any;
+        const recordedSid = cur?.finishing?.storyboardId;
+        if (recordedSid && recordedSid !== storyboardId) {
+          functions.logger.warn("sid_mismatch", { recordedSid, storyboardId, runId: meta.runId, projectId, uid });
+        }
         const curPred = cur?.finishing?.lipsync?.predictionId || null;
         const curStatus = cur?.finishing?.lipsync?.status || "";
         // Idempotency: ignore mismatched or already-done predictions
@@ -88,6 +102,25 @@ export const onLipsyncWebhook = functions
             await sbRef.set({ finishing: { mux: { status: "idle", lastError: String(e?.message || e) } } }, {merge: true}).catch(()=>{});
           }
         }
+
+        // Optional mirror for legacy project listeners
+        try {
+          if (uid && projectId) {
+            const projRef = db.doc(`users/${uid}/projects/${projectId}`);
+            if (ok && outUrl) {
+              await projRef.set({
+                finalVideoUrl: String(Array.isArray(output) ? output[0] : output || ""),
+                finishing: { status: "done" },
+                updatedAt: FieldValue.serverTimestamp(),
+              }, {merge: true});
+            } else if (!ok) {
+              await projRef.set({
+                finishing: { status: "failed" },
+                updatedAt: FieldValue.serverTimestamp(),
+              }, {merge: true});
+            }
+          }
+        } catch {/* best-effort mirror */}
       } else {
         // Fallback: find by predictionId scan
         const usersSnap = await db.collection("users").get();

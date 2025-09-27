@@ -90,7 +90,7 @@ struct MusicVideoStoryboardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     bullet("Your avatar is the star of your music video and appears in every scene.")
                     bullet("Tap the avatar to customize: change your fit or add accessories (chains, durag, glasses).")
-                    bullet("Edits apply throughout music video")
+                    bullet("Edits apply throughout music video, if you don't like you avatar change your reference photo")
                 }
                 .padding(.horizontal, 24)
 

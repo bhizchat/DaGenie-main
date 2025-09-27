@@ -2,13 +2,20 @@
 import * as functions from "firebase-functions/v1";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getStorage} from "firebase-admin/storage";
-import {gsToFetchableUrl} from "../utils/storageHelpers";
+import {gsToFetchableUrl} from "../utils/storageHelpers.js";
 import Replicate from "replicate";
 import axios from "axios";
 import crypto from "crypto";
 
 if (!getApps().length) { initializeApp({credential: applicationDefault()}); }
 const storage = getStorage();
+function defaultBucketName(): string {
+  const cfg = process.env.FIREBASE_CONFIG ? JSON.parse(String(process.env.FIREBASE_CONFIG)) : undefined as any;
+  const fromCfg: string | undefined = cfg?.storageBucket;
+  const fromProj: string | undefined = (process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT) ? `${process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT}.appspot.com` : undefined;
+  const fromEnv: string | undefined = process.env.FIREBASE_STORAGE_BUCKET as string | undefined;
+  return String(fromEnv || fromCfg || fromProj || "").trim();
+}
 
 /**
  * Generate an avatar from a reference image using a Flux Kontext model via Replicate.
@@ -41,7 +48,7 @@ export const generateFluxAvatar = functions
         const mime = (m && m[1]) || "image/png";
         const b64 = (m && m[2]) || "";
         const buf = Buffer.from(b64, "base64");
-        const bucket = storage.bucket();
+        const bucket = storage.bucket(defaultBucketName());
         const objectPath = `flux_inputs/${Date.now()}_${Math.random().toString(36).slice(2)}.${mime.includes("jpeg") ? "jpg" : "png"}`;
         const file = bucket.file(objectPath);
         const tokenMeta: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -83,7 +90,7 @@ export const generateFluxAvatar = functions
 
       // Download to Storage
       const r = await axios.get<ArrayBuffer>(replicateUrl, {responseType: "arraybuffer", timeout: 300000});
-      const bucket = storage.bucket();
+      const bucket = storage.bucket(defaultBucketName());
       const objectPath = `flux_avatars/${Date.now()}_${Math.random().toString(36).slice(2)}.png`;
       const file = bucket.file(objectPath);
       const tokenMeta: string = (crypto as any).randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;

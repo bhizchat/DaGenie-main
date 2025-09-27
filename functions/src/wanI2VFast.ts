@@ -5,7 +5,7 @@ import Replicate from "replicate";
 import crypto from "crypto";
 import {getApps, initializeApp, applicationDefault} from "firebase-admin/app";
 import {getStorage} from "firebase-admin/storage";
-import {gsToFetchableUrl} from "./utils/storageHelpers";
+import {gsToFetchableUrl} from "./utils/storageHelpers.js";
 
 if (!getApps().length) {
   initializeApp({credential: applicationDefault()});

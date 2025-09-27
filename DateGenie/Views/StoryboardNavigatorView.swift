@@ -355,6 +355,8 @@ struct StoryboardNavigatorView: View {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             isGenerating = true
             do {
+                // Run identifier used to scope notifications/editor gating
+                let runId = UUID().uuidString
                 // Ensure the latest storyboard is persisted before enqueueing
                 if !FeatureFlags.disableProjectSaving { await persistStoryboard(reason: "single_clip_pre_enqueue") }
                 if !FeatureFlags.disableProjectSaving,
@@ -362,9 +364,13 @@ struct StoryboardNavigatorView: View {
                    let sbId = storyboardId,
                    let pid = projectId {
                     let sceneId = String(format: "%04d", plan.scenes[index].index)
-                    let runId = UUID().uuidString
                     try? await StoryboardsRepository.shared.startStoryboardRun(userId: uid, projectId: pid, storyboardId: sbId, runId: runId)
                     try await StoryboardsRepository.shared.enqueueSceneVideo(userId: uid, projectId: pid, storyboardId: sbId, sceneId: sceneId, provider: "wan", requestId: UUID().uuidString, delaySeconds: nil, nameSuffix: nil, runId: runId)
+                    // Log run begin and notify editor for single-clip path
+                    let plannedCount = 1
+                    print("[Navigator] run_begin runId=\(runId) plannedCount=\(plannedCount) storyboardId=\(sbId) projectId=\(pid)")
+                 NotificationCenter.default.post(name: .AdGenBegin, object: nil, userInfo: ["runId": runId, "expected": plannedCount])
+                 print("[Navigator] notify AdGenBegin runId=\(runId) expected=\(plannedCount)")
                     isGenerating = false
                     return
                 }
@@ -432,7 +438,14 @@ struct StoryboardNavigatorView: View {
                                         }
                                     }
                                 }
-                                NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: ["url": u])
+                                // Legacy path: derive a stable pseudo sceneId from URL if missing; include empty runId
+                                NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: [
+                                    "url": u,
+                                    "sceneId": (u.absoluteString),
+                                    "runId": ""
+                                ])
+                                let urlShort = String(u.absoluteString.prefix(48))
+                                print("[Navigator] notify AdGenComplete runId= sceneId=\(u.absoluteString) url_short=\(urlShort)")
                             }
                         }
                     }
@@ -441,11 +454,13 @@ struct StoryboardNavigatorView: View {
                 // Immediately open the Capcut-style editor in generating state (single instance)
                 if let vc = UIApplication.shared.topMostViewController() {
                     if let _ = vc.presentedViewController as? UIHostingController<CapcutEditorView> {
-                        NotificationCenter.default.post(name: .AdGenBegin, object: nil)
+                        NotificationCenter.default.post(name: .AdGenBegin, object: nil, userInfo: ["runId": runId, "expected": 1])
+                        print("[Navigator] notify AdGenBegin runId=\(runId) expected=1")
                     } else {
-                        let host = UIHostingController(rootView: CapcutEditorView(url: URL(fileURLWithPath: "/dev/null"), initialGenerating: true))
+                        let host = UIHostingController(rootView: CapcutEditorView(url: URL(fileURLWithPath: "/dev/null"), initialGenerating: true, initialRunId: runId, initialExpected: 1))
                         vc.present(host, animated: true) {
-                            NotificationCenter.default.post(name: .AdGenBegin, object: nil)
+                            NotificationCenter.default.post(name: .AdGenBegin, object: nil, userInfo: ["runId": runId, "expected": 1])
+                            print("[Navigator] notify AdGenBegin runId=\(runId) expected=1")
                         }
                     }
                 }
@@ -478,6 +493,8 @@ struct StoryboardNavigatorView: View {
                 // Start fenced run and cancel stale work server-side
                 try? await StoryboardsRepository.shared.startStoryboardRun(userId: uid, projectId: pid, storyboardId: sbId, runId: runId)
                 let scenesWithImages = plan.scenes.enumerated().filter { !($0.element.imageUrl ?? "").isEmpty }
+                let plannedCount = scenesWithImages.count
+                print("[Navigator] run_begin runId=\(runId) plannedCount=\(plannedCount) storyboardId=\(sbId) projectId=\(pid)")
                 for (iTuple, pair) in scenesWithImages.enumerated() {
                     let i = iTuple
                     let s = pair.element
@@ -502,6 +519,9 @@ struct StoryboardNavigatorView: View {
                     let host = UIHostingController(rootView: CapcutEditorView(url: URL(fileURLWithPath: "/dev/null"), initialGenerating: false))
                     vc.present(host, animated: true)
                 }
+
+                 NotificationCenter.default.post(name: .AdGenBegin, object: nil, userInfo: ["runId": runId, "expected": plannedCount])
+                print("[Navigator] notify AdGenBegin runId=\(runId) expected=\(plannedCount)")
 
                 // Start listening for scene completion updates and append clips as they arrive
                 startScenesListener(uid: uid, projectId: pid, storyboardId: sbId)
@@ -560,6 +580,18 @@ struct StoryboardNavigatorView: View {
                 let data = doc.data()
                 let video = data["video"] as? [String: Any]
                 let status = (video?["status"] as? String) ?? (data["videoStatus"] as? String) ?? ""
+                if status.lowercased() == "error" || status.lowercased() == "failed" {
+                    let runField = (video?["runId"] as? String) ?? ""
+                    let reason = (video?["error"] as? String) ?? (data["error"] as? String) ?? "unknown"
+                    print("[Navigator] scene_failed runId=\(runField) sceneId=\(doc.documentID) reason=\(reason)")
+                    NotificationCenter.default.post(name: .AdGenFailed, object: nil, userInfo: [
+                        "runId": runField,
+                        "sceneId": doc.documentID,
+                        "reason": reason
+                    ])
+                    print("[Navigator] notify AdGenFailed runId=\(runField) sceneId=\(doc.documentID) reason=\(reason)")
+                    continue
+                }
                 guard status.lowercased() == "done" else { continue }
                 // Fence: only accept current run clips if available
                 if let vRun = video?["runId"] as? String,
@@ -575,7 +607,16 @@ struct StoryboardNavigatorView: View {
                                     processedSceneIds.insert(doc.documentID)
                                     let doneCount = processedSceneIds.count
                                     let totalCount = plan.scenes.count
-                                    NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: ["url": url, "doneCount": doneCount, "totalCount": totalCount])
+                                    let urlShort = String(url.absoluteString.prefix(48))
+                                    print("[Navigator] scene_done runId=\(vRun) sceneId=\(doc.documentID) url_short=\(urlShort) doneCount=\(doneCount) totalCount=\(totalCount)")
+                                    NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: [
+                                        "url": url,
+                                        "sceneId": doc.documentID,
+                                        "runId": vRun,
+                                        "doneCount": doneCount,
+                                        "totalCount": totalCount
+                                    ])
+                                    print("[Navigator] notify AdGenComplete runId=\(vRun) sceneId=\(doc.documentID) url_short=\(urlShort) doneCount=\(doneCount) totalCount=\(totalCount)")
                                 }
                             }
                         }
@@ -587,7 +628,17 @@ struct StoryboardNavigatorView: View {
                     processedSceneIds.insert(doc.documentID)
                     let doneCount = processedSceneIds.count
                     let totalCount = plan.scenes.count
-                    NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: ["url": url, "doneCount": doneCount, "totalCount": totalCount])
+                    let urlShort = String(url.absoluteString.prefix(48))
+                    let runField = video?["runId"] as? String ?? ""
+                    print("[Navigator] scene_done runId=\(runField) sceneId=\(doc.documentID) url_short=\(urlShort) doneCount=\(doneCount) totalCount=\(totalCount)")
+                    NotificationCenter.default.post(name: .AdGenComplete, object: nil, userInfo: [
+                        "url": url,
+                        "sceneId": doc.documentID,
+                        "runId": runField,
+                        "doneCount": doneCount,
+                        "totalCount": totalCount
+                    ])
+                    print("[Navigator] notify AdGenComplete runId=\(runField) sceneId=\(doc.documentID) url_short=\(urlShort) doneCount=\(doneCount) totalCount=\(totalCount)")
                 }
             }
         }

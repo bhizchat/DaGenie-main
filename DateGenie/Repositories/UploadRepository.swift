@@ -16,6 +16,16 @@ final class UploadRepository: ObservableObject {
 
     @Published var isUploading: Bool = false
 
+    /// Upload a local file to Firebase Storage at the given path and return its HTTPS URL
+    func uploadFile(localURL: URL, to objectPath: String, contentType: String) async throws -> URL {
+        let storage = Storage.storage()
+        let ref = storage.reference(withPath: objectPath)
+        let metadata = StorageMetadata(); metadata.contentType = contentType
+        _ = try await ref.putFileAsync(from: localURL, metadata: metadata)
+        let url = try await ref.downloadURL()
+        return url
+    }
+
     /// Compresses to max 1080px and uploads to Firebase Storage. Returns an id and public URL.
     func uploadUserReference(_ image: UIImage) async throws -> UploadedImage {
         guard let uid = Auth.auth().currentUser?.uid else { throw NSError(domain: "Upload", code: -1, userInfo: [NSLocalizedDescriptionKey: "No user"]) }

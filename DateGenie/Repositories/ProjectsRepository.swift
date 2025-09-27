@@ -94,6 +94,8 @@ final class ProjectsRepository: ObservableObject {
     func attachVideoURL(userId: String, projectId: String, remoteURL: URL) async {
         if FeatureFlags.disableProjectSaving { return }
         do {
+            let short = remoteURL.absoluteString.prefix(48)
+            print("[Projects] attachVideo.start path=videoURL url_short=\(short)")
             try await db.collection("users").document(userId).collection("projects").document(projectId).updateData([
                 "videoURL": remoteURL.absoluteString
             ])
@@ -102,8 +104,17 @@ final class ProjectsRepository: ObservableObject {
                     self.projects[i].videoURL = remoteURL
                 }
             }
+            print("[Projects] attachVideo.done path=videoURL url_short=\(short)")
         } catch {
             print("[ProjectsRepository] attachVideoURL error: \(error)")
+        }
+    }
+
+    // MARK: - Local mirror updates (no Firestore write)
+    @MainActor
+    func setLocalVideoURL(projectId: String, url: URL) {
+        if let i = self.projects.firstIndex(where: { $0.id == projectId }) {
+            self.projects[i].videoURL = url
         }
     }
 
@@ -170,11 +181,63 @@ final class ProjectsRepository: ObservableObject {
         let path = "users/\(userId)/projects/\(projectId)/video.mp4"
         let ref = storage.reference(withPath: path)
         do {
+            print("[Projects] attachVideo.start path=\(path) url_short=")
             _ = try await ref.putFileAsync(from: localURL)
             let url = try await ref.downloadURL()
             try await db.collection("users").document(userId).collection("projects").document(projectId).updateData(["videoURL": url.absoluteString])
             await MainActor.run { if let i = self.projects.firstIndex(where: { $0.id == projectId }) { self.projects[i].videoURL = url } }
+            let short = url.absoluteString.prefix(48)
+            print("[Projects] attachVideo.done path=\(path) url_short=\(short)")
         } catch { print("[ProjectsRepository] attachVideo error: \(error)") }
+    }
+
+    // Upload and return HTTPS download URL immediately; Firestore write is best-effort
+    func attachVideoAndGetURL(userId: String, projectId: String, localURL: URL) async throws -> URL {
+        print("[Projects] attachVideo.config disableProjectSaving=\(FeatureFlags.disableProjectSaving)")
+        if FeatureFlags.disableProjectSaving {
+            throw NSError(domain: "FeatureFlags", code: 1001, userInfo: [NSLocalizedDescriptionKey: "Project saving disabled"])
+        }
+        let path = "users/\(userId)/projects/\(projectId)/video.mp4"
+        let ref = storage.reference(withPath: path)
+        // Optional metadata for accurate content type
+        let meta = StorageMetadata()
+        meta.contentType = "video/mp4"
+        // Log size
+        let size = (try? FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? NSNumber)?.int64Value ?? -1
+        print("[Projects] attachVideo.start path=\(path) sizeBytes=\(size)")
+        do {
+            _ = try await ref.putFileAsync(from: localURL, metadata: meta)
+        } catch {
+            let ns = error as NSError
+            print("[ProjectsRepository] upload error domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
+            throw error
+        }
+        // Download URL with retry to tolerate transient connectivity
+        var url: URL? = nil
+        var lastErr: Error? = nil
+        for attempt in 1...3 {
+            do {
+                let u = try await ref.downloadURL()
+                if !u.absoluteString.isEmpty { url = u; break }
+            } catch { lastErr = error }
+            try? await Task.sleep(nanoseconds: UInt64(250_000_000 * attempt))
+        }
+        guard let url = url else {
+            let msg = (lastErr as NSError?)?.localizedDescription ?? "unknown"
+            print("[ProjectsRepository] downloadURL failed after retries: \(msg)")
+            throw NSError(domain: "ProjectsRepository", code: -2, userInfo: [NSLocalizedDescriptionKey: "downloadURL_failed"])
+        }
+        // Fire-and-forget Firestore update; do not block submission on visibility
+        Task {
+            do {
+                try await db.collection("users").document(userId).collection("projects").document(projectId).updateData(["videoURL": url.absoluteString])
+            } catch {
+                print("[ProjectsRepository] attachVideo Firestore update error: \(error)")
+            }
+        }
+        await MainActor.run { if let i = self.projects.firstIndex(where: { $0.id == projectId }) { self.projects[i].videoURL = url } }
+        print("[Projects] attachVideo.done path=\(path) url_short=\(url.absoluteString.prefix(48))")
+        return url
     }
 
     // Persist storyboard linkage so editor can continue with "+"

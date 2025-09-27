@@ -10,50 +10,20 @@ final class HighlightReelBuilder {
     static let shared = HighlightReelBuilder()
     private init() {}
 
-    // Very lightweight MVP: concatenates media in order (videos only for reliability);
-    // Downloads remote videos to local temp files before composition.
-    func buildReel(level: Int, runId: String, completion: @escaping (Result<URL, Error>) -> Void) {
-        JourneyPersistence.shared.loadAllMediaForRun(level: level, runId: runId) { items in
-            let medias: [CapturedMedia] = items.map { item in
-                CapturedMedia(localURL: item.remoteURL, type: item.type, caption: nil, remoteURL: item.remoteURL, uploadProgress: 1.0)
-            }
-            guard !medias.isEmpty else {
-                print("[HighlightReelBuilder] no media found for run; aborting")
-                completion(.failure(HighlightReelError.noClips)); return
-            }
-            let videos = medias.filter { $0.type == .video }
-            guard !videos.isEmpty else {
-                print("[HighlightReelBuilder] photos-only not supported in MVP; require >=1 video")
-                completion(.failure(HighlightReelError.noVideos)); return
-            }
-            // Download to local temp files first to avoid AVURLAsset HTTP duration quirks
-            let group = DispatchGroup()
-            var localVideoURLs: [URL] = []
-            let fm = FileManager.default
-            for (idx, clip) in videos.enumerated() {
-                guard let remote = clip.remoteURL else { continue }
-                group.enter()
-                let task = URLSession.shared.downloadTask(with: remote) { tempURL, _, err in
-                    defer { group.leave() }
-                    if let err = err { print("[HighlightReelBuilder] download error idx=\(idx): \(err)"); return }
-                    guard let t = tempURL else { print("[HighlightReelBuilder] download returned nil tempURL idx=\(idx)"); return }
-                    let dst = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dg_clip_\(UUID().uuidString).mp4")
-                    do {
-                        if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
-                        try fm.copyItem(at: t, to: dst)
-                        localVideoURLs.append(dst)
-                    } catch { print("[HighlightReelBuilder] copy temp -> dst failed: \(error)") }
-                }
-                task.resume()
-            }
-            group.notify(queue: .main) {
-                guard !localVideoURLs.isEmpty else {
-                    print("[HighlightReelBuilder] no local videos downloaded; aborting")
-                    completion(.failure(HighlightReelError.noVideos)); return
-                }
-                self.exportLocalVideos(from: localVideoURLs, completion: completion)
-            }
+    // Lightweight composer: concatenate provided local video URLs in order.
+    // Use this overload in place of the legacy JourneyPersistence-backed variant.
+    func buildReel(fromLocalVideoURLs localVideoURLs: [URL], completion: @escaping (Result<URL, Error>) -> Void) {
+        guard !localVideoURLs.isEmpty else {
+            completion(.failure(HighlightReelError.noVideos)); return
         }
+        self.exportLocalVideos(from: localVideoURLs, completion: completion)
+    }
+
+    // Legacy signature retained for source compatibility; no longer fetches from persistence.
+    // Call the URL-based overload instead.
+    func buildReel(level: Int, runId: String, completion: @escaping (Result<URL, Error>) -> Void) {
+        print("[HighlightReelBuilder] buildReel(level:runId:) deprecated; supply local video URLs explicitly.")
+        completion(.failure(HighlightReelError.noClips))
     }
 
     private func exportLocalVideos(from localURLs: [URL], completion: @escaping (Result<URL, Error>) -> Void) {

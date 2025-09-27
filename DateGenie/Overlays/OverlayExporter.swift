@@ -267,8 +267,13 @@ enum VideoOverlayExporter {
         exporter.videoComposition = videoComposition
         exporter.outputURL = outURL
         exporter.outputFileType = .mp4
+        let start = CACurrentMediaTime()
+        let durMs: () -> Int = { Int((CACurrentMediaTime() - start) * 1000) }
+        print("[Export] start preset=highest optimizeNetwork=false renderSize=\(renderSize) fps=\(fps) duration_ms=0 status=starting")
         exporter.exportAsynchronously {
-            completion(exporter.status == .completed ? outURL : nil)
+            let ok = (exporter.status == .completed)
+            print("[Export] done preset=highest optimizeNetwork=false renderSize=\(renderSize) fps=\(fps) duration_ms=\(durMs()) status=\(ok ? "completed" : "failed")")
+            completion(ok ? outURL : nil)
         }
     }
 
@@ -419,11 +424,19 @@ enum VideoOverlayExporter {
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
 
         let outURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dg_video_\(UUID().uuidString).mp4")
-        guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else { completion(nil); return }
+        // Pick a compatible preset for the composition to avoid preset/asset mismatches
+        let presets = AVAssetExportSession.exportPresets(compatibleWith: composition)
+        let preferred = [AVAssetExportPresetHEVCHighestQuality, AVAssetExportPresetHighestQuality, AVAssetExportPreset1280x720]
+        let chosen = preferred.first(where: { presets.contains($0) }) ?? AVAssetExportPresetHighestQuality
+        guard let exporter = AVAssetExportSession(asset: composition, presetName: chosen) else { completion(nil); return }
         exporter.videoComposition = videoComposition
         if !mixParams.isEmpty { let mix = AVMutableAudioMix(); mix.inputParameters = mixParams; exporter.audioMix = mix }
         exporter.outputURL = outURL
         exporter.outputFileType = .mp4
+        exporter.shouldOptimizeForNetworkUse = true
+        let start = CACurrentMediaTime()
+        let fpsValue = Int32(round(track.nominalFrameRate).clamped(to: 1...60))
+        print("[Export] start preset=\(chosen) optimizeNetwork=true renderSize=\(size) fps=\(fpsValue) duration_ms=0 status=starting")
         exporter.exportAsynchronously { completion(exporter.status == .completed ? outURL : nil) }
     }
 
@@ -598,12 +611,25 @@ enum VideoOverlayExporter {
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
 
         let outURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dg_video_\(UUID().uuidString).mp4")
-        guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else { completion(nil); return }
+        // Pick a compatible preset for the composition
+        let presets2 = AVAssetExportSession.exportPresets(compatibleWith: composition)
+        let preferred2 = [AVAssetExportPresetHEVCHighestQuality, AVAssetExportPresetHighestQuality, AVAssetExportPreset1280x720]
+        let chosen2 = preferred2.first(where: { presets2.contains($0) }) ?? AVAssetExportPresetHighestQuality
+        guard let exporter = AVAssetExportSession(asset: composition, presetName: chosen2) else { completion(nil); return }
         exporter.videoComposition = videoComposition
         if let mix = audioMix { exporter.audioMix = mix }
         exporter.outputURL = outURL
         exporter.outputFileType = .mp4
-        exporter.exportAsynchronously { completion(exporter.status == .completed ? outURL : nil) }
+        exporter.shouldOptimizeForNetworkUse = true
+        let start = CACurrentMediaTime()
+        let fpsValue = Int32(round(fpsTrack?.nominalFrameRate ?? 30).clamped(to: 1...60))
+        print("[Export] start preset=\(chosen2) optimizeNetwork=true renderSize=\(size) fps=\(fpsValue) duration_ms=0 status=starting")
+        exporter.exportAsynchronously {
+            let ok = (exporter.status == .completed)
+            let durationMs = Int((CACurrentMediaTime() - start) * 1000)
+            print("[Export] done preset=\(chosen2) optimizeNetwork=true renderSize=\(size) fps=\(fpsValue) duration_ms=\(durationMs) status=\(ok ? "completed" : "failed")")
+            completion(ok ? outURL : nil)
+        }
     }
 }
 

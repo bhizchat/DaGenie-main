@@ -4,11 +4,16 @@ import UIKit
 import FirebaseAuth
 import UniformTypeIdentifiers
 import PhotosUI
+import Photos
 import FirebaseFirestore
+import FirebaseStorage
 
 struct CapcutEditorView: View {
     let url: URL
     let initialGenerating: Bool
+    // New: pass initial run context to avoid missing early notifications
+    let initialRunId: String?
+    let initialExpected: Int?
     // Storyboard context
     let storyboardId: String?
     let currentSceneIndex: Int?
@@ -49,11 +54,47 @@ struct CapcutEditorView: View {
     @State private var logoErrorMessage: String? = nil
     @State private var sceneGenMessage: String? = nil
     @State private var didSubmitLipsync: Bool = false
+    @State private var finalPreviewUrl: URL? = nil
+    @State private var showPreviewSheet: Bool = false
+    @State private var lipsyncErrorMessage: String? = nil
+    @State private var showLipsyncErrorAlert: Bool = false
+    @State private var lastSubmittedProjectId: String? = nil
+    // Ingestion tracker (actor) and UI snapshot
+    private let ingest = GenerationIngestionModel()
+    @State private var ingestComplete: Bool = false
+    @State private var ingestProgress: String = "…"
+    // Timeout control for auto-unblocking export
+    @State private var ingestTimeoutWork: DispatchWorkItem? = nil
+    @State private var isSubmittingLipsync: Bool = false
+    @State private var submitRetryAttempts: [String: Int] = [:] // runId -> attempt
+    @State private var autoTriggerSuspendedUntil: Date? = nil
+    // Storyboard-scoped listeners (to observe backend finishing writes)
+    @State private var storyboardTerminalListener: ListenerRegistration? = nil
+    @State private var storyboardFinalListener: ListenerRegistration? = nil
+    @State private var projectFinalListener: ListenerRegistration? = nil
+    @Environment(\.scenePhase) private var scenePhase
+    // One-shot latch to prevent duplicate preview presentations per run
+    @State private var presentedPreviewRunId: String? = nil
+    // Server verification poll task
+    @State private var serverPollTask: Task<Void, Never>? = nil
+    // Background task identifier for submit+attach window
+    @State private var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+    // First confirmed server snapshot gate for this run (to stop poll early)
+    @State private var sawServerSnapshotForThisRun: Bool = false
+    // Hard cap timer for background task
+    @State private var bgTaskHardCapTimer: DispatchSourceTimer? = nil
+    // Listener reattach backoff
+    @State private var finalListenerBackoff: Double = 5
+    // Deferred preview when backgrounded
+    @State private var pendingPreviewRunId: String? = nil
+    @State private var pendingPreviewUrl: URL? = nil
     
 
-    init(url: URL, initialGenerating: Bool = false, storyboardId: String? = nil, currentSceneIndex: Int? = nil, totalScenes: Int? = nil) {
+    init(url: URL, initialGenerating: Bool = false, storyboardId: String? = nil, currentSceneIndex: Int? = nil, totalScenes: Int? = nil, initialRunId: String? = nil, initialExpected: Int? = nil) {
         self.url = url
         self.initialGenerating = initialGenerating
+        self.initialRunId = initialRunId
+        self.initialExpected = initialExpected
         self.storyboardId = storyboardId
         self.currentSceneIndex = currentSceneIndex
         self.totalScenes = totalScenes
@@ -64,6 +105,8 @@ struct CapcutEditorView: View {
         _state = StateObject(wrappedValue: EditorState(asset: asset))
         _isGeneratingAd = State(initialValue: initialGenerating || (url.isFileURL && url.path == "/dev/null"))
     }
+
+    // Removed legacy project-based terminal observer; storyboard path is authoritative
 
     // MARK: - Next Scene Generation
     private func generateNextScene(storyboardId: String, nextIndex: Int) async {
@@ -90,9 +133,9 @@ struct CapcutEditorView: View {
         lastAutosaveAt = now
         guard let uid = Auth.auth().currentUser?.uid else { return }
         let fallbackId = await MainActor.run { ProjectsRepository.shared.projects.first?.id }
-        guard let pid = activeProjectId ?? fallbackId else { return }
+        guard let projectId = activeProjectId ?? fallbackId else { return }
         if let duration = await state.currentDurationSecondsOptional() {
-            await ProjectsRepository.shared.updateProgress(userId: uid, projectId: pid, durationSec: duration, clipCount: await state.clipCount())
+            await ProjectsRepository.shared.updateProgress(userId: uid, projectId: projectId, durationSec: duration, clipCount: await state.clipCount())
         }
     }
 
@@ -200,6 +243,63 @@ struct CapcutEditorView: View {
         return !(a == .none || a == .noneSkipFirst || a == .noneSkipLast)
     }
 
+    // Snapshot helper to read actor state for UI
+    private func ingestIsComplete() async -> Bool {
+        await ingest.isComplete
+    }
+
+    // Schedule a hard timeout that auto-unblocks export after N seconds
+    private func scheduleIngestTimeout(seconds: Int) {
+        ingestTimeoutWork?.cancel()
+        var work: DispatchWorkItem?
+        work = DispatchWorkItem { [weak UIApplicationShared = UIApplication.shared] in
+            if work?.isCancelled == true { return }
+            Task { @MainActor in
+                if !(await ingestIsComplete()) {
+                    // Auto-converge expected to what actually arrived
+                    await ingest.sealExpectedToCurrent()
+                    ingestProgress = await ingest.progressString()
+                    ingestComplete = await ingestIsComplete()
+                    print("[Editor] ingest.timeout.auto_unblock label=Sync audio & Export")
+                }
+            }
+        }
+        ingestTimeoutWork = work
+        if let w = work {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(max(1, seconds)), execute: w)
+        }
+    }
+
+    @ViewBuilder
+    private var previewSheet: some View {
+        if let url = finalPreviewUrl {
+            LipsyncPreviewView(
+                finalUrl: url,
+                onDownload: { saveToPhotos(url: url) },
+                onSend: { presentShare(url: url) },
+                onClose: { showPreviewSheet = false }
+            )
+        } else {
+            EmptyView()
+        }
+    }
+
+    @MainActor
+    private func retryLipsyncFromAlert() async {
+        guard let projectId = lastSubmittedProjectId, let user = Auth.auth().currentUser else { return }
+        let runId = RunManager.shared.currentRunId ?? RunManager.shared.startNewRun()
+        let gateKey = "\(projectId)::\(runId)"
+
+        isSubmittingLipsync = true
+        guard await LipsyncSingleFlight.shared.tryEnter(key: gateKey) else {
+            isSubmittingLipsync = false
+            print("[Lipsync] retry.singleflight.skip key=\(gateKey)")
+            return
+        }
+        print("[Lipsync] gate.enter key=\(gateKey) context=alert_retry")
+        await continueLipsyncAttemptHoldingGate(uid: user.uid, projectId: projectId, runId: runId, gateKey: gateKey, markDidSubmitOnSuccess: false)
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -217,19 +317,40 @@ struct CapcutEditorView: View {
                     }
                     Spacer()
                     HStack(spacing: 16) {
-                        Button(action: export) {
-                            Text("Export")
+                        Button(action: { syncAudioAndExport() }) {
+                            Text("Sync audio & Export")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
-                                .background(Color(red: 247/255, green: 180/255, blue: 81/255))
+                                .background(Color(red: 243/255, green: 181/255, blue: 41/255))
                                 .cornerRadius(8)
                         }
+                        .disabled(isSubmittingLipsync)
                     }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("EditorDurationTick"))) { _ in
-                    maybeTriggerLipsyncAt54()
+                .sheet(isPresented: $showPreviewSheet) { previewSheet }
+                .alert("Lipsync failed", isPresented: $showLipsyncErrorAlert, actions: {
+                    Button("Retry") { Task { await retryLipsyncFromAlert() } }
+                    Button("Dismiss", role: .cancel) { }
+                }, message: {
+                    Text(lipsyncErrorMessage ?? "Unknown error")
+                })
+                // Removed auto-lipsync trigger at 54s; HUD should only appear after explicit CTA tap
+                .onChange(of: scenePhase) { newPhase in
+                    if newPhase == .active {
+                        // Present any deferred preview first
+                        if let rid = pendingPreviewRunId, let url = pendingPreviewUrl {
+                            pendingPreviewRunId = nil
+                            pendingPreviewUrl = nil
+                            presentedPreviewRunId = rid
+                            finalPreviewUrl = url
+                            showPreviewSheet = true
+                        }
+                        if isSubmittingLipsync {
+                            Task { await reattachStoryboardListenersIfNeeded() }
+                        }
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, max(0, safeTopInset() - 36))
@@ -239,9 +360,7 @@ struct CapcutEditorView: View {
                 ZStack {
                     EditorTrackArea(state: state, canvasRect: $canvasRect)
                     if isGeneratingAd && state.clips.isEmpty {
-                        VStack(spacing: 10) {
-                            GIFView(dataAssetName: "kettle_thinking")
-                                .frame(width: 160, height: 160)
+                        VStack(spacing: 14) {
                             HStack(spacing: 6) {
                                 Text("Animating")
                                     .font(.system(size: 14, weight: .semibold))
@@ -423,6 +542,28 @@ struct CapcutEditorView: View {
                 }
                 .ignoresSafeArea(.keyboard, edges: .bottom)
             }
+            // Centered HUD overlay during lipsync submission
+            .overlay(alignment: .center) {
+                if isSubmittingLipsync {
+                    ZStack {
+                        Color.black.opacity(0.45).ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(.white)
+                                .scaleEffect(1.2)
+                            Text("Lipsyncing your song, this could take up to 15 minutes")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundColor(.black)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 14)
+                                .background(RoundedRectangle(cornerRadius: 14).fill(Color.white))
+                                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.1), lineWidth: 1))
+                        }
+                    }
+                }
+            }
             .alert("Generating next scene", isPresented: Binding(get: { sceneGenMessage != nil }, set: { _ in sceneGenMessage = nil })) {
                 Button("OK", role: .cancel) { sceneGenMessage = nil }
             } message: {
@@ -517,28 +658,81 @@ struct CapcutEditorView: View {
             withAnimation(.easeInOut(duration: 0.2)) { showEditBar = false }
         }
         // New: AI ad generation lifecycle
-        .onReceive(NotificationCenter.default.publisher(for: .AdGenBegin).receive(on: RunLoop.main)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .AdGenBegin).receive(on: RunLoop.main)) { note in
             isGeneratingAd = true
+            let runId = (note.userInfo?["runId"] as? String) ?? UUID().uuidString
+            let expected = (note.userInfo?["expected"] as? Int) ?? 0
+            print("[Editor] AdGenBegin runId=\(runId) expected=\(expected)")
+            Task { await ingest.begin(runId: runId, expected: expected) }
+            Task { @MainActor in
+                ingestProgress = await ingest.progressString()
+                ingestComplete = await ingestIsComplete()
+            }
+            scheduleIngestTimeout(seconds: 60)
+        }
+        // If the editor is opened before AdGenBegin posts, seed ingestion from initial props
+        .onAppear {
+            if isGeneratingAd, let rid = initialRunId, let exp = initialExpected {
+                Task { await ingest.begin(runId: rid, expected: exp) }
+                scheduleIngestTimeout(seconds: 60)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .AdGenComplete).receive(on: RunLoop.main)) { note in
-            if let u = (note.userInfo?["url"] as? URL) {
+            guard let u = (note.userInfo?["url"] as? URL) else { return }
+            let runId = (note.userInfo?["runId"] as? String)
+            let sceneId = (note.userInfo?["sceneId"] as? String) ?? UUID().uuidString
+            let urlShort = String(u.absoluteString.prefix(48))
+            print("[Editor] AdGenComplete runId=\(runId ?? "") sceneId=\(sceneId) url_short=\(urlShort)")
+            Task { await ingest.markDelivered(runId: runId, sceneId: sceneId) }
                 Task { @MainActor in
+                // Rebuild boundary around append
+                let appendStart = CACurrentMediaTime()
+                print("[Editor] append.begin runId=\(runId ?? "") sceneId=\(sceneId)")
                     await state.appendClip(url: u)
-                    // Hide overlay once the first clip lands
+                NotificationCenter.default.post(name: .EditorClipAppended, object: nil, userInfo: ["runId": runId ?? "", "sceneId": sceneId])
+                let durMs = Int((CACurrentMediaTime() - appendStart) * 1000)
+                print("[Editor] append.end runId=\(runId ?? "") sceneId=\(sceneId) duration_ms=\(durMs)")
+                print("[Editor] notify EditorClipAppended runId=\(runId ?? "") sceneId=\(sceneId)")
+                // Hide overlay once any clip lands
                     isGeneratingAd = state.clips.isEmpty
                     if let uid = Auth.auth().currentUser?.uid,
                        let duration = await state.currentDurationSecondsOptional() {
                         let fallbackId = ProjectsRepository.shared.projects.first?.id
                         let chosenId = activeProjectId ?? fallbackId
-                        if let pid = chosenId {
-                            await ProjectsRepository.shared.updateProgress(userId: uid, projectId: pid, durationSec: duration, clipCount: await state.clipCount())
+                        if let projectId = chosenId {
+                            await ProjectsRepository.shared.updateProgress(userId: uid, projectId: projectId, durationSec: duration, clipCount: await state.clipCount())
                         }
                     }
-                }
+                ingestProgress = await ingest.progressString()
+                ingestComplete = await ingestIsComplete()
+                logCTAState()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .EditorClipAppended).receive(on: RunLoop.main)) { note in
+            let runId = (note.userInfo?["runId"] as? String)
+            let sceneId = (note.userInfo?["sceneId"] as? String) ?? ""
+            print("[Editor] EditorClipAppended runId=\(runId ?? "") sceneId=\(sceneId)")
+            Task { await ingest.markAppended(runId: runId, sceneId: sceneId) }
+            Task { @MainActor in
+                ingestProgress = await ingest.progressString()
+                ingestComplete = await ingestIsComplete()
+                logCTAState()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AdGenFailed).receive(on: RunLoop.main)) { note in
+            let runId = (note.userInfo?["runId"] as? String) ?? ""
+            let sceneId = (note.userInfo?["sceneId"] as? String) ?? ""
+            let reason = (note.userInfo?["reason"] as? String) ?? "unknown"
+            print("[Editor] AdGenFailed runId=\(runId) sceneId=\(sceneId) reason=\(reason)")
+            Task { await ingest.markFailed(runId: runId, sceneId: sceneId) }
+            Task { @MainActor in
+                ingestProgress = await ingest.progressString()
+                ingestComplete = await ingestIsComplete()
+                logCTAState()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .ActiveProjectIdCreated)) { note in
-            if let pid = note.object as? String { activeProjectId = pid }
+            if let projectId = note.object as? String { activeProjectId = projectId }
         }
         // Debounced autosave of progress on timeline changes
         .onChange(of: state.clips) { _ in
@@ -611,6 +805,10 @@ struct CapcutEditorView: View {
         }
         return base
     }
+
+    // Lightweight ingestion accessors for logging
+    private func ingestDeliveredCount() async -> Int { await ingest.deliveredCount() }
+    private func ingestAppendedCount() async -> Int { await ingest.appendedCount() }
 
     @MainActor
     private func importPickedAudio(urls: [URL]) async {
@@ -685,26 +883,988 @@ struct CapcutEditorView: View {
                                     timedMedia: state.mediaOverlays,
                                     canvasRect: canvasRect) { out in
             guard let out = out else { return }
-            // Save thumbnail + project persistence if available
-            if let img = ThumbnailGenerator.firstFrame(for: out),
-               let uid = Auth.auth().currentUser?.uid {
-                Task {
-                    if let project = await ProjectsRepository.shared.create(userId: uid, name: "Project \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .none))") {
-                        await ProjectsRepository.shared.attachVideo(userId: uid, projectId: project.id, localURL: out)
-                        await ProjectsRepository.shared.uploadThumbnail(userId: uid, projectId: project.id, image: img)
-                        // Persist storyboard linkage if present
+            Task { @MainActor in
+                guard let uid = Auth.auth().currentUser?.uid else { return }
+                // Create or load a project to hold uploads (reuses existing pathing)
+                var project = ProjectsRepository.shared.projects.first
+                if project == nil {
+                    project = await ProjectsRepository.shared.create(userId: uid, name: "Project \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .none))")
+                }
+                guard let projectId = project?.id else { return }
+                // Upload composed MP4 for Replicate (and persist)
+                await ProjectsRepository.shared.attachVideo(userId: uid, projectId: projectId, localURL: out)
+                if let img = ThumbnailGenerator.firstFrame(for: out) {
+                    await ProjectsRepository.shared.uploadThumbnail(userId: uid, projectId: projectId, image: img)
+                }
                         if let sid = storyboardId, let cur = currentSceneIndex, let total = totalScenes {
-                            await ProjectsRepository.shared.attachStoryboardContext(userId: uid, projectId: project.id, storyboardId: sid, currentSceneIndex: cur, totalScenes: total)
-                        }
-                    }
+                    await ProjectsRepository.shared.attachStoryboardContext(userId: uid, projectId: projectId, storyboardId: sid, currentSceneIndex: cur, totalScenes: total)
+                }
+                // Resolve HTTPS URL we just persisted
+                let url = ProjectsRepository.shared.projects.first(where: { $0.id == projectId })?.videoURL
+                // Kick off backend lipsync flow here (placeholder; server route expected)
+                // TODO: POST /lipsync with { audioUrl, videoUrl } and await webhook via Firestore
+                if let shareURL = url {
+                    let av = UIActivityViewController(activityItems: [shareURL], applicationActivities: nil)
+                    UIApplication.shared.topMostViewController()?.present(av, animated: true)
                 }
             }
-            // Present share sheet on main thread only
-            DispatchQueue.main.async {
-                let av = UIActivityViewController(activityItems: [out], applicationActivities: nil)
-                UIApplication.shared.topMostViewController()?.present(av, animated: true)
+        }
+    }
+
+    // MARK: - Sync Audio & Export (Lipsync)
+
+    private func syncAudioAndExport() {
+        Task { @MainActor in
+            // Debounce taps lightly
+            struct Debounce { static var last: CFTimeInterval = 0 }
+            let now = CACurrentMediaTime()
+            if now - Debounce.last < 0.8 { return }
+            Debounce.last = now
+            guard let user = Auth.auth().currentUser else { return }
+            let fallbackId = await ProjectsRepository.shared.projects.first?.id
+            guard let projectId = activeProjectId ?? fallbackId else { return }
+            let runId = RunManager.shared.currentRunId ?? RunManager.shared.startNewRun()
+            let gateKey = "\(projectId)::\(runId)"
+
+            do {
+            print("[Lipsync] CTA tapped runId=\(runId) projectId=\(projectId)")
+            print("[Lipsync] HUD.show source=cta")
+            isSubmittingLipsync = true
+            // Begin a short background task to keep attach alive if app backgrounds
+            if bgTaskId == .invalid {
+                bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "lipsync-submit") {
+                    // Expired – force end if still active
+                    if self.bgTaskId != .invalid {
+                        UIApplication.shared.endBackgroundTask(self.bgTaskId)
+                        self.bgTaskId = .invalid
+                    }
+                }
+                // Hard cap timer (~90s) to avoid watchdog
+                let t = DispatchSource.makeTimerSource(queue: .main)
+                t.schedule(deadline: .now() + 90)
+                t.setEventHandler {
+                    Task { @MainActor in
+                        if self.bgTaskId != .invalid {
+                            UIApplication.shared.endBackgroundTask(self.bgTaskId)
+                            self.bgTaskId = .invalid
+                        }
+                        self.bgTaskHardCapTimer?.cancel(); self.bgTaskHardCapTimer = nil
+                    }
+                }
+                t.resume()
+                bgTaskHardCapTimer = t
+            }
+            // Start immediate server poll on tap (before submit completes)
+            let sidToUse = (storyboardId?.isEmpty == false) ? storyboardId! : "default"
+            RunManager.shared.setStoryboardId(sidToUse)
+            print("[Lipsync] sid.canonical sid=\(sidToUse) runId=\(runId)")
+            print("[Lipsync] poll.start_immediate(PROJECT) projectId=\(projectId) sid=\(sidToUse) runId=\(runId)")
+            startProjectTruthPoll(uid: user.uid, projectId: projectId, runId: runId)
+            guard await LipsyncSingleFlight.shared.tryEnter(key: gateKey) else {
+                isSubmittingLipsync = false
+                print("[Lipsync] singleflight.skip key=\(gateKey)")
+                return
+            }
+            print("[Lipsync] gate.enter key=\(gateKey)")
+            await continueLipsyncAttemptHoldingGate(uid: user.uid, projectId: projectId, runId: runId, gateKey: gateKey, markDidSubmitOnSuccess: false)
+            } catch {
+                print("[MV] lipsync.error \(error.localizedDescription)")
+                print("[Lipsync] HUD.hide reason=submit_error")
+                isSubmittingLipsync = false
+                if bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(bgTaskId); bgTaskId = .invalid }
             }
         }
+    }
+
+    @MainActor
+    private func continueLipsyncAttemptHoldingGate(uid: String, projectId: String, runId: String, gateKey: String, markDidSubmitOnSuccess: Bool) async {
+        do {
+            let outcome = try await submitLipsyncPipeline(uid: uid, projectId: projectId, runId: runId)
+            switch outcome {
+            case .submitted:
+                if markDidSubmitOnSuccess { didSubmitLipsync = true }
+                print("[Lipsync] submitted runId=\(runId) projectId=\(projectId) (holding gate until terminal)")
+                AnalyticsManager.shared.logEvent("lipsync_submitted", parameters: [
+                    "run_id": runId,
+                    "project_id": projectId
+                ])
+                // Prefer storyboard-scoped observers; use default if not set
+                let sid = RunManager.shared.currentStoryboardId ?? ((storyboardId?.isEmpty == false) ? storyboardId! : "default")
+                print("[Lipsync] observe.attach scope=storyboard uid=\(uid) projectId=\(projectId) sid=\(sid) runId=\(runId)")
+                    sawServerSnapshotForThisRun = false
+                    AnalyticsManager.shared.logEvent("lipsync_observe_attach", parameters: [
+                        "scope": "storyboard",
+                        "project_id": projectId,
+                        "storyboard_id": sid,
+                        "run_id": runId
+                    ])
+                    // Background task should not outlive initial attach
+                    if bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(bgTaskId); bgTaskId = .invalid }
+                await observeStoryboardRunToTerminal(uid: uid, projectId: projectId, storyboardId: sid, runId: runId, gateKey: gateKey)
+                await observeStoryboardFinalUrlAndPresent(uid: uid, projectId: projectId, storyboardId: sid, runId: runId)
+            case .transientRetry(let delay):
+                print("[Lipsync] retry.schedule delay=\(delay)s")
+                // Keep the gate held; retry after delay under same gate
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    await continueLipsyncAttemptHoldingGate(uid: uid, projectId: projectId, runId: runId, gateKey: gateKey, markDidSubmitOnSuccess: markDidSubmitOnSuccess)
+                }
+            case .terminalFail:
+                print("[Lipsync] gate.leave key=\(gateKey) reason=terminal_fail")
+                await LipsyncSingleFlight.shared.leave(key: gateKey)
+                isSubmittingLipsync = false
+                if bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(bgTaskId); bgTaskId = .invalid }
+                autoTriggerSuspendedUntil = Date().addingTimeInterval(30)
+            }
+        } catch {
+            print("[MV] lipsync.error \(error.localizedDescription)")
+            await LipsyncSingleFlight.shared.leave(key: gateKey)
+            isSubmittingLipsync = false
+            if bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(bgTaskId); bgTaskId = .invalid }
+            autoTriggerSuspendedUntil = Date().addingTimeInterval(30)
+        }
+    }
+
+    private enum SubmitOutcome { case submitted, transientRetry(Double), terminalFail }
+
+    // MARK: - Retry classification & jittered backoff
+    private func jitteredBackoff(attempt: Int, base: Double = 1.8, maxDelay: TimeInterval = 30) -> TimeInterval {
+        let capped = min(maxDelay, pow(base, Double(max(1, attempt))))
+        return Double.random(in: 0...capped)
+    }
+
+    private func classifyStorageOrNetworkError(_ error: Error, attempt: Int) -> SubmitOutcome {
+        let ns = error as NSError
+        let domain = ns.domain
+        let code = ns.code
+
+        // Firebase Storage domain
+        if domain == "FIRStorageErrorDomain" {
+            switch code {
+            case -13040: return .terminalFail // objectNotFound
+            case -13021, -13031: return .terminalFail // unauthorized/forbidden
+            case -13030: return .terminalFail // cancelled
+            case -13010, -13020: return .terminalFail // bucket/project not found (config)
+            case -13014: return .terminalFail // download size exceeded
+            case -13015: return .terminalFail // invalid argument
+            case -13023: return .terminalFail // notAuthenticated
+            case -13000, -13011, -13012, -13013: // unknown, quotaExceeded, retryLimitExceeded, nonMatchingChecksum
+                let delay = jitteredBackoff(attempt: attempt)
+                return .transientRetry(delay)
+            default:
+                let delay = jitteredBackoff(attempt: attempt)
+                return .transientRetry(delay)
+            }
+        }
+
+        // Network domains
+        if domain == NSURLErrorDomain || domain == (kCFErrorDomainCFNetwork as String) {
+            switch code {
+            case NSURLErrorTimedOut,
+                 NSURLErrorCannotFindHost,
+                 NSURLErrorCannotConnectToHost,
+                 NSURLErrorNetworkConnectionLost,
+                 NSURLErrorDNSLookupFailed,
+                 NSURLErrorNotConnectedToInternet,
+                 NSURLErrorInternationalRoamingOff,
+                 NSURLErrorCallIsActive,
+                 NSURLErrorDataNotAllowed,
+                 NSURLErrorResourceUnavailable:
+                let delay = jitteredBackoff(attempt: attempt)
+                return .transientRetry(delay)
+            default:
+                break
+            }
+        }
+
+        // Default: terminal to avoid hot-looping on unknown validation/config errors
+        return .terminalFail
+    }
+
+    @MainActor
+    private func submitLipsyncPipeline(uid: String, projectId: String, runId: String) async throws -> SubmitOutcome {
+        if !NetworkGate.shared.isOnline {
+            print("[Net] offline.pause runId=\(runId) projectId=\(projectId)")
+            return .transientRetry(1.0)
+        }
+        // 1) Ensure we have an HTTPS video URL: export+upload if missing, using returned URL directly
+        var ensuredVideoURL: URL? = ProjectsRepository.shared.projects.first(where: { $0.id == projectId })?.videoURL
+        if ensuredVideoURL == nil {
+            if !NetworkGate.shared.isOnline { print("[Lipsync] paused reason=offline"); return .transientRetry(1.0) }
+            do {
+                let produced = try await exportAndUpload(projectId: projectId)
+                ensuredVideoURL = produced
+                // Reset attempts on success of upload
+                submitRetryAttempts[runId] = 0
+            } catch {
+                let ns = error as NSError
+                let attempt = (submitRetryAttempts[runId] ?? 0) + 1
+                submitRetryAttempts[runId] = attempt
+                print("[Upload] error domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
+                let outcome = classifyStorageOrNetworkError(error, attempt: attempt)
+                switch outcome {
+                case .transientRetry(let delay):
+                    print("[Lipsync] blocked reason=export_attach_failed projectId=\(projectId)")
+                    return .transientRetry(delay)
+                case .terminalFail:
+                    print("[Lipsync] blocked reason=export_attach_failed projectId=\(projectId)")
+                    return .terminalFail
+                case .submitted:
+                    return .submitted
+                }
+            }
+        }
+        // Ensure we have audio gs path
+        guard let audioGs = await fetchAudioGsPath(uid: uid, projectId: projectId) else {
+            print("[MV] lipsync.skip missing_audioGs projectId=\(projectId)")
+            lipsyncErrorMessage = "Add audio to continue."
+            showLipsyncErrorAlert = true
+            return .terminalFail
+        }
+        // Ensure videoURL exists and is HTTPS before submit
+        guard let ensured = ensuredVideoURL ?? ProjectsRepository.shared.projects.first(where: { $0.id == projectId })?.videoURL else {
+            print("[Lipsync] blocked reason=missing_videoUrl projectId=\(projectId)")
+            return .terminalFail
+        }
+        guard ensured.scheme?.lowercased() == "https" else {
+            print("[Lipsync] blocked reason=non_https_videoUrl projectId=\(projectId) url=\(ensured.absoluteString.prefix(64))")
+            return .terminalFail
+        }
+        // Quick HEAD preflight to ensure ensured URL is reachable before submitting
+        do {
+            var head = URLRequest(url: ensured)
+            head.httpMethod = "HEAD"
+            let (_, resp) = try await URLSession.shared.data(for: head)
+            if let http = resp as? HTTPURLResponse, !(200..<400).contains(http.statusCode) {
+                print("[Lipsync] preflight_fail status=\(http.statusCode) url_short=\(ensured.absoluteString.prefix(48))")
+                return .transientRetry(1.0)
+            }
+        } catch {
+            print("[Lipsync] preflight_error url_short=\(ensured.absoluteString.prefix(48)) err=\(error.localizedDescription)")
+            return .transientRetry(1.0)
+        }
+        let storyboard = (storyboardId?.isEmpty == false) ? storyboardId! : "default"
+        let dur = CMTimeGetSeconds(state.duration)
+        let short = String(ensured.absoluteString.prefix(48))
+        print("[Lipsync] start runId=\(runId) durationSec=\(dur) audioGsPath_short=\(audioGs.prefix(48)) video_short=\(short)")
+        // Pre-resolve gs:// to HTTPS client-side and persist to finishing.audioUrl BEFORE submit to avoid races
+        if let httpsAudio = await gsToHttpsLocal(audioGs) {
+            do {
+                try await Firestore.firestore()
+                    .collection("users").document(uid)
+                    .collection("projects").document(projectId)
+                    .collection("finishing").document("state")
+                    .setData(["audioUrl": httpsAudio, "audioDurationSec": dur, "runId": runId], merge: true)
+                print("[Audio] primed finishing/state.audioUrl (client)")
+            } catch {
+                print("[Audio] persist finishing.audioUrl failed: \(error.localizedDescription)")
+            }
+        }
+        try await MusicVideoRepository.shared.startMusicFinishing(uid: uid, projectId: projectId, storyboardId: storyboard, runId: runId, audioGsPath: audioGs, audioDurationSec: dur)
+        // Wait briefly for finishing.audioUrl (server persists https URL). Required to avoid "missing_media_urls" on submit.
+        do {
+            let db = Firestore.firestore()
+            let ref = db.collection("users").document(uid).collection("projects").document(projectId)
+            var ok = false
+            for _ in 0..<10 { // ~10 * 150ms = 1.5s
+                if let d = try? await ref.getDocument().data(),
+                   let f = d["finishing"] as? [String: Any],
+                   let au = f["audioUrl"] as? String, !au.isEmpty {
+                    ok = true; break
+                }
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+            if !ok { print("[Lipsync] finishing.audioUrl.wait timeout") }
+        }
+        do {
+            // Provide audio override when available: prefer the signed download URL if already present on the project
+            var audioOverride: String? = nil
+            if let finishing = try? await Firestore.firestore().collection("users").document(uid).collection("projects").document(projectId).getDocument().data()? ["finishing"] as? [String: Any] {
+                if let a = finishing["audioUrl"] as? String, !a.isEmpty { audioOverride = a }
+            }
+            // If still missing, resolve gs:// to https client-side and pass override
+            if audioOverride == nil {
+                if let gs = await fetchAudioGsPath(uid: uid, projectId: projectId), let https = await gsToHttpsLocal(gs) {
+                    print("[Audio] override_using_client_https url_short=\(https.prefix(48))")
+                    audioOverride = https
+                }
+            }
+            let sidSubmit = RunManager.shared.currentStoryboardId ?? storyboard
+            print("[Lipsync] sid.submit sid=\(sidSubmit) runId=\(runId)")
+            try await MusicVideoRepository.shared.submitLipsync(uid: uid, projectId: projectId, storyboardId: sidSubmit, runId: runId, videoUrlOverride: ensured, audioUrlOverride: audioOverride)
+        } catch {
+            let desc = (error as NSError).userInfo[NSLocalizedDescriptionKey] as? String ?? error.localizedDescription
+            if desc.contains("submitLipsync_transient_") { return .transientRetry(1.0) }
+            return .terminalFail
+        }
+        print("[Lipsync] submit runId=\(runId) durationSec=\(dur)")
+        return .submitted
+    }
+
+    @MainActor
+    private func exportAndAttachVideo(for projectId: String) async -> Bool {
+        let exportAsset = state.player.currentItem?.asset ?? state.asset
+        let mix = state.player.currentItem?.audioMix
+        await ingest.rebuilding(true)
+        // Preload critical AVAsset keys off-main to avoid main-thread stalls
+        await preloadAssetKeysIfNeeded(asset: exportAsset)
+        let out: URL? = await withCheckedContinuation { cont in
+            VideoOverlayExporter.export(from: exportAsset,
+                                        audioMix: mix,
+                                        timedTexts: state.textOverlays,
+                                        timedCaptions: state.captions,
+                                        timedMedia: state.mediaOverlays,
+                                        canvasRect: canvasRect) { url in
+                cont.resume(returning: url)
+            }
+        }
+        guard let fileURL = out, let uid = Auth.auth().currentUser?.uid else {
+            Task { await ingest.rebuilding(false) }
+            return false
+        }
+        await ProjectsRepository.shared.attachVideo(userId: uid, projectId: projectId, localURL: fileURL)
+        if let img = ThumbnailGenerator.firstFrame(for: fileURL) {
+            await ProjectsRepository.shared.uploadThumbnail(userId: uid, projectId: projectId, image: img)
+        }
+        // Deterministically confirm HTTPS videoURL persisted by polling Firestore briefly
+        let db = Firestore.firestore()
+        for attempt in 0..<8 { // ~8 * 150ms = ~1.2s max wait
+            do {
+                let snap = try await db.collection("users").document(uid).collection("projects").document(projectId).getDocument()
+                if let str = snap.data()? ["videoURL"] as? String, let url = URL(string: str) {
+                    await ProjectsRepository.shared.setLocalVideoURL(projectId: projectId, url: url)
+                    await ingest.rebuilding(false)
+                    return true
+                }
+            } catch {
+                // Ignore transient read error; retry
+            }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        await ingest.rebuilding(false)
+        return false
+    }
+
+    // Export and upload, returning HTTPS immediately (no Firestore polling)
+    @MainActor
+    private func exportAndUpload(projectId: String) async throws -> URL {
+        let exportAsset = state.player.currentItem?.asset ?? state.asset
+        let mix = state.player.currentItem?.audioMix
+        await ingest.rebuilding(true)
+        await preloadAssetKeysIfNeeded(asset: exportAsset)
+        let out: URL? = await withCheckedContinuation { cont in
+            VideoOverlayExporter.export(from: exportAsset,
+                                        audioMix: mix,
+                                        timedTexts: state.textOverlays,
+                                        timedCaptions: state.captions,
+                                        timedMedia: state.mediaOverlays,
+                                        canvasRect: canvasRect) { url in
+                cont.resume(returning: url)
+            }
+        }
+        guard let fileURL = out else {
+            await ingest.rebuilding(false)
+            throw NSError(domain: "export_failed", code: -1, userInfo: [NSLocalizedDescriptionKey: "exporter returned nil URL"])
+        }
+        // Verify file exists and non-zero size
+        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        if size <= 0 {
+            await ingest.rebuilding(false)
+            throw NSError(domain: "export_failed", code: -2, userInfo: [NSLocalizedDescriptionKey: "zero-byte export at \(fileURL.path)"])
+        }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            await ingest.rebuilding(false)
+            throw NSError(domain: "auth", code: -3, userInfo: [NSLocalizedDescriptionKey: "missing auth.user"])
+        }
+        // Re-check network before upload
+        guard NetworkGate.shared.isOnline else {
+            await ingest.rebuilding(false)
+            throw NSError(domain: "net_offline", code: -4, userInfo: [NSLocalizedDescriptionKey: "offline before upload"])
+        }
+
+        // Perform upload off the main actor
+        let https: URL = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<URL, Error>) in
+            Task.detached {
+                do {
+                    let result = try await ProjectsRepository.shared.attachVideoAndGetURL(userId: uid, projectId: projectId, localURL: fileURL)
+                    cont.resume(returning: result)
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+        if let img = ThumbnailGenerator.firstFrame(for: fileURL) {
+            Task { await ProjectsRepository.shared.uploadThumbnail(userId: uid, projectId: projectId, image: img) }
+        }
+        await ingest.rebuilding(false)
+        return https
+    }
+
+    // MARK: - AVAsset key preloading (off-main)
+    private func preloadAssetKeysIfNeeded(asset: AVAsset) async {
+        let keys = ["tracks", "duration", "playable"]
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            asset.loadValuesAsynchronously(forKeys: keys) {
+                cont.resume()
+            }
+        }
+    }
+
+    // Removed legacy project-based final URL observer; storyboard path is authoritative
+
+    // MARK: - Storyboard-scoped observers (preferred for music-video finishing)
+    @MainActor
+    private func observeStoryboardRunToTerminal(uid: String, projectId: String, storyboardId: String, runId: String, gateKey: String) async {
+        let ref = Firestore.firestore()
+            .collection("users").document(uid)
+            .collection("musicVideos").document(projectId)
+            .collection("storyboards").document(storyboardId)
+        storyboardTerminalListener?.remove()
+        print("[Lipsync] observe.terminal ATTACH path=\(ref.path)")
+        AnalyticsManager.shared.logEvent("lipsync_observe_attach", parameters: [
+            "which": "terminal",
+            "path": ref.path
+        ])
+        storyboardTerminalListener = ref.addSnapshotListener(includeMetadataChanges: true) { snap, err in
+            if let err = err {
+                let ns = err as NSError
+                print("[Lipsync] observe.terminal ERROR domain=\(ns.domain) code=\(ns.code) msg=\(ns.localizedDescription) path=\(ref.path)")
+                AnalyticsManager.shared.logEvent("lipsync_observe_error", parameters: [
+                    "which": "terminal",
+                    "domain": ns.domain,
+                    "code": ns.code,
+                    "message": ns.localizedDescription,
+                    "path": ref.path
+                ])
+                // kick a one-shot server read to reduce missed-window latency
+                Task.detached(priority: .background) {
+                    do {
+                        let s = try await ref.getDocument(source: .server)
+                        if let d = s.data(), let finishing = d["finishing"] as? [String: Any] {
+                            let muxFinal = ((finishing["mux"] as? [String: Any])? ["finalUrl"] as? String) ?? ""
+                            let lipOut = ((finishing["lipsync"] as? [String: Any])? ["outputUrl"] as? String) ?? ""
+                            if let url = URL(string: muxFinal.isEmpty ? lipOut : muxFinal), !url.absoluteString.isEmpty {
+                                await MainActor.run {
+                                    if self.presentedPreviewRunId != runId {
+                                        self.presentedPreviewRunId = runId
+                self.finalPreviewUrl = url
+                self.showPreviewSheet = true
+                self.saveToPhotos(url: url)
+                self.isSubmittingLipsync = false
+                if self.bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(self.bgTaskId); self.bgTaskId = .invalid }
+                self.bgTaskHardCapTimer?.cancel(); self.bgTaskHardCapTimer = nil
+                                        self.serverPollTask?.cancel(); self.serverPollTask = nil
+                                    }
+                                }
+                                return
+                            }
+                        }
+                    } catch {
+                        // ignore; will reattach below
+                    }
+                }
+                // Reattach after a short delay, optionally gated by reachability
+                if NetworkGate.shared.isOnline {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        Task { await self.observeStoryboardRunToTerminal(uid: uid, projectId: projectId, storyboardId: storyboardId, runId: runId, gateKey: gateKey) }
+                    }
+                } else {
+                    print("[Lipsync] offline; delaying terminal reattach path=\(ref.path)")
+                    Task.detached { await NetworkGate.shared.waitUntilOnline(); Task { await self.observeStoryboardRunToTerminal(uid: uid, projectId: projectId, storyboardId: storyboardId, runId: runId, gateKey: gateKey) } }
+                }
+                return
+            }
+            guard let snap = snap else { return }
+            // Gate on server-fresh snapshots; cache can be stale after reconnects
+            if snap.metadata.isFromCache { return }
+            guard let data = snap.data(), let finishing = data["finishing"] as? [String: Any] else { return }
+            let lip = finishing["lipsync"] as? [String: Any]
+            let mux = finishing["mux"] as? [String: Any]
+            let lipStatus = (lip?["status"] as? String) ?? "idle"
+            let muxStatus = (mux?["status"] as? String) ?? "idle"
+            print("[Lipsync] observe.terminal cache=\(snap.metadata.isFromCache) lip=\(lipStatus) mux=\(muxStatus) path=\(ref.path)")
+            AnalyticsManager.shared.logEvent("lipsync_observe_tick", parameters: [
+                "which": "terminal",
+                "from_cache": snap.metadata.isFromCache,
+                "lip": lipStatus,
+                "mux": muxStatus,
+                "path": ref.path
+            ])
+            // mark when we first see a server snapshot; allows poll to stop early
+            if !snap.metadata.isFromCache {
+                self.sawServerSnapshotForThisRun = true
+                if self.bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(self.bgTaskId); self.bgTaskId = .invalid }
+                self.bgTaskHardCapTimer?.cancel(); self.bgTaskHardCapTimer = nil
+            }
+            let terminal = (lipStatus == "failed" || lipStatus == "canceled") || (muxStatus == "done")
+            if terminal {
+                print("[Lipsync] terminal storyboard state=\(lipStatus)/mux=\(muxStatus) projectId=\(projectId) sid=\(storyboardId) runId=\(runId)")
+                Task { await LipsyncSingleFlight.shared.leave(key: gateKey) }
+                Task { @MainActor in
+                    self.isSubmittingLipsync = false
+                }
+                storyboardTerminalListener?.remove()
+                // End background task if active
+                if bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(bgTaskId); bgTaskId = .invalid }
+                bgTaskHardCapTimer?.cancel(); bgTaskHardCapTimer = nil
+                // Cancel poll
+                serverPollTask?.cancel(); serverPollTask = nil
+            }
+        }
+    }
+
+    @MainActor
+    private func observeStoryboardFinalUrlAndPresent(uid: String, projectId: String, storyboardId: String, runId: String) async {
+        let ref = Firestore.firestore()
+            .collection("users").document(uid)
+            .collection("musicVideos").document(projectId)
+            .collection("storyboards").document(storyboardId)
+        storyboardFinalListener?.remove()
+        print("[Lipsync] observe.final ATTACH path=\(ref.path)")
+        storyboardFinalListener = ref.addSnapshotListener(includeMetadataChanges: true) { snap, err in
+            if let err = err {
+                let ns = err as NSError
+                print("[Lipsync] observe.final ERROR domain=\(ns.domain) code=\(ns.code) msg=\(ns.localizedDescription) path=\(ref.path)")
+                AnalyticsManager.shared.logEvent("lipsync_observe_error", parameters: [
+                    "which": "final",
+                    "domain": ns.domain,
+                    "code": ns.code,
+                    "message": ns.localizedDescription,
+                    "path": ref.path
+                ])
+                // If auth/permission error, bail instead of looping
+                if ns.code == 7 || ns.code == 16 { // permissionDenied or unauthenticated
+                    print("[Lipsync] final.listener auth/perm error; stop reattach path=\(ref.path)")
+                    return
+                }
+                // Try an immediate server read to reduce missed windows
+                Task.detached(priority: .background) {
+                    do {
+                        let s = try await ref.getDocument(source: .server)
+                        if let d = s.data(), let finishing = d["finishing"] as? [String: Any] {
+                            let muxFinal = ((finishing["mux"] as? [String: Any])? ["finalUrl"] as? String) ?? ""
+                            let lipOut = ((finishing["lipsync"] as? [String: Any])? ["outputUrl"] as? String) ?? ""
+                            if let url = URL(string: muxFinal.isEmpty ? lipOut : muxFinal), !url.absoluteString.isEmpty {
+                                await MainActor.run {
+                                    if self.presentedPreviewRunId != runId {
+                                        self.presentedPreviewRunId = runId
+                                        self.finalPreviewUrl = url
+                                        self.showPreviewSheet = true
+                                        self.saveToPhotos(url: url)
+                                        self.isSubmittingLipsync = false
+                                        if self.bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(self.bgTaskId); self.bgTaskId = .invalid }
+                                        self.serverPollTask?.cancel(); self.serverPollTask = nil
+                                    }
+                                }
+                                return
+                            }
+                        }
+                    } catch {
+                        // ignore; will reattach below
+                    }
+                }
+                // Reattach with full-jitter backoff and reachability gate
+                Task.detached(priority: .background) {
+                    while !NetworkGate.shared.canAttemptNetwork {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    }
+                    self.finalListenerBackoff = fullJitterDelay(prev: self.finalListenerBackoff)
+                    let d = self.finalListenerBackoff
+                    print("[Lipsync] observe.final reattach_in=\(String(format: "%.1fs", d)) path=\(ref.path)")
+                    try? await Task.sleep(nanoseconds: UInt64(d * 1_000_000_000))
+                    await self.observeStoryboardFinalUrlAndPresent(uid: uid, projectId: projectId, storyboardId: storyboardId, runId: runId)
+                }
+                return
+            }
+            guard let snap = snap, let data = snap.data(), let finishing = data["finishing"] as? [String: Any] else { return }
+            let urlStr = extractFinalUrl(from: finishing)
+            // For telemetry, still log raw field lengths if present
+            let muxRaw = ((finishing["mux"] as? [String: Any])? ["finalUrl"] as? String)
+                ?? ((finishing["mux"] as? [String: Any])? ["final_url"] as? String)
+                ?? ((finishing["mux"] as? [String: Any])? ["finalURL"] as? String)
+                ?? ""
+            let lipRaw = ((finishing["lipsync"] as? [String: Any])? ["outputUrl"] as? String)
+                ?? ((finishing["lipsync"] as? [String: Any])? ["output_url"] as? String)
+                ?? ((finishing["lipsync"] as? [String: Any])? ["outputURL"] as? String)
+                ?? ""
+            print("[Lipsync] observe.final cache=\(snap.metadata.isFromCache) muxFinal_len=\(muxRaw.count) lipOut_len=\(lipRaw.count) path=\(ref.path)")
+            AnalyticsManager.shared.logEvent("lipsync_observe_tick", parameters: [
+                "which": "final",
+                "from_cache": snap.metadata.isFromCache,
+                "mux_len": muxRaw.count,
+                "lip_len": lipRaw.count,
+                "path": ref.path
+            ])
+            // seeing any server snapshot means the stream is healthy; stop poll
+            if !snap.metadata.isFromCache && muxRaw.isEmpty && lipRaw.isEmpty {
+                self.sawServerSnapshotForThisRun = true
+                if self.bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(self.bgTaskId); self.bgTaskId = .invalid }
+                self.bgTaskHardCapTimer?.cancel(); self.bgTaskHardCapTimer = nil
+                self.serverPollTask?.cancel(); self.serverPollTask = nil
+            }
+            if let url = URL(string: urlStr), !url.absoluteString.isEmpty {
+                print("[Lipsync] storyboard.final url_short=\(url.absoluteString.prefix(48)))")
+                Task { await self.presentExactlyOnce(ref: ref, runId: runId, url: url) }
+            } else if let lipDict = finishing["lipsync"] as? [String: Any], (lipDict["status"] as? String) == "failed" {
+                let err = (lipDict["lastError"] as? String) ?? "Unknown error"
+                Task { @MainActor in
+                self.lipsyncErrorMessage = err
+                self.showLipsyncErrorAlert = true
+                self.isSubmittingLipsync = false
+                    if self.bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(self.bgTaskId); self.bgTaskId = .invalid }
+                    self.bgTaskHardCapTimer?.cancel(); self.bgTaskHardCapTimer = nil
+                    self.serverPollTask?.cancel(); self.serverPollTask = nil
+                }
+            }
+        }
+        // Storyboard poll disabled; project-scoped poll handles terminal detection
+    }
+
+    @MainActor
+    private func observeProjectFinalUrlAndPresent(uid: String, projectId: String, runId: String) async {
+        let ref = Firestore.firestore()
+            .collection("users").document(uid)
+            .collection("projects").document(projectId)
+        projectFinalListener?.remove()
+        print("[Lipsync] observe.final(PROJECT) ATTACH path=\(ref.path)")
+        projectFinalListener = ref.addSnapshotListener(includeMetadataChanges: true) { snap, err in
+            if let err = err {
+                let ns = err as NSError
+                print("[Lipsync] observe.final(PROJECT) ERROR domain=\(ns.domain) code=\(ns.code) msg=\(ns.localizedDescription) path=\(ref.path)")
+                // On errors, try a one-shot server read, then reattach later
+                Task.detached(priority: .background) {
+                    do {
+                        let s = try await ref.getDocument(source: .server)
+                        if let d = s.data() {
+                            let direct = (d["finalVideoUrl"] as? String) ?? ""
+                            if let url = URL(string: direct), !url.absoluteString.isEmpty {
+                                await MainActor.run {
+                                    if self.presentedPreviewRunId != runId {
+                                        self.presentedPreviewRunId = runId
+                                        self.finalPreviewUrl = url
+                                        self.showPreviewSheet = true
+                                        self.isSubmittingLipsync = false
+                                        if self.bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(self.bgTaskId); self.bgTaskId = .invalid }
+                                        self.serverPollTask?.cancel(); self.serverPollTask = nil
+                                    }
+                                }
+                                return
+                            }
+                        }
+                    } catch {
+                        // ignore; will reattach below
+                    }
+                }
+                // Backoff and reattach
+                Task.detached(priority: .background) {
+                    while !NetworkGate.shared.canAttemptNetwork { try? await Task.sleep(nanoseconds: 1_500_000_000) }
+                    self.finalListenerBackoff = fullJitterDelay(prev: self.finalListenerBackoff)
+                    let d = self.finalListenerBackoff
+                    print("[Lipsync] observe.final(PROJECT) reattach_in=\(String(format: "%.1fs", d)) path=\(ref.path)")
+                    try? await Task.sleep(nanoseconds: UInt64(d * 1_000_000_000))
+                    await self.observeProjectFinalUrlAndPresent(uid: uid, projectId: projectId, runId: runId)
+                }
+                return
+            }
+            guard let snap = snap, let data = snap.data() else { return }
+            let direct = (data["finalVideoUrl"] as? String) ?? ""
+            print("[Lipsync] observe.final(PROJECT) cache=\(snap.metadata.isFromCache) direct_len=\(direct.count) path=\(ref.path)")
+            // Stop any running poll once we see server-fresh traffic (stream healthy)
+            if !snap.metadata.isFromCache {
+                self.sawServerSnapshotForThisRun = true
+                if self.bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(self.bgTaskId); self.bgTaskId = .invalid }
+                self.bgTaskHardCapTimer?.cancel(); self.bgTaskHardCapTimer = nil
+                self.serverPollTask?.cancel(); self.serverPollTask = nil
+            }
+            if !snap.metadata.isFromCache, let url = URL(string: direct), !url.absoluteString.isEmpty {
+                print("[Lipsync] project.final url_short=\(url.absoluteString.prefix(48)))")
+                Task { await self.presentExactlyOnce(ref: ref, runId: runId, url: url) }
+            }
+        }
+        // Start project-scoped poll
+        startProjectTruthPoll(uid: uid, projectId: projectId, runId: runId)
+    }
+
+    // MARK: - Server truth poll and helpers (up to ~20 minutes)
+    // Backoff helper: full-jitter (best under bursty reconnects)
+    @inline(__always)
+    private func fullJitterDelay(prev: Double, factor: Double = 1.5, floor: Double = 5, cap: Double = 60) -> Double {
+        let next = min(max(prev * factor, floor), cap)
+        return Double.random(in: 0...next)
+    }
+
+    // Transactional exactly-once presenter keyed by runId
+    private func presentExactlyOnce(ref: DocumentReference, runId: String, url: URL) async {
+        do {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                Firestore.firestore().runTransaction({ (txn, errorPointer) -> Any? in
+                    do {
+                        let snap = try txn.getDocument(ref)
+                        var root = snap.data() ?? [:]
+                        var finishing = (root["finishing"] as? [String: Any]) ?? [:]
+                        let already = finishing["presentedRunId"] as? String
+                        if already != runId {
+                            finishing["presentedRunId"] = runId
+                            finishing["presentedAt"] = FieldValue.serverTimestamp()
+                            root["finishing"] = finishing
+                            txn.setData(root, forDocument: ref, merge: true)
+                        }
+                        return nil
+                    } catch let e as NSError {
+                        errorPointer?.pointee = e
+                        return nil
+                    }
+                }) { (_, err) in
+                    if let err = err { cont.resume(throwing: err) } else { cont.resume(returning: ()) }
+                }
+            }
+            await MainActor.run {
+                if UIApplication.shared.applicationState == .active {
+                    if presentedPreviewRunId != runId {
+                        presentedPreviewRunId = runId
+                        finalPreviewUrl = url
+                        showPreviewSheet = true
+                    }
+                } else {
+                    // Defer UI present until foreground
+                    pendingPreviewRunId = runId
+                    pendingPreviewUrl = url
+                }
+                isSubmittingLipsync = false
+                if bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(bgTaskId); bgTaskId = .invalid }
+                serverPollTask?.cancel(); serverPollTask = nil
+            }
+        } catch {
+            // If another path won, reconcile from server
+            do {
+                let s = try await ref.getDocument(source: .server)
+                if let finishing = (s.data()? ["finishing"] as? [String: Any]), (finishing["presentedRunId"] as? String) == runId {
+                    await MainActor.run {
+                        if presentedPreviewRunId != runId {
+                            presentedPreviewRunId = runId
+                            finalPreviewUrl = url
+                            showPreviewSheet = true
+                            isSubmittingLipsync = false
+                        }
+                        if bgTaskId != .invalid { UIApplication.shared.endBackgroundTask(bgTaskId); bgTaskId = .invalid }
+                        serverPollTask?.cancel(); serverPollTask = nil
+                    }
+                } else {
+                    print("[Lipsync] presentExactlyOnce txn ERROR=\(error.localizedDescription) path=\(ref.path)")
+                }
+            } catch {
+                print("[Lipsync] presentExactlyOnce reconcile ERROR=\(error.localizedDescription) path=\(ref.path)")
+            }
+        }
+    }
+    @MainActor
+    private func startServerTruthPoll(uid: String, projectId: String, storyboardId: String, runId: String) {
+        serverPollTask?.cancel()
+        serverPollTask = Task.detached(priority: .background) {
+            let ref = Firestore.firestore()
+                .collection("users").document(uid)
+                .collection("musicVideos").document(projectId)
+                .collection("storyboards").document(storyboardId)
+            let endAt = Date().addingTimeInterval(20 * 60) // poll up to 20 minutes
+            var attempt = 0
+            let startedAt = Date()
+            var delayHint: Double = 10
+            while !Task.isCancelled && Date() < endAt {
+                // throttle while route is clearly not usable
+                if !NetworkGate.shared.canAttemptNetwork {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    continue
+                }
+                // Stop conditions: preview already shown OR app no longer submitting
+                let shouldStop = await MainActor.run(resultType: Bool.self) {
+                    (presentedPreviewRunId == runId) || (isSubmittingLipsync == false)
+                }
+                if shouldStop { return }
+
+                attempt += 1
+                delayHint = fullJitterDelay(prev: delayHint)
+                print("[Lipsync] poll.server attempt=\(attempt) runId=\(runId) path=\(ref.path) backoff=\(String(format: "%.1fs", delayHint))")
+                do {
+                    let snap = try await ref.getDocument(source: .server)
+                    guard snap.exists, let data = snap.data() else {
+                        try? await Task.sleep(nanoseconds: UInt64(delayHint * 1_000_000_000))
+                        continue
+                    }
+                    if let finishing = data["finishing"] as? [String: Any] {
+                        let urlStr = extractFinalUrl(from: finishing)
+                        if let url = URL(string: urlStr), !url.absoluteString.isEmpty {
+                            let elapsed = Int(Date().timeIntervalSince(startedAt))
+                            print("[Lipsync] poll.server success attempts=\(attempt) elapsed=\(elapsed)s url_short=\(url.absoluteString.prefix(64)) path=\(ref.path)")
+                            await presentExactlyOnce(ref: ref, runId: runId, url: url)
+                            return
+                        }
+                        if let lip = finishing["lipsync"] as? [String: Any], (lip["status"] as? String) == "failed" {
+                            print("[Lipsync] poll.server terminal=failed path=\(ref.path)")
+                            return
+                        }
+                    }
+                } catch {
+                    print("[Lipsync] poll.server ERROR=\(error.localizedDescription) attempt=\(attempt) path=\(ref.path)")
+                }
+                try? await Task.sleep(nanoseconds: UInt64(delayHint * 1_000_000_000))
+            }
+        }
+    }
+
+    // Legacy/project-scoped poll as a fallback if storyboardId is unavailable
+    @MainActor
+    private func startProjectTruthPoll(uid: String, projectId: String, runId: String) {
+        serverPollTask?.cancel()
+        serverPollTask = Task.detached(priority: .background) {
+            let ref = Firestore.firestore()
+                .collection("users").document(uid)
+                .collection("projects").document(projectId)
+            let endAt = Date().addingTimeInterval(20 * 60)
+            var attempt = 0
+            let startedAt = Date()
+            while !Task.isCancelled && Date() < endAt {
+                if !NetworkGate.shared.canAttemptNetwork {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    continue
+                }
+                let shouldStop = await MainActor.run(resultType: Bool.self) {
+                    (presentedPreviewRunId == runId) || (isSubmittingLipsync == false)
+                }
+                if shouldStop { return }
+                attempt += 1
+                let delayHint = fullJitterDelay(prev: Double(max(1, attempt)))
+                print("[Lipsync] poll.server(project) attempt=\(attempt) runId=\(runId) path=\(ref.path) backoff=\(String(format: "%.1fs", delayHint))")
+                do {
+                    let snap = try await ref.getDocument(source: .server)
+                    guard snap.exists, let data = snap.data() else {
+                        try? await Task.sleep(nanoseconds: UInt64(delayHint * 1_000_000_000))
+                        continue
+                    }
+                    // Prefer top-level finalVideoUrl; fall back to finishing.lipsync/output and finishing.mux.finalUrl
+                    let direct = (data["finalVideoUrl"] as? String) ?? ""
+                    let muxFinal = ((data["finishing"] as? [String: Any])?["mux"] as? [String: Any])?["finalUrl"] as? String ?? ""
+                    let lipOut = ((data["finishing"] as? [String: Any])?["lipsync"] as? [String: Any])?["outputUrl"] as? String ?? ""
+                    let chosen = !direct.isEmpty ? direct : (!lipOut.isEmpty ? lipOut : muxFinal)
+                    if let url = URL(string: chosen), !url.absoluteString.isEmpty {
+                        let elapsed = Int(Date().timeIntervalSince(startedAt))
+                        print("[Lipsync] poll.server(project) success attempts=\(attempt) elapsed=\(elapsed)s url_short=\(url.absoluteString.prefix(64)) path=\(ref.path)")
+                        await presentExactlyOnce(ref: ref, runId: runId, url: url)
+                        return
+                    }
+                } catch {
+                    print("[Lipsync] poll.server(project) ERROR=\(error.localizedDescription) attempt=\(attempt) path=\(ref.path)")
+                }
+                try? await Task.sleep(nanoseconds: UInt64(delayHint * 1_000_000_000))
+            }
+        }
+    }
+
+    // Reattach listeners if app returns to foreground during a submission
+    @MainActor
+    private func reattachStoryboardListenersIfNeeded() async {
+        guard isSubmittingLipsync, let uid = Auth.auth().currentUser?.uid, let projectId = activeProjectId ?? ProjectsRepository.shared.projects.first?.id else { return }
+        let sid = RunManager.shared.currentStoryboardId ?? storyboardId ?? "default"
+        let rid = RunManager.shared.currentRunId ?? ""
+        // Instant server-truth read on resume to avoid waiting up to 60s
+        do {
+            let ref = Firestore.firestore()
+                .collection("users").document(uid)
+                .collection("musicVideos").document(projectId)
+                .collection("storyboards").document(sid)
+            print("[Lipsync] resume.server_check path=\(ref.path) runId=\(rid) sid=\(sid)")
+            Task.detached(priority: .background) {
+                do {
+                    let snap = try await ref.getDocument(source: .server)
+                    if snap.exists, let data = snap.data(), let finishing = data["finishing"] as? [String: Any] {
+                        let urlStr = extractFinalUrl(from: finishing)
+                        if let url = URL(string: urlStr), !url.absoluteString.isEmpty {
+                            print("[Lipsync] resume.server_success url_short=\(url.absoluteString.prefix(64)) path=\(ref.path)")
+                            await self.presentExactlyOnce(ref: ref, runId: rid, url: url)
+                            return
+                        }
+                    }
+                } catch {
+                    print("[Lipsync] resume.server_error \(error.localizedDescription) path=\(ref.path)")
+                }
+            }
+            // Also check project doc on resume (v2 backend writes finalVideoUrl here)
+            let projRef = Firestore.firestore()
+                .collection("users").document(uid)
+                .collection("projects").document(projectId)
+            print("[Lipsync] resume.server_check(PROJECT) path=\(projRef.path) runId=\(rid)")
+            Task.detached(priority: .background) {
+                do {
+                    let s = try await projRef.getDocument(source: .server)
+                    if let d = s.data() {
+                        let fin = (d["finishing"] as? [String: Any]) ?? [:]
+                        let direct = (d["finalVideoUrl"] as? String) ?? ""
+                        let urlStr = direct.isEmpty ? extractFinalUrl(from: fin) : direct
+                        if let url = URL(string: urlStr), !url.absoluteString.isEmpty {
+                            print("[Lipsync] resume.server_success(PROJECT) url_short=\(url.absoluteString.prefix(64)) path=\(projRef.path)")
+                            await self.presentExactlyOnce(ref: projRef, runId: rid, url: url)
+                            return
+                        }
+                    }
+                } catch {
+                    print("[Lipsync] resume.server_error(PROJECT) \(error.localizedDescription) path=\(projRef.path)")
+                }
+            }
+        }
+        await observeStoryboardRunToTerminal(uid: uid, projectId: projectId, storyboardId: sid, runId: rid, gateKey: "\(projectId)::\(rid)")
+        await observeStoryboardFinalUrlAndPresent(uid: uid, projectId: projectId, storyboardId: sid, runId: rid)
+        await observeProjectFinalUrlAndPresent(uid: uid, projectId: projectId, runId: rid)
+        // Ensure the fixed-interval server poll is running as a safety net when returning to foreground
+        if serverPollTask == nil || serverPollTask?.isCancelled == true {
+            startProjectTruthPoll(uid: uid, projectId: projectId, runId: rid)
+        }
+    }
+
+    @MainActor
+    private func saveToPhotos(url: URL) {
+        PHPhotoLibrary.requestAuthorization { status in
+            guard status == .authorized || status == .limited else { return }
+            // If we already have a file URL, save directly. Otherwise, download first.
+            if url.isFileURL {
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                }, completionHandler: { success, error in
+                    if let error = error { print("[Lipsync] save_to_photos.error file_url=\(error.localizedDescription)") }
+                    if success { print("[Lipsync] saved_to_photos file_url=true url_short=\(url.absoluteString.prefix(48))") }
+                })
+                return
+            }
+            let task = URLSession.shared.downloadTask(with: url) { tmpUrl, _, err in
+                if let err = err { print("[Lipsync] save_to_photos.download_error \(err.localizedDescription)"); return }
+                guard let tmpUrl = tmpUrl else { print("[Lipsync] save_to_photos.download_error no_tmp_url"); return }
+                do {
+                    let fm = FileManager.default
+                    let ext = (url.pathExtension.isEmpty ? "mp4" : url.pathExtension)
+                    let dest = fm.temporaryDirectory.appendingPathComponent("final_\(UUID().uuidString).\(ext)")
+                    // Move the downloaded temp file to a stable temp path with proper extension
+                    if fm.fileExists(atPath: dest.path) { try? fm.removeItem(at: dest) }
+                    try fm.moveItem(at: tmpUrl, to: dest)
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: dest)
+                    }, completionHandler: { success, error in
+                        if let error = error { print("[Lipsync] save_to_photos.error https=\(error.localizedDescription)") }
+                        if success { print("[Lipsync] saved_to_photos https=true url_short=\(url.absoluteString.prefix(48))") }
+                        // Best-effort cleanup
+                        try? fm.removeItem(at: dest)
+                    })
+                } catch {
+                    print("[Lipsync] save_to_photos.move_error \(error.localizedDescription)")
+                }
+            }
+            task.resume()
+        }
+    }
+
+    // Share sheet presenter for preview "Send"
+    private func presentShare(url: URL) {
+        guard let top = UIApplication.shared.topMostViewController() else { return }
+        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        top.present(av, animated: true)
     }
 
     // MARK: - Audio session for preview
@@ -718,46 +1878,84 @@ struct CapcutEditorView: View {
         }
     }
 
-    // MARK: - 54s Lipsync Trigger
-    private func maybeTriggerLipsyncAt54() {
-        guard !didSubmitLipsync else { return }
-        let dur = CMTimeGetSeconds(state.duration)
-        if dur.isFinite && dur >= 54.0 {
-            Task { await triggerLipsyncNow(currentDuration: dur) }
-        }
-    }
+    // Auto lipsync trigger removed: lipsync now only starts from explicit CTA tap
 
     @MainActor
     private func fetchAudioGsPath(uid: String, projectId: String) async -> String? {
         let db = Firestore.firestore()
         do {
-            let snap = try await db.collection("users").document(uid).collection("musicVideos").document(projectId).getDocument()
-            if let a = (snap.data()? ["audio"] as? [String: Any])? ["gs"] as? String, !a.isEmpty { return a }
+            // 1) Primary: audio stored under musicVideos/{projectId}
+            let mvDoc = db.collection("users").document(uid).collection("musicVideos").document(projectId)
+            if let mv = try? await mvDoc.getDocument(),
+               let a = (mv.data()? ["audio"] as? [String: Any])? ["gs"] as? String, !a.isEmpty {
+                print("[MV] audio.resolve source=musicVideos.project match projectId=\(projectId)")
+                return a
+            }
+            // 2) Link from projects/{projectId} -> musicVideoProjectId
+            let proj = try await db.collection("users").document(uid).collection("projects").document(projectId).getDocument()
+            if let linked = proj.data()? ["musicVideoProjectId"] as? String, !linked.isEmpty {
+                let mv2 = try await db.collection("users").document(uid).collection("musicVideos").document(linked).getDocument()
+                if let a = (mv2.data()? ["audio"] as? [String: Any])? ["gs"] as? String, !a.isEmpty {
+                    print("[MV] audio.resolve source=musicVideos.linked projectId=\(linked)")
+                    return a
+                }
+            }
+            // 3) Fallback: find most recent musicVideos doc with an audio.gs
+            let q = try await db.collection("users").document(uid).collection("musicVideos").order(by: "createdAt", descending: true).limit(to: 5).getDocuments()
+            for d in q.documents {
+                if let a = (d.data()["audio"] as? [String: Any])? ["gs"] as? String, !a.isEmpty {
+                    print("[MV] audio.resolve source=musicVideos.recent projectId=\(d.documentID)")
+                    return a
+                }
+            }
         } catch {}
         return nil
     }
 
     @MainActor
     private func triggerLipsyncNow(currentDuration: Double) async {
+        if isSubmittingLipsync { return }
         guard let user = Auth.auth().currentUser else { return }
         let fallbackId = await ProjectsRepository.shared.projects.first?.id
-        guard let pid = activeProjectId ?? fallbackId else { return }
-        guard let audioGs = await fetchAudioGsPath(uid: user.uid, projectId: pid) else {
-            print("[MV] lipsync.trigger.skip missing_audioGs projectId=\(pid)"); return
-        }
+        guard let projectId = activeProjectId ?? fallbackId else { return }
         let runId = RunManager.shared.currentRunId ?? RunManager.shared.startNewRun()
-        let storyboard = storyboardId ?? "default"
-        // Start finishing and submit lipsync; backend will handle duration and assembly
-        do {
-            print("[MV] lipsync.trigger.start pid=\(pid) storyboardId=\(storyboard) dur=\(currentDuration)")
-            try await MusicVideoRepository.shared.startMusicFinishing(uid: user.uid, projectId: pid, storyboardId: storyboard, runId: runId, audioGsPath: audioGs, audioDurationSec: currentDuration)
-            try await MusicVideoRepository.shared.submitLipsync(uid: user.uid, projectId: pid, storyboardId: storyboard, runId: runId)
-            didSubmitLipsync = true
-        } catch {
-            print("[MV] lipsync.trigger.error \(error.localizedDescription)")
+        let gateKey = "\(projectId)::\(runId)"
+        print("[MV] lipsync.trigger.start projectId=\(projectId) storyboardId=\(storyboardId ?? "default") dur=\(currentDuration)")
+        isSubmittingLipsync = true
+        guard await LipsyncSingleFlight.shared.tryEnter(key: gateKey) else {
+            isSubmittingLipsync = false
+            print("[MV] lipsync.trigger.skip key=\(gateKey)")
+            return
+        }
+        print("[MV] gate.enter key=\(gateKey)")
+        await continueLipsyncAttemptHoldingGate(uid: user.uid, projectId: projectId, runId: runId, gateKey: gateKey, markDidSubmitOnSuccess: true)
+    }
+
+    private func logCTAState() {
+        Task { @MainActor in
+            let appended = await ingestAppendedCount()
+            let expected = await ingest.expectedCount()
+            let enabled = ingestComplete
+            print("[Editor] cta_state label=Sync audio & Export enabled=\(enabled) appended=\(appended) expected=\(expected)")
         }
     }
-}
+
+    // Local helper to convert gs:// to a temporary HTTPS URL using Firebase Storage SDK
+    private func gsToHttpsLocal(_ gs: String) async -> String? {
+        guard gs.starts(with: "gs://") else { return gs }
+        let without = gs.replacingOccurrences(of: "gs://", with: "")
+        guard let slash = without.firstIndex(of: "/") else { return nil }
+        let bucket = String(without[..<slash])
+        let object = String(without[without.index(after: slash)...])
+        let ref = Storage.storage().reference(forURL: "gs://\(bucket)/\(object)")
+        do {
+            let url = try await ref.downloadURL()
+            return url.absoluteString
+        } catch {
+            print("[Audio] gsToHttpsLocal error: \(error.localizedDescription)")
+            return nil
+        }
+    }
 
 // MARK: - Aspect-fit helper for composition
 private func transform(for track: AVAssetTrack, renderSize: CGSize, mode: ContentMode) -> CGAffineTransform {
@@ -786,6 +1984,27 @@ private func transform(for track: AVAssetTrack, renderSize: CGSize, mode: Conten
     return t
 }
 
+// MARK: - Final URL extraction (defensive against field shape drift)
+private func extractFinalUrl(from finishing: [String: Any]) -> String {
+    // Primary keys
+    if let mux = finishing["mux"] as? [String: Any] {
+        if let s = mux["finalUrl"] as? String, !s.isEmpty { return s }
+        if let s = mux["final_url"] as? String, !s.isEmpty { return s }
+        if let s = mux["finalURL"] as? String, !s.isEmpty { return s }
+    }
+    if let lip = finishing["lipsync"] as? [String: Any] {
+        if let s = lip["outputUrl"] as? String, !s.isEmpty { return s }
+        if let s = lip["output_url"] as? String, !s.isEmpty { return s }
+        if let s = lip["outputURL"] as? String, !s.isEmpty { return s }
+    }
+    // Occasionally servers flatten fields
+    if let s = finishing["finalVideoUrl"] as? String, !s.isEmpty { return s }
+    if let s = finishing["finalUrl"] as? String, !s.isEmpty { return s }
+    if let s = finishing["final_url"] as? String, !s.isEmpty { return s }
+    if let s = finishing["outputUrl"] as? String, !s.isEmpty { return s }
+    return ""
+}
+
 // Simple three-dot loading indicator (white)
 private struct ThreeDotsLoading: View {
     @State private var phase: Int = 0
@@ -801,6 +2020,35 @@ private struct ThreeDotsLoading: View {
 }
 
 // EditorTrackArea is defined in Views/Editor/Tracks/EditorTrackArea.swift
+
+}
+
+// File-scope helper for composition transforms so it is visible to EditorState
+private func transform(for track: AVAssetTrack, renderSize: CGSize, mode: ContentMode) -> CGAffineTransform {
+    let preferred = track.preferredTransform
+    let natural = track.naturalSize
+    let orientedRect = CGRect(origin: .zero, size: natural).applying(preferred)
+    var oriented = CGSize(width: abs(orientedRect.width), height: abs(orientedRect.height))
+    var target = CGSize(width: max(1, renderSize.width), height: max(1, renderSize.height))
+    if !oriented.width.isFinite || oriented.width <= 0 { oriented.width = 1 }
+    if !oriented.height.isFinite || oriented.height <= 0 { oriented.height = 1 }
+    if !target.width.isFinite || target.width <= 0 { target.width = 1 }
+    if !target.height.isFinite || target.height <= 0 { target.height = 1 }
+    let fitScale = min(target.width / oriented.width, target.height / oriented.height)
+    let fillScale = max(target.width / oriented.width, target.height / oriented.height)
+    let scale = (mode == .fit) ? fitScale : fillScale
+    if !scale.isFinite || scale <= 0 {
+        return preferred
+    }
+    let scaledW = oriented.width * scale
+    let scaledH = oriented.height * scale
+    let tx = (target.width - scaledW) / 2.0
+    let ty = (target.height - scaledH) / 2.0
+    var t = preferred
+    t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+    t = t.concatenating(CGAffineTransform(translationX: tx.isFinite ? tx : 0, y: ty.isFinite ? ty : 0))
+    return t
+}
 
 // MARK: - EditorState (minimal for playback)
 final class EditorState: ObservableObject {
@@ -820,7 +2068,7 @@ final class EditorState: ObservableObject {
     // Live only during user scroll/drag/deceleration
     @Published var scrubTime: CMTime? = nil
     @Published var isPlaying: Bool = false
-    @Published var renderConfig: VideoRenderConfig = VideoRenderConfig(aspect: .fourByThree, mode: .fill)
+    @Published var renderConfig: VideoRenderConfig = VideoRenderConfig(aspect: .original, mode: .fit)
     @Published var textOverlays: [TimedTextOverlay] = []
     @Published var mediaOverlays: [TimedMediaOverlay] = []
     @Published var captions: [TimedCaption] = []

@@ -6,6 +6,7 @@ final class RunManager: ObservableObject {
     private init() {}
 
     @Published var currentRunId: String? = nil
+    @Published var currentStoryboardId: String? = nil
     private let storagePrefix = "runId.level."
     private let startAtPrefix = "runStartAt.level."
 
@@ -20,6 +21,10 @@ final class RunManager: ObservableObject {
 
     func setRun(_ id: String) {
         currentRunId = id
+    }
+
+    func setStoryboardId(_ sid: String?) {
+        currentStoryboardId = sid
     }
 
     // MARK: - Per-level persistence
@@ -57,11 +62,9 @@ final class RunManager: ObservableObject {
             return
         }
         print("[RunManager] cancelCurrentRun level=\(level) runId=\(runId)")
-        JourneyPersistence.shared.deleteRun(level: level, runId: runId) { success in
-            DispatchQueue.main.async {
-                self.clearRun(level: level)
-                completion?(success)
-            }
+        DispatchQueue.main.async {
+            self.clearRun(level: level)
+            completion?(true)
         }
     }
 

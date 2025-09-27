@@ -26,6 +26,9 @@ struct MusicVideoStoryboardContainerView: View {
                     // Disable client auto-render to prevent a blank intermediate state and ensure
                     // we immediately display server-generated images as they stream in.
                     StoryboardNavigatorView(plan: p, autoRenderMissingImages: false)
+                        // Force a fresh view identity when scene image URLs change so the child
+                        // re-initializes its local state from the latest parent plan.
+                        .id(p.scenes.map { "\($0.index):\($0.imageUrl ?? "")" }.joined(separator: "|"))
                 } else {
                     ZStack {
                         Color(hex: 0xF3B529).ignoresSafeArea()
@@ -37,9 +40,10 @@ struct MusicVideoStoryboardContainerView: View {
             }
 
             if isLipsyncing {
-                Text("LipSyncing…")
-                    .font(.system(size: 22, weight: .bold))
+                Text("Lipsyncing your song, this could take up to 15 minutes")
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundColor(.black)
+                    .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 14)
                     .background(RoundedRectangle(cornerRadius: 14).fill(Color.white))
@@ -108,8 +112,8 @@ struct MusicVideoStoryboardContainerView: View {
             let status = ((finishing?["lipsync"] as? [String: Any])?["status"] as? String) ?? "idle"
             let muxFinal = ((finishing?["mux"] as? [String: Any])?["finalUrl"] as? String) ?? ""
             let shouldShow = dur >= 54 && status == "running" && muxFinal.isEmpty
-            if shouldShow && !isLipsyncing { print("[MV] lipsync.overlay.show dur=\(dur)") }
-            if !shouldShow && isLipsyncing { print("[MV] lipsync.overlay.hide") }
+            if shouldShow && !isLipsyncing { print("[Lipsync] HUD.show source=storyboard_overlay dur=\(dur)") }
+            if !shouldShow && isLipsyncing { print("[Lipsync] HUD.hide source=storyboard_overlay") }
             isLipsyncing = shouldShow
             if !muxFinal.isEmpty {
                 print("[MV] mux.finalUrl.applied url=\(muxFinal)")
@@ -121,7 +125,13 @@ struct MusicVideoStoryboardContainerView: View {
                 if let user = Auth.auth().currentUser {
                     let runId = RunManager.shared.currentRunId ?? RunManager.shared.startNewRun()
                     print("[MV] lipsync.auto_submit runId=\(runId) dur=\(dur)")
-                    Task { try? await MusicVideoRepository.shared.submitLipsync(uid: user.uid, projectId: projectId, storyboardId: storyboardId, runId: runId) }
+                    Task {
+                        _ = try? await LipsyncSingleFlight.shared.performOnce(runId: runId) {
+                            // Reuse centralized pipeline inside the editor if needed; here we only submit since finishing started earlier
+                            try await MusicVideoRepository.shared.submitLipsync(uid: user.uid, projectId: projectId, storyboardId: storyboardId, runId: runId)
+                            return true
+                        }
+                    }
                 }
             }
         }
@@ -151,7 +161,12 @@ extension MusicVideoStoryboardContainerView {
             try await MusicVideoRepository.shared.startMusicFinishing(uid: user.uid, projectId: projectId, storyboardId: storyboardId, runId: runId, audioGsPath: audioGsPath, audioDurationSec: audioDurationSec)
             // Trigger lipsync; mux will be run after lipsync completes (server-side)
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                Task { try? await MusicVideoRepository.shared.submitLipsync(uid: user.uid, projectId: projectId, storyboardId: storyboardId, runId: runId) }
+                Task {
+                    _ = try? await LipsyncSingleFlight.shared.performOnce(runId: runId) {
+                        try await MusicVideoRepository.shared.submitLipsync(uid: user.uid, projectId: projectId, storyboardId: storyboardId, runId: runId)
+                        return true
+                    }
+                }
             }
         } catch {
             print("[MV] startMusicFinishing error: \(error)")
